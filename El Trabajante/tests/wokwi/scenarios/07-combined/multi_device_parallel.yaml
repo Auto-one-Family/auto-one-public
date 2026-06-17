@@ -1,0 +1,30 @@
+# Multi-Device Parallel Operation Test
+# Validates: All sensors + all actuators operating simultaneously
+# Requires MQTT injection: Commands to GPIO 5, 13, 14 actuators
+# Timeout: 180000ms
+
+name: Multi-Device Parallel Operation Test
+version: 1
+steps:
+  # Wait for MQTT connection
+  - wait-serial: "MQTT connected successfully"
+
+  # All sensors should read and publish
+  - wait-serial: "Published"
+
+  # Heartbeat with sensor count
+  - wait-serial: "heartbeat"
+
+  # Deterministisches Injection-Fenster fuer sequentielle MQTT-Befehle
+  - delay: 6000ms
+
+  # After MQTT injection (sequential):
+  # 1. GPIO 5 ON:  {"command":"ON","value":1.0}
+  # 2. GPIO 13 PWM: {"command":"PWM","value":0.7}
+  # 3. GPIO 14 ON:  {"command":"ON","value":1.0}
+  - wait-serial: "Actuator"
+  - wait-serial: "Actuator"
+  - wait-serial: "Actuator"
+
+  # Cleanup: any OFF command
+  - wait-serial: "Actuator"

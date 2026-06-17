@@ -1,0 +1,23 @@
+# OneWire Double Initialization Test - Same Pin (OW-INIT-002)
+# Validates that reinitializing on the same pin is OK (returns true)
+# Tests: Second begin(4) after begin(4) succeeds
+# Timeout: 90000ms
+
+name: OneWire Double Init Same Pin
+version: 1
+steps:
+  # Boot sequence completes
+  - wait-serial: "Phase 1: Core Infrastructure READY"
+
+  # First OneWire initialization succeeds
+  - wait-serial: "OneWire Bus Manager initialized successfully"
+
+  # On reinitialization attempt (same pin), expect reuse message
+  # This happens when SensorManager configures a second DS18B20 on same bus
+  - wait-serial: "Already initialized on GPIO"
+
+  # Communication layer ready
+  - wait-serial: "Phase 2: Communication Layer READY"
+
+  # System continues normally with heartbeat
+  - wait-serial: "heartbeat"

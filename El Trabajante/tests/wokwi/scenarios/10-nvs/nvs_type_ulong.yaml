@@ -1,0 +1,41 @@
+# NVS Unsigned Long Type Tests
+# Test-ID: NVS-TYPE-013, NVS-TYPE-014
+# Validates unsigned long storage and retrieval from NVS
+# Timeout: 90000ms
+#
+# Unsigned long values are used for:
+# - Timestamps (Unix epoch seconds)
+# - Actuator runtime counters
+# - Total uptime tracking
+# - Large counters (boot count over years)
+#
+# Expected behavior:
+# - putULong(key, 1735689600) stores unsigned long
+# - getULong(key) retrieves value correctly
+# - Range: 0 to 4,294,967,295 (32-bit)
+# - Default value returned for missing keys
+#
+# Log patterns (from storage_manager.cpp):
+# - No namespace: "StorageManager: No namespace open for putULong"
+# - No namespace: "StorageManager: No namespace open for getULong"
+
+name: NVS Unsigned Long Type Operations
+version: 1
+steps:
+  # System boots normally
+  - wait-serial: "ESP32 Sensor Network"
+  - wait-serial: "StorageManager: Initialized"
+  - wait-serial: "Phase 1: Core Infrastructure READY"
+
+  # ULong values are used for:
+  # - last_config_update timestamps
+  # - actuator_runtime_total counters
+  # - boot timestamps
+
+  # WiFi and MQTT connection
+  - wait-serial: "WiFi connected successfully"
+  - wait-serial: "MQTT connected successfully"
+
+  # System operational - implicitly proves ulong operations work
+  # (ConfigManager uses ulongs for timestamps and counters)
+  - wait-serial: "heartbeat"

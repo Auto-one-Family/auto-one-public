@@ -1,0 +1,106 @@
+# I2C Partial Sensor Failure - Fault Isolation Test (I2C-ERR-HIGH-001)
+# ============================================================================
+# PRIORITY: HIGH
+# CATEGORY: error-handling, fault-isolation
+#
+# REAL-WORLD SCENARIO:
+# A greenhouse has 3 I2C sensors on one bus: SHT31 (temp/humidity), BMP280
+# (pressure), and TSL2561 (light). One sensor fails (power issue, defect).
+# The system MUST continue reading the other 2 sensors - stopping all
+# because one failed would mean no environmental data at all.
+#
+# I2C ERROR CODES:
+# 0 = Success
+# 1 = Data too long
+# 2 = NACK on address (device not present / not responding)
+# 3 = NACK on data
+# 4 = Other error (bus stuck, SDA/SCL held low)
+# 5 = Timeout (ESP32 specific)
+#
+# EXPECTED FIRMWARE BEHAVIOR:
+# 1. Detect single sensor failure (error code 2 or 3)
+# 2. Log WARNING for failed sensor, NOT ERROR for entire bus
+# 3. Continue reading other sensors normally
+# 4. Retry failed sensor periodically (but don't block on it)
+# 5. Alert server about specific sensor loss
+#
+# WOKWI LIMITATION:
+# Wokwi cannot simulate individual sensor failure on a multi-device bus.
+# All simulated I2C devices work perfectly or not at all.
+# This test documents EXPECTED behavior for code review.
+#
+# FIRMWARE STATUS (2026-01-29):
+# File: El Trabajante/src/drivers/i2c_bus.cpp
+#
+# GOOD IMPLEMENTATION EXISTS:
+# - Error codes 2/3 properly distinguished from 4/5 (line 253, 332)
+# - Individual device errors don't crash the bus
+# - isDevicePresent() can check specific devices
+#
+# POTENTIAL GAPS:
+# - No automatic retry mechanism for failed sensors
+# - No per-sensor health tracking
+# - No MQTT alert for "sensor X failed, others continue"
+#
+# BUS RECOVERY GAP (separate issue):
+# - Error 4/5 (bus stuck) has NO automatic recovery
+# - All sensors will fail until manual reset
+# - Documented in i2c_error_bus_error.yaml line 30-31
+# ============================================================================
+
+name: I2C Partial Sensor Failure Fault Isolation
+version: 1
+diagram: diagrams/diagram_i2c.json
+
+# NOTE: This test verifies normal multi-sensor operation.
+# Wokwi cannot simulate partial failure, so we document expected behavior.
+
+steps:
+  # ============================================
+  # PHASE 1: SYSTEM BOOT
+  # ============================================
+  - wait-serial: "I2C Bus Manager initialized successfully"
+
+  # ============================================
+  # PHASE 2: MULTI-DEVICE DISCOVERY
+  # ============================================
+  # Both sensors found on bus
+  - wait-serial: "Found device at 0x44"
+  - wait-serial: "Found device at 0x76"
+
+  # ============================================
+  # PHASE 3: SENSOR SYSTEM READY
+  # ============================================
+  - wait-serial: "Phase 4: Sensor System READY"
+
+  # ============================================
+  # PHASE 4: OPERATIONAL - BOTH SENSORS WORKING
+  # ============================================
+  # At least one sensor publishes data
+  - wait-serial: "Published"
+
+  # ============================================
+  # PHASE 5: CONTINUOUS OPERATION
+  # ============================================
+  - wait-serial: "heartbeat"
+
+  # ============================================
+  # VERIFICATION FOR CODE REVIEW:
+  # When one sensor fails (e.g., 0x44 disconnected):
+  #
+  # EXPECTED LOG OUTPUT:
+  # - "I2C write register failed: device 0x44, error 2"
+  # - "WARNING" level, not "ERROR" for partial failure
+  # - Other sensor (0x76) continues: "I2C read: X bytes from 0x76"
+  #
+  # EXPECTED MQTT:
+  # - Sensor 0x76 data still published
+  # - Alert for sensor 0x44 failure (optional)
+  #
+  # VERIFICATION STEPS for hardware test:
+  # 1. Boot with both sensors
+  # 2. Confirm both reading
+  # 3. Disconnect one sensor power
+  # 4. Verify other sensor continues
+  # 5. Check logs show individual failure
+  # ============================================

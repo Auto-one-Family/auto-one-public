@@ -1,0 +1,24 @@
+# I2C Bus Scan Finds Devices Test
+# Test-ID: I2C-SCAN-001
+# Validates: scanBus() correctly identifies connected I2C devices
+# Expected: SHT31 (0x44) and BMP280 (0x76) are found
+# Timeout: 90000ms
+# Diagram: diagrams/diagram_i2c.json (with I2C sensors)
+
+name: I2C Bus Scan Finds Devices (I2C-SCAN-001)
+version: 1
+steps:
+  # I2C Bus Manager initializes
+  - wait-serial: "I2C Bus Manager initialized successfully"
+
+  # Bus scan is triggered (during sensor init or explicit scan)
+  - wait-serial: "I2C bus scan started"
+
+  # SHT31 at address 0x44 (or 0x45 depending on ADDR pin)
+  - wait-serial: "Found device at 0x44"
+
+  # BMP280/BME280 at address 0x76 (or 0x77 depending on SDO pin)
+  - wait-serial: "Found device at 0x76"
+
+  # Scan completes with device count
+  - wait-serial: "devices found"

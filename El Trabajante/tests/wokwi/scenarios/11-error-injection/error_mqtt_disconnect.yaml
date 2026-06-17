@@ -1,0 +1,22 @@
+# Error-Injection: MQTT Activity Validation After Config
+# Validates that MQTT communication works after runtime sensor configuration.
+# Note: True MQTT disconnect cannot be simulated in Wokwi (no network-level control).
+# This scenario verifies the firmware processes config and publishes a response.
+# Expected: ConfigResponse published after sensor config injection.
+# Timeout: 90000ms
+#
+# MQTT-Injection (extern via CI):
+#   mosquitto_pub -h localhost -t "kaiser/god/esp/ESP_00000001/config" \
+#     -m '{"sensors":[{"gpio":4,"sensor_type":"ds18b20","sensor_name":"MQTTTestSensor","active":true}],"actuators":[]}'
+
+name: Error Injection - MQTT Activity After Config
+version: 1
+steps:
+  - wait-serial: "Phase 5: Actuator System READY"
+  - wait-serial: "MQTT connected successfully"
+  - wait-serial: "REGISTRATION"
+  - wait-serial: "heartbeat"
+  # Deterministisches Injection-Fenster fuer externe MQTT-Config Injection
+  # External MQTT config injection happens here
+  # Sensor on GPIO 4 (DS18B20 connected in diagram.json) → config succeeds
+  - wait-serial: "ConfigResponse published"

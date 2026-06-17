@@ -1,0 +1,32 @@
+# NVS String Type Tests
+# Test-ID: NVS-TYPE-009, NVS-TYPE-010
+# Validates string storage and retrieval from NVS
+# Timeout: 90000ms
+#
+# Strings are used for:
+# - WiFi SSID, password
+# - Zone names, Kaiser names
+# - Sensor/Actuator names
+# - Device identifiers
+#
+# Expected behavior:
+# - putString() stores string in NVS
+# - getStringObj() retrieves string correctly
+# - Empty strings are handled correctly
+# - Max string length: 4000 characters
+
+name: NVS String Type Operations
+version: 1
+steps:
+  # System boots and uses strings extensively
+  - wait-serial: "ESP32 Sensor Network"
+  - wait-serial: "StorageManager: Initialized"
+
+  # WiFi SSID is a string from NVS
+  - wait-serial: "WiFi connected successfully"
+
+  # Kaiser/Zone info contains strings
+  - wait-serial: "MQTT connected successfully"
+
+  # Heartbeat proves strings loaded correctly
+  - wait-serial: "heartbeat"

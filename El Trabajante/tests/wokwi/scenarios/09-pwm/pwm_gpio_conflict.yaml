@@ -1,0 +1,32 @@
+# PWM GPIO Conflict Test
+# Test-ID: PWM-CH-CONFLICT
+# Validates that PWM channel attachment respects GPIO reservation
+# If GPIO is already reserved (e.g., by sensor), PWM attach should fail
+# Timeout: 120000ms
+
+name: PWM GPIO Conflict Detection
+version: 1
+steps:
+  # Wait for system ready
+  - wait-serial: "MQTT connected successfully"
+  - wait-serial: "heartbeat"
+
+  # === First: Configure a Sensor on GPIO 25 ===
+  # Topic: kaiser/god/esp/{esp_id}/config
+  # Payload: {"sensors":[{"gpio":25,"sensor_type":"analog","sensor_name":"AnalogSensor","active":true}]}
+
+  - wait-serial: "Sensor"
+  - wait-serial: "GPIO 25"
+
+  # === Then: Try to Configure PWM Actuator on Same GPIO ===
+  # Topic: kaiser/god/esp/{esp_id}/config
+  # Payload: {"actuators":[{"gpio":25,"actuator_type":"pwm","actuator_name":"ConflictPWM","active":true}]}
+
+  # Expected: GPIO reservation failure
+  # PWMController.attachChannel() calls gpioManager.requestPin()
+  # which should fail for already-reserved GPIO
+
+  - wait-serial: "GPIO"
+
+  # Note: Exact error message depends on whether conflict is caught
+  # at ActuatorManager level or PWMController level

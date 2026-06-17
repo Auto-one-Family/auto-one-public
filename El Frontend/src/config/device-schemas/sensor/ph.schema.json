@@ -1,0 +1,31 @@
+{
+  "$id": "automationone://schemas/sensor/ph",
+  "allOf": [{ "$ref": "automationone://schemas/base" }],
+  "properties": {
+    "calibration_ph4": {
+      "type": "number",
+      "title": "Kalibrierung pH 4.0 (mV)",
+      "description": "Messwert bei pH 4.0 Kalibrierlösung"
+    },
+    "calibration_ph7": {
+      "type": "number",
+      "title": "Kalibrierung pH 7.0 (mV)",
+      "description": "Messwert bei pH 7.0 Kalibrierlösung"
+    },
+    "calibration_ph10": {
+      "type": "number",
+      "title": "Kalibrierung pH 10.0 (mV)",
+      "description": "Messwert bei pH 10.0 Kalibrierlösung"
+    },
+    "last_calibration": {
+      "type": "string",
+      "format": "date",
+      "title": "Letzte Kalibrierung"
+    },
+    "probe_type": {
+      "type": "string",
+      "title": "Sonden-Typ",
+      "description": "z.B. Atlas Scientific, DFRobot"
+    }
+  }
+}

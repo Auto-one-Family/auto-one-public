@@ -1,0 +1,32 @@
+# NVS Boot Count Persistence Test
+# Test-ID: NVS-PERS-005
+# Validates boot_count is correctly persisted and incremented
+# Timeout: 90000ms
+#
+# Boot count is used for:
+# - Diagnostics (how many times has device rebooted?)
+# - Detecting boot loops
+# - Server-side monitoring
+#
+# Expected behavior:
+# - boot_count is read from NVS (system_config namespace)
+# - boot_count is incremented
+# - New value is written back to NVS
+# - Value appears in heartbeat diagnostics
+
+name: NVS Boot Count Persistence
+version: 1
+steps:
+  # Initial boot
+  - wait-serial: "ESP32 Sensor Network"
+  - wait-serial: "StorageManager: Initialized"
+
+  # system_config namespace contains boot_count
+  - wait-serial: "Phase 1: Core Infrastructure READY"
+
+  # System becomes operational
+  - wait-serial: "WiFi connected successfully"
+  - wait-serial: "MQTT connected successfully"
+
+  # Heartbeat contains boot diagnostics
+  - wait-serial: "heartbeat"

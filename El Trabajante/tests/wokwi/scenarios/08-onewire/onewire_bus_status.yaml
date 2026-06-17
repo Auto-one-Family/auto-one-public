@@ -1,0 +1,26 @@
+# OneWire Bus Status Query Test (OW-STATUS-001)
+# Validates getBusStatus() and status queries
+# Tests: isInitialized(), getPin(), getBusStatus()
+# Timeout: 90000ms
+
+name: OneWire Bus Status Query
+version: 1
+steps:
+  # Boot with OneWire
+  - wait-serial: "OneWire Bus Manager initialization started"
+
+  # After initialization, status is available
+  - wait-serial: "OneWire Bus Manager initialized successfully"
+
+  # Status includes:
+  # - Board type
+  - wait-serial: "Board:"
+
+  # - Pin assignment
+  - wait-serial: "Pin: GPIO"
+
+  # Module status confirmed
+  - wait-serial: "OneWire Bus Manager"
+
+  # System operates normally
+  - wait-serial: "Phase 3: Hardware Abstraction READY"

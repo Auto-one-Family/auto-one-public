@@ -1,0 +1,24 @@
+# Binary Actuator Full Flow Test (Relay ON/OFF)
+# Validates complete flow: MQTT Command → Safety Check → Execute → Response → Status
+# Requires MQTT injection: ON then OFF command to actuator/5/command
+# Timeout: 90000ms
+
+name: Binary Actuator Full Flow Test
+version: 1
+steps:
+  # Wait for MQTT connection
+  - wait-serial: "MQTT connected successfully"
+
+  # Registration gate: opens on server confirmation or 10s timeout fallback
+  - wait-serial: "REGISTRATION"
+
+  # Wait for system to be operational
+  - wait-serial: "heartbeat"
+
+  # After MQTT injection: {"command":"ON","value":1.0}
+  # Topic: kaiser/god/esp/ESP_00000001/actuator/5/command
+  - wait-serial: "Actuator"
+
+  # After MQTT injection: {"command":"OFF"}
+  # Topic: kaiser/god/esp/ESP_00000001/actuator/5/command
+  - wait-serial: "Actuator"

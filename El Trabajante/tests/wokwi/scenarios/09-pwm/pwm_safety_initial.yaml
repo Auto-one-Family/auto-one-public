@@ -1,0 +1,28 @@
+# PWM Initial Safety State Test
+# Test-ID: PWM-SAFE-001, PWM-SAFE-002
+# Validates that PWM starts at 0% duty cycle (safe state)
+# Validates that detach sets duty to 0 before releasing
+# Timeout: 120000ms
+
+name: PWM Initial Safety State
+version: 1
+steps:
+  # Wait for system ready
+  - wait-serial: "MQTT connected successfully"
+
+  # Wait for heartbeat
+  - wait-serial: "heartbeat"
+
+  # Configure PWM actuator
+  # Topic: kaiser/god/esp/{esp_id}/config
+  # Payload: {"actuators":[{"gpio":25,"actuator_type":"pwm","actuator_name":"SafetyPWM","active":true}]}
+
+  # Verify actuator initialized
+  - wait-serial: "PWMActuator initialized"
+
+  # Check initial value is 0 in pwm_controller.cpp
+  # ledcWrite(channel, 0) is called in attachChannel
+  # The actuator status should show current_pwm: 0
+
+  # Wait for status publish (first heartbeat after config)
+  - wait-serial: "heartbeat"

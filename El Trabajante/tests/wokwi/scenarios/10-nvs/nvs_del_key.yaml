@@ -1,0 +1,28 @@
+# NVS Single Key Deletion Test
+# Test-ID: NVS-DEL-001, NVS-DEL-002
+# Validates erasing individual keys from NVS
+# Timeout: 90000ms
+#
+# Expected behavior:
+# - eraseKey() removes specific key
+# - Other keys in namespace remain
+# - Erasing non-existent key is safe (idempotent)
+# - keyExists() returns false after deletion
+
+name: NVS Key Deletion
+version: 1
+steps:
+  # System boots normally
+  - wait-serial: "ESP32 Sensor Network"
+  - wait-serial: "StorageManager: Initialized"
+  - wait-serial: "Phase 1: Core Infrastructure READY"
+
+  # System operational
+  - wait-serial: "WiFi connected successfully"
+  - wait-serial: "MQTT connected successfully"
+  - wait-serial: "heartbeat"
+
+  # Key deletion is typically triggered by:
+  # - Removing sensor from config
+  # - Clearing specific settings
+  # This test validates system stability

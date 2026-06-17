@@ -1,0 +1,74 @@
+# GPIO-INT-004: Heartbeat GPIO Status Integration
+# ================================================
+# Validates that heartbeat payload includes correct GPIO status
+# from gpioManager.getReservedPinsList().
+#
+# Test ID: GPIO-INT-004
+# Priority: MEDIUM
+# Requirement: heartbeat.gpio_status contains accurate pin information
+#
+# Heartbeat GPIO Payload:
+#   {
+#     "gpio_status": [
+#       { "gpio": 4, "owner": "sensor", "component": "DS18B20", "mode": 0, "safe": false },
+#       { "gpio": 5, "owner": "actuator", "component": "Pump1", "mode": 1, "safe": false },
+#       { "gpio": 21, "owner": "system", "component": "I2C_SDA", "mode": 0, "safe": false },
+#       { "gpio": 22, "owner": "system", "component": "I2C_SCL", "mode": 0, "safe": false }
+#     ],
+#     "gpio_reserved_count": 4
+#   }
+#
+# Mode Values:
+#   0 = INPUT
+#   1 = OUTPUT
+#
+# MQTT-Injection (extern via CI):
+#   Step 1 - Configure sensor:
+#     mosquitto_pub -h localhost -t "kaiser/god/esp/ESP_00000001/config" \
+#       -m '{"sensors":[{"gpio":4,"sensor_type":"temp_ds18b20","sensor_name":"TempSensor","active":true}]}'
+#   Step 2 - Configure actuator (after ~2s delay):
+#     mosquitto_pub -h localhost -t "kaiser/god/esp/ESP_00000001/config" \
+#       -m '{"actuators":[{"gpio":5,"actuator_type":"pump","actuator_name":"TestPump","active":true}]}'
+#
+# Firmware reference:
+#   - mqtt_client.cpp (publishHeartbeat method)
+#   - gpio_manager.cpp (getReservedPinsList method)
+
+name: Heartbeat GPIO Status Integration
+version: 1
+steps:
+  # Wait for boot to complete
+  - wait-serial: "Phase 1: Core Infrastructure READY"
+
+  # Wait for MQTT connection
+  - wait-serial: "MQTT connected successfully"
+
+  # Initial heartbeat should show I2C system pins
+  # (auto-reserved during GPIO init)
+  - wait-serial: "heartbeat"
+
+  # External MQTT config injection: sensor on GPIO 4 (CI helper script)
+
+  # Verify sensor allocated
+  - wait-serial: "Pin 4 allocated"
+
+  # External MQTT config injection: actuator on GPIO 5 (CI helper script)
+  - delay: 500ms
+
+  # Verify actuator allocated
+  - wait-serial: "Pin 5 allocated"
+
+  # Wait for next heartbeat (60 second interval in production)
+  # Or the periodic status publishing
+  # For testing, we can check the config_response which may include gpio info
+
+  # Verify GPIO count increases
+  # After adding sensor + actuator + I2C pins:
+  # - GPIO 4 (sensor)
+  # - GPIO 5 (actuator)
+  # - GPIO 21 (I2C SDA - system)
+  # - GPIO 22 (I2C SCL - system)
+  # Total: 4 reserved pins (minus I2C which count depends on implementation)
+
+  # The heartbeat or status message should reflect the GPIO state
+  - wait-serial: "gpio"

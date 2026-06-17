@@ -1,0 +1,50 @@
+# Environment files — never commit real credentials
+.env
+.env.local
+.env.development.local
+.env.production.local
+.env.ci
+
+# NVS secrets — contain WiFi/MQTT credentials
+El Trabajante/secrets/*.csv
+El Trabajante/secrets/*.bin
+
+# Python
+__pycache__/
+.pytest_cache/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+venv/
+
+# Node / Frontend
+node_modules/
+dist/
+.vite/
+
+# ESP32 / PlatformIO build artifacts
+.pio/
+
+# Databases
+*.db
+*.sqlite
+
+# Backups
+backups/
+
+# Logs
+*.log
+El Trabajante/logs/
+
+# Temp files
+*.tmp
+El Trabajante/tmp_*.json
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/settings.json
+.idea/

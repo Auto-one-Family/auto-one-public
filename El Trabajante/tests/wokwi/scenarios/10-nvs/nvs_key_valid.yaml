@@ -1,0 +1,34 @@
+# NVS Valid Key Tests
+# Test-ID: NVS-KEY-001
+# Validates keys up to 15 characters work correctly
+# Timeout: 90000ms
+#
+# NVS key name limits:
+# - Max length: 15 characters (ESP-IDF limit)
+# - Valid characters: alphanumeric, underscore
+#
+# Expected behavior:
+# - Keys like "sensor_0_gpio" (13 chars) work
+# - Keys like "wifi_config" (11 chars) work
+# - Keys at exactly 15 chars work
+
+name: NVS Valid Key Names
+version: 1
+steps:
+  # System boots
+  - wait-serial: "ESP32 Sensor Network"
+  - wait-serial: "StorageManager: Initialized"
+
+  # ConfigManager uses various key names:
+  # - "ssid" (4 chars)
+  # - "password" (8 chars)
+  # - "server_address" (14 chars)
+  # - "sensor_0_gpio" (13 chars)
+  # All must work correctly
+
+  - wait-serial: "Phase 1: Core Infrastructure READY"
+  - wait-serial: "WiFi connected successfully"
+  - wait-serial: "MQTT connected successfully"
+
+  # Successful boot proves key names work
+  - wait-serial: "heartbeat"

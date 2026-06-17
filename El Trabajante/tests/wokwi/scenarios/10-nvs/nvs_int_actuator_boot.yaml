@@ -1,0 +1,34 @@
+# NVS Integration: Actuator Config at Boot
+# Test-ID: NVS-INT-003
+# CRITICAL: Validates actuators are restored from NVS at boot
+# Timeout: 90000ms
+#
+# Actuators MUST be configured correctly after power cycle
+# to prevent unsafe states (pumps running, valves open, etc.)
+#
+# Expected behavior:
+# 1. ConfigManager loads actuator_count from NVS
+# 2. For each actuator, loads gpio, type, name, default_state, etc.
+# 3. ActuatorManager creates actuator instances
+# 4. Actuators set to default_state (typically OFF/safe)
+
+name: NVS Actuator Config at Boot
+version: 1
+steps:
+  # System boots
+  - wait-serial: "ESP32 Sensor Network"
+  - wait-serial: "StorageManager: Initialized"
+
+  # Actuator config namespace is accessed
+
+  - wait-serial: "Phase 1: Core Infrastructure READY"
+
+  # Actuator system initialization
+  - wait-serial: "Phase 5: Actuator System READY"
+
+  # System becomes operational
+  - wait-serial: "WiFi connected successfully"
+  - wait-serial: "MQTT connected successfully"
+
+  # Heartbeat proves system stability
+  - wait-serial: "heartbeat"

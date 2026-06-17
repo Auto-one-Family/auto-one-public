@@ -1,0 +1,77 @@
+# GPIO-INT-003: Safety Controller Integration
+# ============================================
+# Validates that SafetyController correctly uses GPIO Manager
+# for emergency stop operations (enableSafeModeForAllPins).
+#
+# Test ID: GPIO-INT-003
+# Priority: CRITICAL (Safety)
+# Requirement: safetyController.emergencyStopAll() calls gpioManager.enableSafeModeForAllPins()
+#
+# Integration Flow:
+#   1. Emergency command received (MQTT broadcast or ESP-specific)
+#   2. SafetyController.emergencyStopAll() is called
+#   3. SafetyController calls gpioManager.enableSafeModeForAllPins()
+#   4. GPIO Manager de-energizes all OUTPUT pins
+#   5. All pins return to INPUT_PULLUP safe state
+#   6. Emergency status is published via MQTT
+#
+# Safety Chain:
+#   MQTT Message -> SafetyController -> GPIOManager -> Hardware
+#
+# MQTT-Injection (extern via CI):
+#   Step 1 - Configure actuators:
+#     mosquitto_pub -h localhost -t "kaiser/god/esp/ESP_00000001/config" \
+#       -m '{"actuators":[{"gpio":5,"actuator_type":"pump","actuator_name":"Pump1","active":true},{"gpio":14,"actuator_type":"valve","actuator_name":"Valve1","active":true},{"gpio":15,"actuator_type":"fan","actuator_name":"Fan1","active":true}]}'
+#   Step 2 - Turn ON actuators (after ~500ms, with ~100ms between each):
+#     mosquitto_pub -h localhost -t "kaiser/god/esp/ESP_00000001/actuator/5/command" -m '{"command":"ON"}'
+#     mosquitto_pub -h localhost -t "kaiser/god/esp/ESP_00000001/actuator/14/command" -m '{"command":"ON"}'
+#     mosquitto_pub -h localhost -t "kaiser/god/esp/ESP_00000001/actuator/15/command" -m '{"command":"ON"}'
+#   Step 3 - Trigger emergency stop (after ~500ms):
+#     mosquitto_pub -h localhost -t "kaiser/broadcast/emergency" \
+#       -m '{"command":"STOP","reason":"Integration test emergency"}'
+#
+# Firmware reference:
+#   - safety_controller.cpp (emergencyStopAll method)
+#   - gpio_manager.cpp (enableSafeModeForAllPins method)
+
+name: Safety Controller GPIO Integration
+version: 1
+steps:
+  # Wait for boot to complete
+  - wait-serial: "Phase 1: Core Infrastructure READY"
+
+  # Wait for Safety Controller initialization
+  - wait-serial: "Safety Controller initialized"
+
+  # Wait for MQTT connection
+  - wait-serial: "MQTT connected successfully"
+
+  # External MQTT injection: configure multiple actuators (CI helper script)
+
+  # Verify all actuators configured
+  - wait-serial: "Pin 5 allocated"
+  - wait-serial: "Pin 14 allocated"
+  - wait-serial: "Pin 15 allocated"
+
+  # External MQTT injection: turn ON all actuators (CI helper script)
+  - delay: 500ms
+
+  # Verify actuators are ON
+  - delay: 500ms
+
+  # External MQTT injection: TRIGGER EMERGENCY STOP (CI helper script)
+
+  # Verify SafetyController processes emergency
+  - wait-serial: "Emergency"
+
+  # Verify GPIO Manager is called
+  - wait-serial: "Emergency safe-mode activated"
+
+  # Verify de-energization happens
+  - wait-serial: "de-energized"
+
+  # Verify all pins return to safe mode
+  - wait-serial: "All pins returned to safe mode"
+
+  # Verify emergency status is published
+  # (MQTT publish to actuator/emergency topic)

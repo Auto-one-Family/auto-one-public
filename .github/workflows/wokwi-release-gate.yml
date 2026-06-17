@@ -1,0 +1,51 @@
+name: Wokwi Release Gate
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_hardware_gate:
+        description: "Hardware-Sanity Gate ausfuehren"
+        required: true
+        default: true
+        type: boolean
+
+jobs:
+  sil-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run Top-3 verifier (SIL focus)
+        run: |
+          python scripts/verify_top3_gaps.py --skip-exec
+
+      - name: Upload SIL reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sil-gate-reports
+          path: |
+            .claude/reports/current/gap1-mqtt-docker-contract-verifikation-2026-04-06.md
+            .claude/reports/current/gap2-szenario-normierung-verifikation-2026-04-06.md
+            .claude/reports/current/gap3-sil-hardware-gate-verifikation-2026-04-06.md
+            .claude/reports/current/top3-gaps-abschlussbericht-2026-04-06.md
+
+  hardware-sanity-gate:
+    runs-on: windows-latest
+    needs: sil-gate
+    if: ${{ inputs.run_hardware_gate == true }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run hardware sanity script
+        shell: pwsh
+        run: |
+          ./scripts/tests/test_hardware_validation.ps1
+

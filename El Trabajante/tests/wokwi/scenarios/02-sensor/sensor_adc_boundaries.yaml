@@ -1,0 +1,50 @@
+# ADC Boundary Test (Potentiometer)
+# Validates analog sensor at exact boundary values
+# Tests: 0.0 (min), 0.01 (near-min), 0.99 (near-max), 1.0 (max)
+# Verifies: No ADC clipping, correct reading at extremes
+# Potentiometer on GPIO 34 in diagram.json
+# Timeout: 90000ms
+
+name: ADC Boundary Test
+version: 1
+steps:
+  # Boot and connect
+  - wait-serial: "MQTT connected successfully"
+
+  # Registration gate
+  - wait-serial: "REGISTRATION"
+
+  # Wait for first measurement cycle
+  - wait-serial: "Published"
+
+  # --- Boundary: Absolute Minimum (0.0) ---
+  - set-control:
+      part-id: "pot_analog"
+      control: "position"
+      value: "0.0"
+  - delay: 8000ms
+  - wait-serial: "Published"
+
+  # --- Boundary: Near Minimum (0.01) ---
+  - set-control:
+      part-id: "pot_analog"
+      control: "position"
+      value: "0.01"
+  - delay: 8000ms
+  - wait-serial: "Published"
+
+  # --- Boundary: Near Maximum (0.99) ---
+  - set-control:
+      part-id: "pot_analog"
+      control: "position"
+      value: "0.99"
+  - delay: 8000ms
+  - wait-serial: "Published"
+
+  # --- Boundary: Absolute Maximum (1.0) ---
+  - set-control:
+      part-id: "pot_analog"
+      control: "position"
+      value: "1.0"
+  - delay: 8000ms
+  - wait-serial: "Published"

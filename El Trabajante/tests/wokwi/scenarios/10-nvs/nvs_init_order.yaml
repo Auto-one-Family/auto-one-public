@@ -1,0 +1,34 @@
+# NVS Initialization Order Test
+# Test-ID: NVS-INIT-003
+# Validates NVS initializes BEFORE other dependent modules
+# Timeout: 90000ms
+#
+# Expected behavior:
+# - NVS init happens before WiFi init
+# - NVS init happens before ConfigManager access
+# - NVS init happens before MQTT connection
+
+name: NVS Initialization Order
+version: 1
+steps:
+  # Phase 0: Hardware Init
+  - wait-serial: "ESP32 Sensor Network"
+
+  # GPIO Safe-Mode first
+  - wait-serial: "GPIO SAFE-MODE INITIALIZATION"
+
+  # Logger system
+  - wait-serial: "Logger system initialized"
+
+  # NVS MUST be initialized before any config loading
+  # This is critical - ConfigManager depends on StorageManager
+  - wait-serial: "StorageManager: Initialized"
+
+  # Phase 1 completes
+  - wait-serial: "Phase 1: Core Infrastructure READY"
+
+  # WiFi initialization (reads config from NVS)
+  - wait-serial: "WiFi"
+
+  # MQTT initialization (reads config from NVS)
+  - wait-serial: "MQTT"

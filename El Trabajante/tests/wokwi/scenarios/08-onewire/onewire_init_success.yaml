@@ -1,0 +1,31 @@
+# OneWire Bus Initialization Test (OW-INIT-001)
+# Validates successful OneWire bus initialization on default GPIO 4
+# Tests: begin() returns true, correct pin assignment, GPIO reservation
+# Timeout: 90000ms
+
+name: OneWire Bus Initialization Success
+version: 1
+steps:
+  # Wait for Phase 1 to complete
+  - wait-serial: "Phase 1: Core Infrastructure READY"
+
+  # Phase 2: Communication
+  - wait-serial: "Phase 2: Communication Layer READY"
+
+  # Phase 3: OneWire bus initialization (part of HAL)
+  - wait-serial: "OneWire Bus Manager initialization started"
+
+  # Using default pin GPIO 4
+  - wait-serial: "Using hardware default pin GPIO 4"
+
+  # Successful initialization
+  - wait-serial: "OneWire Bus Manager initialized successfully"
+
+  # Pin assignment logged
+  - wait-serial: "Pin: GPIO 4"
+
+  # Phase 3 complete (includes OneWire)
+  - wait-serial: "Phase 3: Hardware Abstraction READY"
+
+  # Module confirmed
+  - wait-serial: "OneWire Bus Manager"

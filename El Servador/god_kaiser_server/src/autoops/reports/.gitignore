@@ -1,0 +1,2 @@
+# AutoOps session reports are generated artifacts - not tracked in git
+autoops_session_*.md

@@ -1,0 +1,40 @@
+# I2C Not Initialized Error Test
+# Test-ID: I2C-ERR-004
+# Validates: Operations fail gracefully when bus not initialized
+# Expected: Error logged, operations return false
+# Timeout: 90000ms
+
+name: I2C Not Initialized Error (I2C-ERR-004)
+version: 1
+steps:
+  # Watch for any I2C operations before initialization
+  # Should not occur in normal boot sequence
+
+  # I2C Bus Manager initializes in Phase 3
+  - wait-serial: "Phase 3: Hardware Abstraction Layer"
+  - wait-serial: "I2C Bus Manager initialized successfully"
+
+  # All subsequent I2C operations should work
+  - wait-serial: "Phase 4: Sensor System READY"
+
+# NOTE: Operations on uninitialized bus are checked:
+#
+# scanBus() check (i2c_bus.cpp line 150):
+#   if (!initialized_) {
+#       LOG_ERROR("I2C bus not initialized");
+#       return false;
+#   }
+#
+# readRaw() check (line 227-232):
+#   if (!initialized_) {
+#       LOG_ERROR("I2C bus not initialized");
+#       errorTracker.trackError(ERROR_I2C_READ_FAILED, ...);
+#       return false;
+#   }
+#
+# writeRaw() check (line 289-295):
+#   if (!initialized_) {
+#       LOG_ERROR("I2C bus not initialized");
+#       errorTracker.trackError(ERROR_I2C_WRITE_FAILED, ...);
+#       return false;
+#   }

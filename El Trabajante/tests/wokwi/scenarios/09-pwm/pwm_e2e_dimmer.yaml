@@ -1,0 +1,44 @@
+# PWM E2E Dimmer Simulation Test
+# Simulates a real-world LED dimmer scenario
+# Ramps brightness from 0% to 100% in steps
+# Timeout: 240000ms
+
+name: PWM E2E Dimmer Simulation
+version: 1
+steps:
+  # Wait for system ready
+  - wait-serial: "MQTT connected successfully"
+  - wait-serial: "heartbeat"
+
+  # === Configure LED Dimmer ===
+  # Topic: kaiser/god/esp/{esp_id}/config
+  # Payload: {"actuators":[{"gpio":25,"actuator_type":"pwm_light","actuator_name":"LEDDimmer","active":true}]}
+
+  - wait-serial: "PWMActuator initialized"
+
+  # === Dimming Sequence ===
+
+  # Step 1: 10%
+  # Topic: kaiser/god/esp/{esp_id}/actuator/25/command
+  # Payload: {"command":"SET","value":0.1}
+  - wait-serial: "10"
+
+  # Step 2: 30%
+  # Payload: {"command":"SET","value":0.3}
+  - wait-serial: "30"
+
+  # Step 3: 50%
+  # Payload: {"command":"SET","value":0.5}
+  - wait-serial: "50"
+
+  # Step 4: 70%
+  # Payload: {"command":"SET","value":0.7}
+  - wait-serial: "70"
+
+  # Step 5: 100%
+  # Payload: {"command":"SET","value":1.0}
+  - wait-serial: "100"
+
+  # Step 6: Off
+  # Payload: {"command":"OFF"}
+  - wait-serial: "0"

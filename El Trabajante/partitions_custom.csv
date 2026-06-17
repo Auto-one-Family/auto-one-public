@@ -1,0 +1,18 @@
+# Name,    Type,  SubType, Offset,   Size,     Flags
+# Custom partition table for ESP32 WROOM-32 (4MB Flash)
+# Changes vs PlatformIO default.csv (esp32dev):
+#   app0/app1: 1.625MB (0x1A0000) instead of 1.25MB (0x130000) — +384KB per slot vs default
+#   nvs:       32KB  (0x8000)   instead of 20KB  (0x5000)    — +12KB for offline rules
+# AUT-539/AUT-484 post-merge: app slots enlarged 0x180000→0x190000 (+64KB),
+#   spiffs shrunk 0xD0000→0xB0000 (-128KB) to keep total at 4MB.
+# AUT-848 overflow fix: app slots enlarged 0x190000→0x1A0000 (+64KB each, 0x10000-aligned),
+#   spiffs shrunk 0xB0000→0x90000 (-128KB). LittleFS spool unaffected (uses ~20KB).
+# ESP-IDF: app partitions MUST start at 0x10000 alignment (64KB). Gap 0x13000–0x1FFFF unused.
+# Added coredump partition for panic diagnostics on real ESP32 devices.
+# Total: 4MB exactly (0x400000)
+nvs,       data,  nvs,     0x9000,   0x8000,
+otadata,   data,  ota,     0x11000,  0x2000,
+app0,      app,   ota_0,   0x20000,  0x1A0000,
+app1,      app,   ota_1,   0x1C0000, 0x1A0000,
+spiffs,    data,  spiffs,  0x360000, 0x90000,
+coredump,  data,  coredump,0x3F0000, 0x10000,

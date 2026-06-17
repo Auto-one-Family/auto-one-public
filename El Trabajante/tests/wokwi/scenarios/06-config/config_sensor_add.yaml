@@ -1,0 +1,21 @@
+# Sensor Configuration via MQTT Test
+# Validates runtime sensor configuration handling
+# Requires MQTT injection to kaiser/{k}/esp/{e}/config
+# Timeout: 90000ms
+
+name: Sensor Configuration via MQTT
+version: 1
+steps:
+  # Wait for MQTT connection
+  - wait-serial: "MQTT connected successfully"
+
+  # Wait for heartbeat (system operational)
+  - wait-serial: "heartbeat"
+
+  # Deterministisches Injection-Fenster fuer externe MQTT-Publisher
+  - delay: 5000ms
+
+  # After config injection:
+  # Topic: kaiser/god/esp/{esp_id}/config
+  # Payload: {"sensors":[{"gpio":4,"sensor_type":"temp_ds18b20","sensor_name":"Test Sensor","active":true,"raw_mode":true}],"actuators":[]}
+  - wait-serial: "config"

@@ -1,0 +1,24 @@
+# Zone Assignment Test
+# Validates zone assignment handling via MQTT
+# Requires MQTT injection to kaiser/{k}/esp/{e}/zone/assign
+# Timeout: 90000ms
+
+name: Zone Assignment Test
+version: 1
+steps:
+  # Wait for MQTT connection
+  - wait-serial: "MQTT connected successfully"
+
+  # Registration gate: opens on server confirmation or 10s timeout fallback
+  - wait-serial: "REGISTRATION"
+
+  # Verify subscriptions are active
+  - wait-serial: "Subscribed to"
+
+  # Wait for heartbeat (system operational)
+  - wait-serial: "heartbeat"
+
+  # After MQTT injection:
+  # Topic: kaiser/god/esp/{esp_id}/zone/assign
+  # Payload: {"zone_id":"test_zone_1","master_zone_id":"master_test","zone_name":"Test Zone","kaiser_id":"god"}
+  - wait-serial: "ZONE ASSIGNMENT RECEIVED"

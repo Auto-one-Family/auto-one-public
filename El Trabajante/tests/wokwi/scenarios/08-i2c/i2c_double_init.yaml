@@ -1,0 +1,21 @@
+# I2C Bus Double Initialization Test
+# Test-ID: I2C-INIT-002
+# Validates: Second begin() call returns true without error (idempotent)
+# Expected: Warning logged but no failure
+# Timeout: 90000ms
+# Note: Requires firmware modification to call begin() twice for explicit test
+
+name: I2C Bus Double Initialization (I2C-INIT-002)
+version: 1
+steps:
+  # Phase 3 completes with I2C initialized
+  - wait-serial: "I2C Bus Manager initialized successfully"
+
+  # If begin() is called again, it should log a warning
+  # This requires explicit test code in firmware or config command
+  # For now, verify normal init completes
+  - wait-serial: "Phase 3: Hardware Abstraction READY"
+
+# NOTE: Full test requires firmware support for test-mode commands
+# Implementation suggestion: Add MQTT command "system/test/i2c_reinit"
+# that calls i2cBusManager.begin() and publishes result

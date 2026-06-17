@@ -1,0 +1,32 @@
+# NVS Bool Type Tests
+# Test-ID: NVS-TYPE-007, NVS-TYPE-008
+# Validates boolean storage and retrieval from NVS
+# Timeout: 90000ms
+#
+# Booleans are used for:
+# - wifi_config.configured
+# - zone_config.zone_assigned
+# - sensor/actuator active flags
+# - Safe-mode status
+#
+# Expected behavior:
+# - putBool(key, true) stores 1
+# - putBool(key, false) stores 0
+# - getBool() correctly returns true/false
+
+name: NVS Bool Type Operations
+version: 1
+steps:
+  # System boots
+  - wait-serial: "ESP32 Sensor Network"
+  - wait-serial: "StorageManager: Initialized"
+
+  # wifi_config.configured is a bool
+  - wait-serial: "Phase 1: Core Infrastructure READY"
+
+  # zone_config.zone_assigned is a bool
+  - wait-serial: "WiFi connected successfully"
+  - wait-serial: "MQTT connected successfully"
+
+  # System operational proves bools work
+  - wait-serial: "heartbeat"

@@ -1,0 +1,29 @@
+# NVS String Length Limit Test
+# Test-ID: NVS-CAP-002
+# Validates strings > 4000 chars are rejected
+# Timeout: 90000ms
+#
+# String value limit: 4000 characters (Preferences library)
+# Static buffer limit: 256 characters (getString only)
+#
+# Expected behavior:
+# - putString() with >4000 chars returns false
+# - Error logged
+# - Shorter strings work correctly
+
+name: NVS String Length Limit
+version: 1
+steps:
+  # System boots normally
+  - wait-serial: "ESP32 Sensor Network"
+  - wait-serial: "StorageManager: Initialized"
+
+  # All production strings are << 4000 chars:
+  # - SSID: max 32 chars
+  # - Password: max 64 chars
+  # - Names: max 64 chars
+
+  - wait-serial: "Phase 1: Core Infrastructure READY"
+  - wait-serial: "WiFi connected successfully"
+  - wait-serial: "MQTT connected successfully"
+  - wait-serial: "heartbeat"

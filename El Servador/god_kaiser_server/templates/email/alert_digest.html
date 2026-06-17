@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Alert Digest — AutomationOne</title>
+</head>
+<body style="margin:0;padding:0;font-family:Arial,Helvetica,sans-serif;background:#1a1a2e;color:#e0e0e0;">
+    <table width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;margin:0 auto;background:#16213e;border-radius:8px;overflow:hidden;">
+        <!-- Header -->
+        <tr>
+            <td style="background:#d97706;padding:20px 30px;">
+                <h1 style="margin:0;font-size:20px;color:#fff;">&#128220; Alert Digest</h1>
+                <p style="margin:4px 0 0;font-size:13px;color:#fef3c7;">{{ notification_count }} notification{{ 's' if notification_count != 1 else '' }} in the last {{ digest_period }}</p>
+            </td>
+        </tr>
+        <!-- Body -->
+        <tr>
+            <td style="padding:24px 30px;">
+                <p style="margin:0 0 16px;font-size:14px;color:#d1d5db;">
+                    Here is a summary of recent notifications that were batched during the digest period.
+                </p>
+
+                {% for notification in notifications %}
+                <table width="100%" cellpadding="10" cellspacing="0" style="background:#0f172a;border-radius:6px;font-size:13px;margin-bottom:10px;border-left:3px solid {{ '#f87171' if notification.severity == 'critical' else '#fbbf24' if notification.severity == 'warning' else '#60a5fa' }};">
+                    <tr>
+                        <td>
+                            <strong style="color:#e0e0e0;">{{ notification.title }}</strong>
+                            <br>
+                            <span style="color:#9ca3af;font-size:12px;">{{ notification.severity | upper }} &mdash; {{ notification.source }} &mdash; {{ notification.timestamp }}</span>
+                            {% if notification.body %}
+                            <br>
+                            <span style="color:#9ca3af;font-size:12px;">{{ notification.body[:200] }}</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                </table>
+                {% endfor %}
+            </td>
+        </tr>
+        <!-- Footer -->
+        <tr>
+            <td style="padding:16px 30px;background:#0f172a;font-size:11px;color:#6b7280;">
+                AutomationOne Notification System &mdash; Digest interval: {{ digest_period }}
+            </td>
+        </tr>
+    </table>
+</body>
+</html>

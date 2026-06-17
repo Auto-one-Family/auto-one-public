@@ -1,0 +1,26 @@
+# PWM Controller Initialization Success Test
+# Test-ID: PWM-INIT-001
+# Validates that PWM controller initializes correctly during boot
+# Expected: "PWM Controller initialized successfully" in serial output
+# Timeout: 90000ms
+#
+# NOTE: "PWM Config: Channels=..., Freq=..., Resolution=..." is LOG_DEBUG
+# and invisible at CORE_DEBUG_LEVEL=3 (INFO). Use LOG_INFO summary lines instead.
+
+name: PWM Controller Initialization Success
+version: 1
+steps:
+  # Wait for boot banner
+  - wait-serial: "ESP32 Sensor Network"
+
+  # Wait for PWM Controller initialization start (LOG_INFO)
+  - wait-serial: "PWM Controller initialization started"
+
+  # Wait for successful initialization (LOG_INFO)
+  - wait-serial: "PWM Controller initialized successfully"
+
+  # Verify board type is logged (LOG_INFO: "  Board: ESP32_WROOM_32")
+  - wait-serial: "Board:"
+
+  # Verify channel count is logged (LOG_INFO: "  Channels: 16")
+  - wait-serial: "Channels:"

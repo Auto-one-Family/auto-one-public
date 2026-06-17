@@ -1,0 +1,24 @@
+# Actuator Timeout Protection E2E Test
+# Validates runtime protection: Actuator auto-stops after max_runtime_ms
+# Requires MQTT injection: ON command with short timeout
+# Timeout: 120000ms (needs time for timeout to trigger)
+
+name: Actuator Timeout Protection E2E Test
+version: 1
+steps:
+  # Wait for MQTT connection
+  - wait-serial: "MQTT connected successfully"
+
+  # Registration gate: opens on server confirmation or 10s timeout fallback
+  - wait-serial: "REGISTRATION"
+
+  # Wait for system to be operational
+  - wait-serial: "heartbeat"
+
+  # After MQTT injection: {"command":"ON","value":1.0,"max_runtime_ms":5000}
+  # Topic: kaiser/god/esp/ESP_00000001/actuator/5/command
+  - wait-serial: "Actuator"
+
+  # Wait for timeout to trigger (5s runtime protection)
+  # Firmware should log timeout and emergency stop
+  - wait-serial: "timeout"

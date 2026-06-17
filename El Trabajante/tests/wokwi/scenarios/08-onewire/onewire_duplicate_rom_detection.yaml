@@ -1,0 +1,23 @@
+# OneWire Duplicate ROM Detection Test (OW-ERR-004)
+# Validates that duplicate ROM codes are rejected
+# Tests: Same ROM cannot be registered twice
+# Timeout: 90000ms
+
+name: OneWire Duplicate ROM Detection
+version: 1
+steps:
+  # Boot completes
+  - wait-serial: "Phase 5: Actuator System READY"
+
+  # OneWire bus ready
+  - wait-serial: "OneWire Bus Manager"
+
+  # When same ROM code is configured twice:
+  # "OneWire ROM-Code already registered: XXXXX on GPIO Y"
+  # ERROR_ONEWIRE_DUPLICATE_ROM (1029) is tracked
+
+  # First configuration succeeds
+  # Second configuration with same ROM would fail
+
+  # Normal operation (single sensor in diagram.json)
+  - wait-serial: "heartbeat"

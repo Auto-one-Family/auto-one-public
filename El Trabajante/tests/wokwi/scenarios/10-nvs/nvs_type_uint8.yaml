@@ -1,0 +1,33 @@
+# NVS UInt8 Type Tests
+# Test-ID: NVS-TYPE-001
+# Validates uint8_t storage and retrieval from NVS
+# Timeout: 90000ms
+#
+# UInt8 is used for:
+# - sensor_count, actuator_count
+# - GPIO pin numbers (0-39)
+# - current_state (SystemState enum)
+# - default_pwm values (0-255)
+#
+# Expected behavior:
+# - putUInt8() stores 0-255 correctly
+# - getUInt8() retrieves value correctly
+# - Default value used for missing keys
+
+name: NVS UInt8 Type Operations
+version: 1
+steps:
+  # System boots
+  - wait-serial: "ESP32 Sensor Network"
+  - wait-serial: "StorageManager: Initialized"
+
+  # sensor_config.sensor_count is uint8
+  # actuator_config.actuator_count is uint8
+  - wait-serial: "Phase 1: Core Infrastructure READY"
+
+  # System state tracking uses uint8
+  - wait-serial: "WiFi connected successfully"
+  - wait-serial: "MQTT connected successfully"
+
+  # Heartbeat proves system state tracking works
+  - wait-serial: "heartbeat"

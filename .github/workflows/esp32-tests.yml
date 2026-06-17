@@ -1,0 +1,136 @@
+name: ESP32 Tests
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  workflow_dispatch:  # Manual trigger
+  push:
+    branches: [main, master, develop]
+    paths:
+      - 'El Servador/god_kaiser_server/tests/esp32/**'
+      - 'El Servador/god_kaiser_server/src/mqtt/**'
+      - 'El Servador/god_kaiser_server/src/services/**'
+      - '.github/workflows/esp32-tests.yml'
+  pull_request:
+    branches: [main, master, develop]
+    paths:
+      - 'El Servador/god_kaiser_server/tests/esp32/**'
+      - 'El Servador/god_kaiser_server/src/mqtt/**'
+      - 'El Servador/god_kaiser_server/src/services/**'
+
+env:
+  PYTHON_VERSION: '3.11'
+  POETRY_VERSION: '1.7.1'
+
+jobs:
+  esp32-tests:
+    name: ESP32 Mock Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      mosquitto:
+        image: eclipse-mosquitto:2
+        ports:
+          - 1883:1883
+        options: >-
+          --health-cmd "mosquitto_pub -h localhost -p 1883 -t healthcheck -m ok"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Poetry
+        uses: snok/install-poetry@v1
+        with:
+          version: ${{ env.POETRY_VERSION }}
+          virtualenvs-create: true
+          virtualenvs-in-project: true
+
+      - name: Cache Poetry dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            El Servador/god_kaiser_server/.venv
+            ~/.cache/pypoetry
+          key: poetry-${{ runner.os }}-${{ hashFiles('El Servador/god_kaiser_server/poetry.lock') }}
+          restore-keys: |
+            poetry-${{ runner.os }}-
+
+      - name: Install dependencies
+        working-directory: El Servador/god_kaiser_server
+        run: poetry install --no-root --no-interaction
+
+      - name: Install mosquitto clients
+        run: sudo apt-get update && sudo apt-get install -y mosquitto-clients
+
+      - name: Wait for Mosquitto ready
+        run: |
+          for i in $(seq 1 30); do
+            mosquitto_pub -h localhost -p 1883 -t healthcheck -m ok 2>/dev/null && echo "Mosquitto ready" && exit 0
+            echo "Waiting for Mosquitto... ($i/30)"
+            sleep 1
+          done
+          echo "Mosquitto not ready after 30s" && exit 1
+
+      - name: Run ESP32 Tests
+        working-directory: El Servador/god_kaiser_server
+        env:
+          MQTT_BROKER_HOST: localhost
+          MQTT_BROKER_PORT: 1883
+          DATABASE_URL: sqlite+aiosqlite:///./test.db
+        run: |
+          poetry run pytest tests/esp32/ \
+            -v \
+            --tb=short \
+            --junitxml=junit-esp32.xml \
+            -x  # Stop on first failure for faster feedback
+
+      - name: Upload ESP32 Test Results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: esp32-test-results
+          path: El Servador/god_kaiser_server/junit-esp32.xml
+          retention-days: 7
+
+  test-summary:
+    name: ESP32 Test Summary
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [esp32-tests]
+    if: always()
+    permissions:
+      contents: read
+      checks: write
+      pull-requests: write
+
+    steps:
+      - name: Download test results
+        uses: actions/download-artifact@v4
+        with:
+          name: esp32-test-results
+          path: results/
+
+      - name: List downloaded files
+        run: |
+          echo "Downloaded artifacts:"
+          find results/ -type f 2>/dev/null || echo "No files found"
+
+      - name: Publish Test Results
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        if: always()
+        with:
+          files: results/junit-esp32.xml
+          check_name: ESP32 Test Results
+          comment_mode: always

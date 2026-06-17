@@ -1,0 +1,48 @@
+# DS18B20 Rapid Temperature Change Test
+# Validates firmware stability under rapid temperature transitions
+# Pattern: 10C -> 50C -> 10C -> 50C (fast oscillation)
+# Tests: No crash, no stuck readings, pipeline continues
+# Timeout: 90000ms
+
+name: DS18B20 Rapid Temperature Change
+version: 1
+steps:
+  # Boot and connect
+  - wait-serial: "MQTT connected successfully"
+
+  # Registration gate
+  - wait-serial: "REGISTRATION"
+
+  # Wait for first measurement cycle
+  - wait-serial: "Published"
+
+  # --- Rapid: Jump to 50C ---
+  - set-control:
+      part-id: "temp1"
+      control: "temperature"
+      value: "50"
+  - delay: 3000ms
+
+  # --- Rapid: Jump back to 10C ---
+  - set-control:
+      part-id: "temp1"
+      control: "temperature"
+      value: "10"
+  - delay: 3000ms
+
+  # --- Rapid: Jump to 50C again ---
+  - set-control:
+      part-id: "temp1"
+      control: "temperature"
+      value: "50"
+  - delay: 3000ms
+
+  # --- Rapid: Jump back to 10C ---
+  - set-control:
+      part-id: "temp1"
+      control: "temperature"
+      value: "10"
+  - delay: 3000ms
+
+  # Verify system survived rapid changes
+  - wait-serial: "Published"

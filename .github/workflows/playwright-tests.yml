@@ -1,0 +1,255 @@
+name: Playwright E2E Tests
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  workflow_dispatch:  # Manual trigger
+  push:
+    branches: [main, master, develop]
+    paths:
+      - 'El Frontend/**'
+      - 'El Servador/**'
+      - 'docker-compose.yml'
+      - 'docker-compose.ci.yml'
+      - 'docker-compose.e2e.yml'
+      - '.github/workflows/playwright-tests.yml'
+  pull_request:
+    branches: [main, master, develop]
+    paths:
+      - 'El Frontend/**'
+      - 'El Servador/**'
+      - 'docker-compose.yml'
+      - 'docker-compose.ci.yml'
+      - 'docker-compose.e2e.yml'
+
+env:
+  NODE_VERSION: '20'
+
+jobs:
+  e2e-tests:
+    name: E2E Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: 'El Frontend/package-lock.json'
+
+      - name: Install dependencies
+        working-directory: El Frontend
+        run: npm ci
+
+      - name: Install Playwright browsers
+        working-directory: El Frontend
+        run: npx playwright install chromium --with-deps
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Cache Docker layers
+        uses: actions/cache@v4
+        with:
+          path: /tmp/.buildx-cache
+          key: ${{ runner.os }}-docker-playwright-${{ hashFiles('**/Dockerfile', '**/package-lock.json', '**/poetry.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-docker-playwright-
+            ${{ runner.os }}-docker-
+
+      - name: Create shared-infra network (if not exists)
+        run: docker network create shared-infra-net || true
+
+      - name: Start E2E stack
+        run: |
+          # ci.yml: tmpfs PostgreSQL, fast healthchecks, no host volume mounts
+          # e2e.yml: CORS, E2E JWT secret, frontend always included
+          # NOTE: Do NOT use --wait — it fails immediately on container exit
+          # without showing logs. The "Verify services" step handles health
+          # polling with proper diagnostics instead.
+          # NOTE: --profile frontend is explicit safety net in case Docker Compose
+          # does not honour profiles: !reset [] from docker-compose.e2e.yml.
+          docker compose --profile frontend \
+            -f docker-compose.yml -f docker-compose.ci.yml -f docker-compose.e2e.yml \
+            up -d --build
+        env:
+          DOCKER_BUILDKIT: 1
+          COMPOSE_DOCKER_CLI_BUILD: 1
+          # Required by base docker-compose.yml which uses ${VAR} syntax
+          POSTGRES_USER: god_kaiser
+          POSTGRES_PASSWORD: e2e_test_password
+          POSTGRES_DB: god_kaiser_db
+          JWT_SECRET_KEY: e2e_test_secret_key_not_for_production
+
+      - name: Verify services
+        run: |
+          COMPOSE="docker compose --profile frontend -f docker-compose.yml -f docker-compose.ci.yml -f docker-compose.e2e.yml"
+
+          echo "--- Waiting for Server ---"
+          max_attempts=60
+          for i in $(seq 1 $max_attempts); do
+            if ! docker ps --filter "name=automationone-server" --filter "status=running" -q | grep -q .; then
+              echo "❌ Server container exited! Capturing logs..."
+              echo "=== Server Container Logs ==="
+              $COMPOSE logs el-servador --tail 200 || true
+              echo "=== PostgreSQL Logs ==="
+              $COMPOSE logs postgres --tail 50 || true
+              echo "=== Container Status ==="
+              $COMPOSE ps -a
+              exit 1
+            fi
+            if curl -sf http://localhost:8000/api/v1/health/live > /dev/null 2>&1; then
+              echo "✅ Server healthy after ${i} attempts"
+              break
+            fi
+            if [ $i -eq $max_attempts ]; then
+              echo "❌ Server not healthy after ${max_attempts} attempts ($(( max_attempts * 3 ))s)"
+              $COMPOSE logs el-servador --tail 200 || true
+              exit 1
+            fi
+            sleep 3
+          done
+
+          echo "--- Waiting for Frontend ---"
+          for i in $(seq 1 90); do
+            if curl -sf http://localhost:5173 > /dev/null 2>&1; then
+              echo "✅ Frontend healthy after ${i} attempts"
+              break
+            fi
+            # Every 30 attempts, show container status for early diagnosis
+            if [ $(( i % 30 )) -eq 0 ]; then
+              echo "ℹ️ Still waiting for frontend (attempt $i)..."
+              $COMPOSE ps el-frontend || true
+              $COMPOSE logs el-frontend --tail 20 || true
+            fi
+            if [ $i -eq 90 ]; then
+              echo "❌ Frontend not healthy after 90 attempts (270s)"
+              $COMPOSE logs el-frontend --tail 100 || true
+              exit 1
+            fi
+            sleep 3
+          done
+
+          echo "--- Checking MQTT broker ---"
+          docker exec automationone-mqtt mosquitto_pub -h localhost -t test -m ping || exit 1
+
+          echo "All services healthy!"
+          $COMPOSE ps
+        env:
+          POSTGRES_USER: god_kaiser
+          POSTGRES_PASSWORD: e2e_test_password
+          POSTGRES_DB: god_kaiser_db
+          JWT_SECRET_KEY: e2e_test_secret_key_not_for_production
+
+      - name: Create log directories
+        run: mkdir -p logs/frontend/playwright
+
+      - name: Run Playwright tests
+        working-directory: El Frontend
+        run: npx playwright test --project=chromium --reporter=html,list,junit
+        env:
+          PLAYWRIGHT_BASE_URL: http://localhost:5173
+          # PLAYWRIGHT_JUNIT_OUTPUT_FILE: correct env var name (not OUTPUT_NAME)
+          # Path is relative to El Frontend/ working-directory, so ../../ goes to workspace root
+          PLAYWRIGHT_JUNIT_OUTPUT_FILE: ../../logs/frontend/playwright/playwright-results.xml
+          CI: true
+          E2E_TEST_USER: admin
+          E2E_TEST_PASSWORD: ${{ secrets.E2E_TEST_PASSWORD }}
+
+      - name: Run Playwright visual regression tests
+        working-directory: El Frontend
+        run: npx playwright test --config=playwright.visual.config.ts --project=visual --reporter=html,list,junit
+        env:
+          PLAYWRIGHT_BASE_URL: http://localhost:5173
+          PLAYWRIGHT_JUNIT_OUTPUT_FILE: ../../logs/frontend/playwright/playwright-visual-results.xml
+          CI: true
+          E2E_TEST_USER: admin
+          E2E_TEST_PASSWORD: ${{ secrets.E2E_TEST_PASSWORD }}
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-report
+          path: |
+            El Frontend/playwright-report/
+            El Frontend/playwright-report-visual/
+            El Frontend/test-results/
+            logs/frontend/playwright/playwright-results.xml
+            logs/frontend/playwright/playwright-visual-results.xml
+          retention-days: 7
+
+      - name: Upload traces on failure
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-traces
+          path: El Frontend/test-results/**/*.zip
+          retention-days: 7
+
+      - name: Show Docker logs on failure
+        if: failure()
+        run: |
+          echo "=== Server Logs ==="
+          docker logs automationone-server --tail 100 2>&1 || true
+
+          echo "=== Frontend Logs ==="
+          docker logs automationone-frontend --tail 50 2>&1 || true
+
+          echo "=== MQTT Logs ==="
+          docker logs automationone-mqtt --tail 50 2>&1 || true
+
+      - name: Stop E2E stack
+        if: always()
+        run: |
+          docker compose --profile frontend \
+            -f docker-compose.yml -f docker-compose.ci.yml -f docker-compose.e2e.yml \
+            down -v
+        env:
+          POSTGRES_USER: god_kaiser
+          POSTGRES_PASSWORD: e2e_test_password
+          POSTGRES_DB: god_kaiser_db
+          JWT_SECRET_KEY: e2e_test_secret_key_not_for_production
+
+  test-summary:
+    name: Playwright Test Summary
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [e2e-tests]
+    if: always()
+    permissions:
+      contents: read
+      checks: write
+      pull-requests: write
+
+    steps:
+      - name: Download test results
+        uses: actions/download-artifact@v4
+        # continue-on-error: artifact may be absent if all tests passed and no
+        # traces/failures triggered the HTML report generation path
+        continue-on-error: true
+        with:
+          name: playwright-report
+          path: results/
+
+      - name: List downloaded files
+        run: |
+          echo "Downloaded artifacts:"
+          find results/ -type f 2>/dev/null || echo "No files found"
+
+      - name: Publish Test Results
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        if: always()
+        with:
+          files: |
+            results/**/playwright-results.xml
+            results/**/playwright-visual-results.xml
+          check_name: Playwright E2E Test Results
+          comment_mode: always

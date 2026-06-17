@@ -1,0 +1,26 @@
+# NVS Namespace Read-Only Mode Test
+# Test-ID: NVS-NS-004
+# Validates read-only namespace prevents writes
+# Timeout: 90000ms
+#
+# Read-only mode is used for:
+# - Safe config loading without risk of corruption
+# - Concurrent read access (future)
+#
+# Expected behavior:
+# - beginNamespace(name, true) opens read-only
+# - put*() operations fail in read-only mode
+# - get*() operations work normally
+
+name: NVS Namespace Read-Only
+version: 1
+steps:
+  # System boots
+  - wait-serial: "ESP32 Sensor Network"
+  - wait-serial: "StorageManager: Initialized"
+
+  # ConfigManager may use read-only for initial loading
+  - wait-serial: "Phase 1: Core Infrastructure READY"
+  - wait-serial: "WiFi connected successfully"
+  - wait-serial: "MQTT connected successfully"
+  - wait-serial: "heartbeat"

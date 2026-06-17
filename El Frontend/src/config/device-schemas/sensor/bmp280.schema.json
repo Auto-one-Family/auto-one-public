@@ -1,0 +1,37 @@
+{
+  "$id": "automationone://schemas/sensor/bmp280",
+  "allOf": [{ "$ref": "automationone://schemas/base" }],
+  "properties": {
+    "i2c_address": {
+      "type": "string",
+      "title": "I2C-Adresse",
+      "enum": ["0x76", "0x77"],
+      "default": "0x76",
+      "readOnly": true
+    },
+    "oversampling_pressure": {
+      "type": "string",
+      "title": "Oversampling (Druck)",
+      "enum": ["x1", "x2", "x4", "x8", "x16"],
+      "default": "x4"
+    },
+    "oversampling_temperature": {
+      "type": "string",
+      "title": "Oversampling (Temperatur)",
+      "enum": ["x1", "x2", "x4", "x8", "x16"],
+      "default": "x2"
+    },
+    "accuracy_pressure": {
+      "type": "string",
+      "title": "Genauigkeit (Druck)",
+      "default": "±1 hPa",
+      "readOnly": true
+    },
+    "accuracy_temperature": {
+      "type": "string",
+      "title": "Genauigkeit (Temperatur)",
+      "default": "±1.0°C",
+      "readOnly": true
+    }
+  }
+}

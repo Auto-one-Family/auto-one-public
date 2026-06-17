@@ -1,0 +1,21 @@
+# OneWire Device Presence Check Test (OW-DISC-003)
+# Validates isDevicePresent() for specific ROM code
+# Tests: Device presence verification before sensor configuration
+# Timeout: 90000ms
+
+name: OneWire Device Presence Check
+version: 1
+steps:
+  # Boot completes
+  - wait-serial: "Phase 5: Actuator System READY"
+
+  # OneWire bus active
+  - wait-serial: "OneWire Bus Manager"
+
+  # When a DS18B20 sensor is configured, device presence is verified
+  # This happens in SensorManager::configureSensor()
+  # If device is found on bus:
+  - wait-serial: "OneWire device"
+
+  # Verified message confirms isDevicePresent() succeeded
+  - wait-serial: "verified on GPIO"

@@ -1,0 +1,37 @@
+# NVS Integration: Zone Config at Boot
+# Test-ID: NVS-INT-004
+# CRITICAL: Validates zone assignment is restored from NVS at boot
+# Timeout: 90000ms
+#
+# Zone config determines MQTT topic routing!
+# Without correct zone_id and kaiser_id, messages go to wrong topics.
+#
+# Expected behavior:
+# 1. ConfigManager loads zone_config namespace
+# 2. Reads zone_id, kaiser_id, zone_name, zone_assigned
+# 3. MQTT topics use correct zone in path
+# 4. System communicates with correct Kaiser instance
+
+name: NVS Zone Config at Boot
+version: 1
+steps:
+  # System boots
+  - wait-serial: "ESP32 Sensor Network"
+  - wait-serial: "StorageManager: Initialized"
+
+  # Zone config namespace is accessed
+  - wait-serial: "Opened namespace: zone_config"
+
+  - wait-serial: "Phase 1: Core Infrastructure READY"
+
+  # WiFi connection
+  - wait-serial: "WiFi connected successfully"
+
+  # MQTT connection with correct topic structure
+  - wait-serial: "MQTT connected successfully"
+
+  # Subscriptions use correct kaiser_id and esp_id
+  - wait-serial: "Subscribed to"
+
+  # Heartbeat published to correct topic
+  - wait-serial: "heartbeat"

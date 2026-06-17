@@ -1,0 +1,41 @@
+# DS18B20 Extreme Cold Temperature Test
+# Validates sensor reading at lower temperature boundary
+# Values: -55C (min), -40C, -20C
+# DS18B20 valid range: -55C to +125C
+# Timeout: 90000ms
+
+name: DS18B20 Extreme Cold Temperature Test
+version: 1
+steps:
+  # Boot and connect
+  - wait-serial: "MQTT connected successfully"
+
+  # Registration gate
+  - wait-serial: "REGISTRATION"
+
+  # Wait for first measurement cycle
+  - wait-serial: "Published"
+
+  # --- Extreme: Minimum (-55C) ---
+  - set-control:
+      part-id: "temp1"
+      control: "temperature"
+      value: "-55"
+  - delay: 8000ms
+  - wait-serial: "Published"
+
+  # --- Extreme: Arctic (-40C) ---
+  - set-control:
+      part-id: "temp1"
+      control: "temperature"
+      value: "-40"
+  - delay: 8000ms
+  - wait-serial: "Published"
+
+  # --- Extreme: Sub-freezing (-20C) ---
+  - set-control:
+      part-id: "temp1"
+      control: "temperature"
+      value: "-20"
+  - delay: 8000ms
+  - wait-serial: "Published"

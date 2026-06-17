@@ -1,0 +1,18 @@
+# Actuator Configuration via MQTT Test
+# Validates runtime actuator configuration handling
+# Requires MQTT injection to kaiser/{k}/esp/{e}/config
+# Timeout: 90000ms
+
+name: Actuator Configuration via MQTT
+version: 1
+steps:
+  # Wait for MQTT connection
+  - wait-serial: "MQTT connected successfully"
+
+  # Wait for heartbeat (system operational)
+  - wait-serial: "heartbeat"
+
+  # After config injection:
+  # Topic: kaiser/god/esp/{esp_id}/config
+  # Payload: {"sensors":[],"actuators":[{"gpio":5,"actuator_type":"pwm","actuator_name":"LED Control","active":true}]}
+  - wait-serial: "config"

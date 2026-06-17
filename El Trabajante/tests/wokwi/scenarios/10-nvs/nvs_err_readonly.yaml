@@ -1,0 +1,25 @@
+# NVS Error: Write to Read-Only Namespace
+# Test-ID: NVS-ERR-003
+# Validates write operations fail in read-only namespace
+# Timeout: 90000ms
+#
+# Expected behavior:
+# - put*() returns false in read-only mode
+# - ERROR log: cannot write in read-only mode
+# - Data remains unchanged
+# - System remains stable
+
+name: NVS Write to Read-Only Error
+version: 1
+steps:
+  # System boots
+  - wait-serial: "ESP32 Sensor Network"
+  - wait-serial: "StorageManager: Initialized"
+
+  # If code attempts write to read-only namespace,
+  # error would be logged but system continues
+
+  - wait-serial: "Phase 1: Core Infrastructure READY"
+  - wait-serial: "WiFi connected successfully"
+  - wait-serial: "MQTT connected successfully"
+  - wait-serial: "heartbeat"

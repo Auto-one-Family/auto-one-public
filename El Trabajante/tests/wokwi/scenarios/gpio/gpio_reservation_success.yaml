@@ -1,0 +1,40 @@
+# GPIO-RES-001: Successful Pin Reservation
+# =========================================
+# Validates that a free GPIO pin can be successfully reserved
+# with owner and component_name tracking.
+#
+# Test ID: GPIO-RES-001
+# Priority: HIGH
+# Requirement: requestPin(4, "sensor", "DS18B20") returns true
+#
+# Test Method:
+#   1. Boot ESP32 normally
+#   2. Send sensor config via MQTT to add DS18B20 on GPIO 4
+#   3. Verify GPIO Manager logs successful reservation
+#   4. Verify sensor becomes operational
+#
+# MQTT-Injection (extern via CI):
+#   mosquitto_pub -h localhost -t "kaiser/god/esp/ESP_00000001/config" \
+#     -m '{"sensors":[{"gpio":4,"sensor_type":"temp_ds18b20","sensor_name":"TempSensor1","active":true,"raw_mode":true}]}'
+#
+# Firmware reference: gpio_manager.cpp lines 97-129
+
+name: Successful GPIO Pin Reservation
+version: 1
+steps:
+  # Wait for boot to complete
+  - wait-serial: "Phase 1: Core Infrastructure READY"
+
+  # Wait for MQTT connection
+  - wait-serial: "MQTT connected successfully"
+
+  # External MQTT config injection happens here (CI helper script)
+
+  # Verify GPIO Manager received reservation request
+  - wait-serial: "Pin 4 allocated"
+
+  # Verify sensor name is tracked
+  - wait-serial: "TempSensor1"
+
+  # Verify config response is successful
+  - wait-serial: "config_response"

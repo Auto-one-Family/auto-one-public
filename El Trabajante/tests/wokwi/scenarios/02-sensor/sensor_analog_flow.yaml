@@ -1,0 +1,31 @@
+# Analog Sensor (pH/EC Simulation) Flow Test
+# Validates analog sensor reading via Potentiometer on GPIO 34 (input-only pin)
+# Potentiometer in Wokwi: 50% = ~2048 ADC value
+# Enhanced with dynamic set-control to verify ADC pipeline with changed values
+# Timeout: 90000ms
+
+name: Analog Sensor Flow Test
+version: 1
+steps:
+  # Boot and connect
+  - wait-serial: "MQTT connected successfully"
+
+  # Registration gate: opens on server confirmation or 10s timeout fallback
+  - wait-serial: "REGISTRATION"
+
+  # Sensor Manager active
+  - wait-serial: "Sensor Manager"
+
+  # Sensor data published with default value (50% position)
+  - wait-serial: "Published"
+
+  # Dynamic: Change potentiometer to 75% via set-control
+  - set-control:
+      part-id: "pot_analog"
+      control: "position"
+      value: "0.75"
+  - delay: 8000ms
+  - wait-serial: "Published"
+
+  # Heartbeat confirms system operational
+  - wait-serial: "heartbeat"

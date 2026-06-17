@@ -1,0 +1,27 @@
+# DS18B20 Full Sensor Flow Test
+# Validates complete flow: Init → OneWire → Read → MQTT Publish → Heartbeat
+# Timeout: 90000ms
+
+name: DS18B20 Full Sensor Flow Test
+version: 1
+steps:
+  # Boot sequence completes
+  - wait-serial: "Phase 1: Core Infrastructure READY"
+  - wait-serial: "Phase 2: Communication Layer READY"
+
+  # MQTT connected (setup Phase 2)
+  - wait-serial: "MQTT connected successfully"
+
+  # OneWire bus initialization (setup Phase 3 - after MQTT, before loop)
+  - wait-serial: "OneWire"
+
+  # Sensor Manager active (setup Phase 4 - after OneWire, before loop)
+  - wait-serial: "Sensor Manager"
+
+  # Registration gate: opens on server confirmation or 10s timeout fallback
+  # Note: REGISTRATION comes from loop() after heartbeat ACK - AFTER setup() completes
+  - wait-serial: "REGISTRATION"
+
+  # Heartbeat confirms loop() running with sensor data
+  # Note: "Published" is LOG_D (debug-level), not visible at default LOG_INFO
+  - wait-serial: "heartbeat"

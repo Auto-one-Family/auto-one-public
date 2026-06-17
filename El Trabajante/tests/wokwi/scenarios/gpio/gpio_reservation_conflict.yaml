@@ -1,0 +1,53 @@
+# GPIO-RES-002: GPIO Conflict Detection - Reject Double Reservation
+# =================================================================
+# Validates that GPIO Manager correctly rejects requests for
+# already-reserved pins, preventing hardware conflicts.
+#
+# Test ID: GPIO-RES-002
+# Priority: CRITICAL (Safety)
+# Requirement: Second requestPin(4, ...) returns false with error log
+#
+# Test Scenario:
+#   1. Configure sensor on GPIO 4 (first reservation - success)
+#   2. Try to configure another sensor on GPIO 4 (conflict - rejected)
+#   3. Verify error message contains "already reserved" or "conflict"
+#   4. Verify original sensor remains functional
+#
+# This test prevents the dangerous scenario where two components
+# try to use the same GPIO pin, potentially causing hardware damage.
+#
+# MQTT-Injection (extern via CI):
+#   Step 1 - First sensor on GPIO 4:
+#     mosquitto_pub -h localhost -t "kaiser/god/esp/ESP_00000001/config" \
+#       -m '{"sensors":[{"gpio":4,"sensor_type":"temp_ds18b20","sensor_name":"TempSensor1","active":true}]}'
+#   Step 2 - Second sensor on same GPIO 4 (after ~1s):
+#     mosquitto_pub -h localhost -t "kaiser/god/esp/ESP_00000001/config" \
+#       -m '{"sensors":[{"gpio":4,"sensor_type":"ph_sensor","sensor_name":"ConflictSensor","active":true}]}'
+#
+# Firmware reference: gpio_manager.cpp lines 104-109
+
+name: GPIO Conflict Detection - Reject Double Reservation
+version: 1
+steps:
+  # Wait for boot to complete
+  - wait-serial: "Phase 1: Core Infrastructure READY"
+
+  # Wait for MQTT connection
+  - wait-serial: "MQTT connected successfully"
+
+  # STEP 1: External MQTT injection - first sensor on GPIO 4 (CI helper script)
+
+  # Verify first reservation succeeds
+  - wait-serial: "Pin 4 allocated"
+
+  # Wait a moment for config to be applied
+  - delay: 1000ms
+
+  # STEP 2: External MQTT injection - second sensor on SAME GPIO 4 (CI helper script)
+
+  # Verify conflict is detected
+  # GPIO Manager should log conflict error
+  - wait-serial: "conflict"
+
+  # Verify the original owner is mentioned in error
+  - wait-serial: "TempSensor1"

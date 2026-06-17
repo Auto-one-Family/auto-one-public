@@ -1,0 +1,29 @@
+# I2C Incomplete Read Error Test
+# Test-ID: I2C-ERR-002
+# Validates: Incomplete read is detected and error tracked
+# Expected: Error logged when received bytes != requested bytes
+# Timeout: 90000ms
+
+name: I2C Incomplete Read Error (I2C-ERR-002)
+version: 1
+steps:
+  # I2C Bus Manager initializes
+  - wait-serial: "I2C Bus Manager initialized successfully"
+
+  # System operates normally
+  - wait-serial: "Phase 4: Sensor System READY"
+
+# NOTE: Incomplete read errors occur when:
+# 1. Device stops transmitting mid-read
+# 2. I2C clock stretching timeout
+# 3. Device internal error
+#
+# Implementation (i2c_bus.cpp lines 264-270):
+#   if (received != length) {
+#       LOG_ERROR("I2C read: Expected X bytes, got Y");
+#       errorTracker.trackError(ERROR_I2C_READ_FAILED, ...);
+#       return false;
+#   }
+#
+# Wokwi limitation: Cannot easily simulate mid-transfer abort
+# Requires hardware test or mock test for full validation

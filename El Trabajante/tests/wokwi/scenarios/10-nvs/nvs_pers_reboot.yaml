@@ -1,0 +1,31 @@
+# NVS General Persistence Test
+# Test-ID: NVS-PERS-001
+# CRITICAL: Validates all NVS data survives ESP32 reboot
+# Timeout: 90000ms
+#
+# This is the fundamental persistence test!
+# All config data MUST survive power cycles.
+#
+# Expected behavior:
+# - Data written to NVS persists across reboot
+# - No corruption after reset
+# - System restores to previous state
+
+name: NVS Data Survives Reboot
+version: 1
+steps:
+  # System boots with existing NVS data
+  - wait-serial: "ESP32 Sensor Network"
+  - wait-serial: "StorageManager: Initialized"
+
+  # NVS data is loaded during boot
+  - wait-serial: "Phase 1: Core Infrastructure READY"
+
+  # WiFi config persisted - auto-connects
+  - wait-serial: "WiFi connected successfully"
+
+  # Zone/Kaiser config persisted - correct MQTT topics
+  - wait-serial: "MQTT connected successfully"
+
+  # System operates normally
+  - wait-serial: "heartbeat"

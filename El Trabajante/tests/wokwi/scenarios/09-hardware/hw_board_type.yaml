@@ -1,0 +1,39 @@
+# HW-ID-001 & HW-ID-004: Board Type Identification
+# =================================================
+# Validates that BOARD_TYPE is correctly logged during boot
+# and can be used to identify the hardware platform.
+#
+# Test IDs: HW-ID-001, HW-ID-004
+# Priority: MEDIUM
+# Requirement: BOARD_TYPE macro is defined and logged during boot
+#
+# ESP32-WROOM-32: BOARD_TYPE = "ESP32_WROOM_32"
+# XIAO ESP32-C3:  BOARD_TYPE = "XIAO_ESP32C3"
+#
+# Firmware references:
+#   - esp32_dev.h line 15: #define BOARD_TYPE "ESP32_WROOM_32"
+#   - xiao_esp32c3.h line 15: #define BOARD_TYPE "XIAO_ESP32C3"
+#   - gpio_manager.cpp: Logs board type during initialization
+
+name: Board Type Identification
+version: 1
+steps:
+  # Wait for boot banner
+  - wait-serial: "ESP32 Sensor Network"
+
+  # GPIO Safe-Mode must show board type
+  - wait-serial: "GPIO SAFE-MODE INITIALIZATION"
+
+  # Verify BOARD_TYPE is logged
+  # This line should contain the board identifier
+  - wait-serial: "Board Type:"
+
+  # For ESP32 WROOM (wokwi_simulation uses esp32_dev)
+  # The exact board string should appear
+  - wait-serial: "ESP32"
+
+  # Verify initialization completes successfully
+  - wait-serial: "Safe-Mode initialization complete"
+
+  # Phase 1 complete confirms GPIO init was successful
+  - wait-serial: "Phase 1: Core Infrastructure READY"

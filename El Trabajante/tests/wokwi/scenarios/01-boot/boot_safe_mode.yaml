@@ -1,0 +1,17 @@
+# Safe-Mode Initialization Test
+# Validates that GPIO Safe-Mode is initialized FIRST
+# Timeout: 45000ms
+
+name: Safe-Mode Initialization Test
+version: 1
+steps:
+  # Hardware Init
+  - wait-serial: "ESP32 Sensor Network"
+
+  # Safe-Mode MUST happen before anything else
+  - wait-serial: "GPIO SAFE-MODE INITIALIZATION"
+  - wait-serial: "Board Type:"
+  - wait-serial: "Safe-Mode initialization complete"
+
+  # Verify no CRITICAL errors and Phase 1 completes
+  - wait-serial: "Phase 1: Core Infrastructure READY"

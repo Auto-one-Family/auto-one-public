@@ -1,0 +1,51 @@
+# PWM E2E Fan Control Simulation Test
+# Simulates a real-world fan speed control scenario
+# Tests typical fan speed levels: Off, Low, Medium, High, Max
+# Timeout: 240000ms
+
+name: PWM E2E Fan Control Simulation
+version: 1
+steps:
+  # Wait for system ready
+  - wait-serial: "MQTT connected successfully"
+  - wait-serial: "heartbeat"
+
+  # === Configure PWM Fan ===
+  # Topic: kaiser/god/esp/{esp_id}/config
+  # Payload: {"actuators":[{"gpio":26,"actuator_type":"pwm_fan","actuator_name":"VentFan","active":true}]}
+
+  - wait-serial: "PWMActuator initialized"
+  - wait-serial: "GPIO 26"
+
+  # === Fan Speed Control Sequence ===
+
+  # Low Speed (20%)
+  # Topic: kaiser/god/esp/{esp_id}/actuator/26/command
+  # Payload: {"command":"SET","value":0.2}
+  - wait-serial: "20"
+
+  # Medium Speed (50%)
+  # Payload: {"command":"SET","value":0.5}
+  - wait-serial: "50"
+
+  # High Speed (80%)
+  # Payload: {"command":"SET","value":0.8}
+  - wait-serial: "80"
+
+  # Max Speed (100%)
+  # Payload: {"command":"SET","value":1.0}
+  - wait-serial: "100"
+
+  # Off
+  # Payload: {"command":"OFF"}
+  - wait-serial: "0"
+
+  # === Emergency Stop Test ===
+  # Set to high speed then emergency stop
+  # Payload: {"command":"SET","value":0.8}
+  - wait-serial: "80"
+
+  # Emergency Stop
+  # Topic: kaiser/broadcast/emergency
+  # Payload: {"command":"stop","reason":"Test"}
+  - wait-serial: "emergency"

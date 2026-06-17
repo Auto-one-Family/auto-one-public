@@ -1,0 +1,40 @@
+# GPIO-BOOT-003: I2C Pins Auto-Reserved
+# =============================================
+# Validates that I2C pins (SDA=21, SCL=22) are automatically
+# reserved for system use during GPIO initialization.
+#
+# Test ID: GPIO-BOOT-003
+# Priority: HIGH
+# Requirement: I2C pins have owner="system" after initializeAllPinsToSafeMode()
+#
+# I2C Pin Configuration (ESP32 WROOM):
+#   SDA = GPIO 21
+#   SCL = GPIO 22
+#
+# Firmware reference: gpio_manager.cpp lines 68-76
+
+name: I2C Pins Auto-Reserved During Boot
+version: 1
+steps:
+  # Wait for boot to start
+  - wait-serial: "ESP32 Sensor Network"
+
+  # Wait for GPIO initialization
+  - wait-serial: "GPIO SAFE-MODE INITIALIZATION"
+
+  # Verify I2C pins are auto-reserved
+  # This message confirms both SDA and SCL were successfully reserved
+  - wait-serial: "I2C pins auto-reserved"
+
+  # Verify SDA pin number
+  - wait-serial: "SDA: GPIO 21"
+
+  # Verify SCL pin number
+  - wait-serial: "SCL: GPIO 22"
+
+  # Verify initialization completes without I2C reservation failure
+  - wait-serial: "Safe-Mode initialization complete"
+
+  # Ensure NO warning about I2C reservation failure
+  # (If this appears, the test should fail)
+  # Note: We can't directly test for absence, but we verify success above

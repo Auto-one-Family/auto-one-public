@@ -1,0 +1,82 @@
+# GPIO-INT-002: Actuator Manager Integration
+# ==========================================
+# Validates that ActuatorManager correctly uses GPIO Manager
+# for pin reservation and mode configuration.
+#
+# Test ID: GPIO-INT-002
+# Priority: HIGH
+# Requirement: actuatorManager.configureActuator() calls gpioManager.requestPin() and configurePinMode()
+#
+# Integration Flow:
+#   1. MQTT config arrives with actuator definition
+#   2. ActuatorManager processes config
+#   3. ActuatorManager calls gpioManager.requestPin(gpio, "actuator", name)
+#   4. ActuatorManager calls gpioManager.configurePinMode(gpio, OUTPUT)
+#   5. GPIO Manager reserves pin and sets OUTPUT mode
+#   6. Actuator becomes operational
+#
+# MQTT-Injection (extern via CI):
+#   Step 1 - Configure pump actuator:
+#     mosquitto_pub -h localhost -t "kaiser/god/esp/ESP_00000001/config" \
+#       -m '{"actuators":[{"gpio":5,"actuator_type":"pump","actuator_name":"WaterPump","active":true}]}'
+#   Step 2 - Send ON command (after ~500ms):
+#     mosquitto_pub -h localhost -t "kaiser/god/esp/ESP_00000001/actuator/5/command" \
+#       -m '{"command":"ON"}'
+#   Step 3 - Configure fan actuator (after ~500ms):
+#     mosquitto_pub -h localhost -t "kaiser/god/esp/ESP_00000001/config" \
+#       -m '{"actuators":[{"gpio":14,"actuator_type":"fan","actuator_name":"VentFan","active":true}]}'
+#   Step 4 - Send PWM command (after ~500ms):
+#     mosquitto_pub -h localhost -t "kaiser/god/esp/ESP_00000001/actuator/14/command" \
+#       -m '{"command":"PWM","value":0.5}'
+#
+# Firmware reference:
+#   - actuator_manager.cpp (configureActuator method)
+#   - gpio_manager.cpp (requestPin, configurePinMode methods)
+
+name: Actuator Manager GPIO Integration
+version: 1
+steps:
+  # Wait for boot to complete
+  - wait-serial: "Phase 1: Core Infrastructure READY"
+
+  # Wait for Actuator Manager initialization
+  - wait-serial: "Actuator Manager initialized"
+
+  # Wait for Safety Controller initialization
+  - wait-serial: "Safety Controller initialized"
+
+  # Wait for MQTT connection
+  - wait-serial: "MQTT connected successfully"
+
+  # External MQTT injection: configure binary actuator (pump) (CI helper script)
+
+  # Verify GPIO Manager allocates pin
+  - wait-serial: "Pin 5 allocated"
+  - wait-serial: "actuator"
+
+  # Verify actuator name is tracked
+  - wait-serial: "WaterPump"
+
+  # Verify config response is successful
+  - wait-serial: "config_response"
+
+  # Wait for actuator to be ready
+  - delay: 500ms
+
+  # External MQTT injection: test actuator ON command (CI helper script)
+
+  # Verify actuator responds (GPIO is working as OUTPUT)
+  - wait-serial: "GPIO 5"
+
+  # External MQTT injection: configure PWM actuator (fan) (CI helper script)
+  - delay: 500ms
+
+  # Verify PWM actuator allocation
+  - wait-serial: "Pin 14 allocated"
+  - wait-serial: "VentFan"
+
+  # External MQTT injection: test PWM command (CI helper script)
+  - delay: 500ms
+
+  # Verify PWM response
+  - wait-serial: "GPIO 14"

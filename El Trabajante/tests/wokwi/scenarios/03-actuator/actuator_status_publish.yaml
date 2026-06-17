@@ -1,0 +1,18 @@
+# Actuator Status Publishing Test
+# Validates that actuator status is published periodically (every 30s)
+# Timeout: 90000ms
+
+name: Actuator Status Publishing Test
+version: 1
+steps:
+  # Wait for full boot
+  - wait-serial: "Phase 5: Actuator System READY"
+
+  # Registration gate: opens on server confirmation or 10s timeout fallback
+  - wait-serial: "REGISTRATION"
+
+  # Wait for heartbeat (system running)
+  - wait-serial: "heartbeat"
+
+  # Actuator status should be published
+  - wait-serial: "actuator"

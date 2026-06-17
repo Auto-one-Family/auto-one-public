@@ -1,0 +1,36 @@
+# OneWire DS18B20 Sensor Configuration Test (OW-TEMP-002)
+# Validates complete DS18B20 sensor configuration flow
+# Tests: ROM validation, GPIO sharing, device presence, NVS persistence
+# Timeout: 90000ms
+
+name: OneWire DS18B20 Sensor Configuration
+version: 1
+steps:
+  # Full boot sequence
+  - wait-serial: "Phase 5: Actuator System READY"
+
+  # MQTT connected for receiving config
+  - wait-serial: "MQTT connected successfully"
+
+  # When sensor config is received for DS18B20:
+  # 1. OneWire sensor detected
+  - wait-serial: "OneWire sensor detected"
+
+  # 2. ROM code validated (16 hex chars)
+  # If ROM code passes validation, continues
+  # If ROM code fails: "Invalid OneWire ROM-Code length"
+
+  # 3. GPIO sharing check
+  # First sensor on bus: "Reserved GPIO X for OneWire bus"
+  # OR: "Sharing OneWire bus on GPIO X"
+
+  # 4. Device presence verified
+  - wait-serial: "OneWire device"
+  - wait-serial: "verified"
+
+  # 5. Configuration persisted
+  - wait-serial: "Configuration persisted to NVS"
+
+  # 6. Sensor active
+  - wait-serial: "Configured"
+  - wait-serial: "GPIO"

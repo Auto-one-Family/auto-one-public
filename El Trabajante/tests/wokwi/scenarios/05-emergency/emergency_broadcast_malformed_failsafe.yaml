@@ -1,0 +1,26 @@
+# Broadcast Emergency Malformed Payload Fail-Safe Test
+# Verifies strict parser + fail-safe branch for malformed/contract-mismatch payloads.
+# Timeout: 90000ms
+#
+# MQTT-Injection (extern via CI/local helper):
+#   1) Parse-Error payload:
+#      topic: kaiser/broadcast/emergency
+#      payload: {"command":"stop_all"   <-- intentionally broken JSON
+#   2) Contract-Mismatch payload (wrong type):
+#      topic: kaiser/broadcast/emergency
+#      payload: {"command":123,"reason":"bad type"}
+#
+# Expected:
+#   - EMERGENCY_PARSE_ERROR is logged + fail-safe emergency stop
+#   - EMERGENCY_CONTRACT_MISMATCH is logged + fail-safe emergency stop
+
+name: Broadcast Emergency Malformed Fail-Safe
+version: 1
+steps:
+  - wait-serial: "MQTT connected successfully"
+  - wait-serial: "Broadcast emergency parse error"
+  - wait-serial: "EMERGENCY_PARSE_ERROR"
+  - wait-serial: "Fail-safe emergency stop triggered due to parse error"
+  - wait-serial: "Broadcast emergency contract mismatch"
+  - wait-serial: "EMERGENCY_CONTRACT_MISMATCH"
+  - wait-serial: "Fail-safe emergency stop triggered due to contract mismatch"

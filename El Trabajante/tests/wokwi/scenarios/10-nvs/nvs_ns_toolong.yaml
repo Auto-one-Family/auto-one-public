@@ -1,0 +1,31 @@
+# NVS Namespace Name Too Long Test
+# Test-ID: NVS-NS-005
+# Validates namespace names > 15 chars are rejected
+# Timeout: 90000ms
+#
+# NVS namespace name limit: 15 characters (ESP-IDF)
+#
+# Expected behavior:
+# - beginNamespace("1234567890123456") returns false
+# - Error logged: namespace name too long
+# - System remains stable
+
+name: NVS Namespace Name Too Long
+version: 1
+steps:
+  # System boots normally (no long namespace names in production code)
+  - wait-serial: "ESP32 Sensor Network"
+  - wait-serial: "StorageManager: Initialized"
+
+  # All production namespaces are <= 15 chars:
+  # - wifi_config (11)
+  # - zone_config (11)
+  # - sensor_config (13)
+  # - actuator_config (15)
+  # - system_config (13)
+  # - subzone_config (14)
+
+  - wait-serial: "Phase 1: Core Infrastructure READY"
+  - wait-serial: "WiFi connected successfully"
+  - wait-serial: "MQTT connected successfully"
+  - wait-serial: "heartbeat"

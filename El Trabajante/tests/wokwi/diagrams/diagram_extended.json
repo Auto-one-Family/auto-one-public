@@ -1,0 +1,93 @@
+{
+  "version": 1,
+  "author": "AutomationOne",
+  "editor": "wokwi",
+  "parts": [
+    {
+      "type": "wokwi-esp32-devkit-v1",
+      "id": "esp",
+      "top": 0,
+      "left": 100,
+      "attrs": {}
+    },
+    {
+      "type": "wokwi-ds18b20",
+      "id": "temp1",
+      "top": 150,
+      "left": 0,
+      "attrs": { "temperature": "22.5" }
+    },
+    {
+      "type": "wokwi-led",
+      "id": "led1",
+      "top": 150,
+      "left": 280,
+      "attrs": { "color": "green" }
+    },
+    {
+      "type": "wokwi-led",
+      "id": "led2",
+      "top": 180,
+      "left": 280,
+      "attrs": { "color": "red" }
+    },
+    {
+      "type": "wokwi-pushbutton",
+      "id": "btn_boot",
+      "top": 220,
+      "left": 0,
+      "attrs": { "label": "BOOT", "color": "blue" }
+    },
+    {
+      "type": "wokwi-dht22",
+      "id": "dht1",
+      "top": 100,
+      "left": 320,
+      "attrs": { "temperature": "25", "humidity": "60" }
+    },
+    {
+      "type": "wokwi-resistor",
+      "id": "r_pullup",
+      "top": 100,
+      "left": 30,
+      "rotate": 90,
+      "attrs": { "value": "4700" }
+    },
+    {
+      "type": "wokwi-resistor",
+      "id": "r_led1",
+      "top": 180,
+      "left": 250,
+      "attrs": { "value": "220" }
+    },
+    {
+      "type": "wokwi-resistor",
+      "id": "r_led2",
+      "top": 210,
+      "left": 250,
+      "attrs": { "value": "220" }
+    }
+  ],
+  "connections": [
+    ["esp:GND.1", "temp1:GND", "black", []],
+    ["esp:3V3", "temp1:VCC", "red", []],
+    ["esp:D4", "temp1:DQ", "green", []],
+    ["temp1:VCC", "r_pullup:1", "red", []],
+    ["temp1:DQ", "r_pullup:2", "orange", []],
+
+    ["esp:GND.2", "led1:C", "black", []],
+    ["esp:D5", "r_led1:1", "yellow", []],
+    ["r_led1:2", "led1:A", "yellow", []],
+
+    ["esp:GND.3", "led2:C", "black", []],
+    ["esp:D18", "r_led2:1", "orange", []],
+    ["r_led2:2", "led2:A", "orange", []],
+
+    ["esp:D0", "btn_boot:1.l", "blue", []],
+    ["esp:GND.4", "btn_boot:2.l", "black", []],
+
+    ["esp:D15", "dht1:SDA", "cyan", []],
+    ["esp:3V3", "dht1:VCC", "red", []],
+    ["esp:GND.5", "dht1:GND", "black", []]
+  ]
+}

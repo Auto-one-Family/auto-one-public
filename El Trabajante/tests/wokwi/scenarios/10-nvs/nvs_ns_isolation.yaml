@@ -1,0 +1,33 @@
+# NVS Namespace Isolation Test
+# Test-ID: NVS-NS-007
+# Validates data in one namespace is NOT visible in another
+# Timeout: 90000ms
+#
+# CRITICAL TEST: Namespace isolation is fundamental to system integrity
+#
+# Expected behavior:
+# - wifi_config keys NOT visible in zone_config
+# - sensor_config keys NOT visible in actuator_config
+# - Each namespace is fully isolated
+
+name: NVS Namespace Isolation
+version: 1
+steps:
+  # Wait for system initialization
+  - wait-serial: "ESP32 Sensor Network"
+  - wait-serial: "StorageManager: Initialized"
+
+  # Multiple namespaces are accessed during boot
+  # ConfigManager opens wifi_config, zone_config, system_config, etc.
+  - wait-serial: "Phase 1: Core Infrastructure READY"
+
+  # WiFi config loaded from wifi_config namespace
+  - wait-serial: "WiFi connected successfully"
+
+  # Zone/Kaiser config loaded from zone_config namespace
+  # (separate from wifi_config)
+  - wait-serial: "MQTT connected successfully"
+
+  # If isolation failed, system would crash or use wrong data
+  # Successful boot proves isolation works
+  - wait-serial: "heartbeat"

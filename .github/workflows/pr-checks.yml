@@ -1,0 +1,73 @@
+name: PR Checks
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  label-pr:
+    name: Label PR by Changed Files
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Label PR
+        uses: actions/labeler@v5
+        with:
+          repo-token: "${{ secrets.GITHUB_TOKEN }}"
+          configuration-path: .github/labeler.yml
+
+  pr-validation:
+    name: Validate PR
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Check for large files
+        run: |
+          # Check for files larger than 5MB
+          large_files=$(find . -type f -size +5M -not -path "./.git/*" 2>/dev/null || true)
+          if [ -n "$large_files" ]; then
+            echo "::warning::Large files detected (>5MB):"
+            echo "$large_files"
+          fi
+
+      - name: Check for sensitive files
+        run: |
+          # Check for potential secrets or sensitive files
+          # Note: .env.ci is excluded — it contains CI-specific config (DB URLs, ports), not real secrets
+          sensitive_patterns=".env .env.local .env.production .env.*.local *.env credentials.json secrets.json \
+            private.key *.pem *.key id_rsa id_ed25519 *.p12 *.pfx \
+            service-account.json firebase-adminsdk*.json"
+          for pattern in $sensitive_patterns; do
+            found=$(find . -name "$pattern" -not -name "*.example" -not -name ".env.ci" -not -path "./.git/*" 2>/dev/null || true)
+            if [ -n "$found" ]; then
+              echo "::error::Potentially sensitive file detected: $found"
+              exit 1
+            fi
+          done
+          echo "No sensitive files detected"
+
+      - name: Contract Governance Gate
+        run: |
+          python .github/scripts/contract_governance_gate.py --base-ref "origin/${{ github.base_ref }}"

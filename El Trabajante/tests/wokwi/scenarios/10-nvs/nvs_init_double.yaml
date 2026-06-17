@@ -1,0 +1,23 @@
+# NVS Double Initialization Test
+# Test-ID: NVS-INIT-002
+# Validates double initialization is handled correctly (idempotent)
+# Timeout: 90000ms
+#
+# Expected behavior:
+# - Second begin() call is safe (idempotent)
+# - No memory leaks from double init
+# - No crash or corruption
+
+name: NVS Double Initialization
+version: 1
+steps:
+  # System boots
+  - wait-serial: "ESP32 Sensor Network"
+  - wait-serial: "StorageManager: Initialized"
+
+  # If double-init happened, system would crash or log error
+  # Successful boot proves idempotent behavior
+  - wait-serial: "Phase 1: Core Infrastructure READY"
+  - wait-serial: "WiFi connected successfully"
+  - wait-serial: "MQTT connected successfully"
+  - wait-serial: "heartbeat"

@@ -1,0 +1,25 @@
+# OneWire Raw Temperature Reading (OW-TEMP-001)
+# Validates raw temperature reading from DS18B20 sensor
+# Tests: readRawTemperature() returns valid raw value
+# Note: Wokwi DS18B20 returns fixed temperature configured in diagram.json
+# RAW value for 22.5°C = 360 (22.5 / 0.0625 = 360)
+# Timeout: 90000ms
+
+name: OneWire Raw Temperature Reading
+version: 1
+steps:
+  # Full boot sequence
+  - wait-serial: "Phase 5: Actuator System READY"
+
+  # OneWire bus must be initialized
+  - wait-serial: "OneWire Bus Manager"
+
+  # Sensor Manager active
+  - wait-serial: "Sensor Manager initialized"
+
+  # Wait for first sensor reading cycle
+  # Raw temperature should be logged
+  - wait-serial: "OneWire raw temperature"
+
+  # Confirm data is processed (sent to God-Kaiser)
+  - wait-serial: "God-Kaiser"

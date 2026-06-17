@@ -1,0 +1,25 @@
+# OneWire Parasitic Power Detection Test (OW-INIT-006)
+# Validates parasitic power mode detection
+# Tests: 2-wire vs 3-wire power mode detection
+# Note: Wokwi DS18B20 uses normal power (VCC), not parasitic
+# Timeout: 90000ms
+
+name: OneWire Parasitic Power Detection
+version: 1
+steps:
+  # Boot sequence
+  - wait-serial: "OneWire Bus Manager initialization started"
+
+  # Initialization succeeds
+  - wait-serial: "OneWire Bus Manager initialized successfully"
+
+  # Parasitic power mode is detected by DallasTemperature library
+  # If parasitic: write(0x44, 1) with strong pullup
+  # readRawTemperature uses: onewire_->write(0x44, 1)
+  # The "1" parameter enables parasitic power support
+
+  # Normal 3-wire operation continues
+  - wait-serial: "Phase 3: Hardware Abstraction READY"
+
+  # System operates normally
+  - wait-serial: "heartbeat"

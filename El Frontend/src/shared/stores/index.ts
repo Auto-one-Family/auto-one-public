@@ -1,0 +1,35 @@
+/**
+ * Shared Stores
+ *
+ * Re-exports all shared Pinia stores from a single entry point.
+ */
+
+export { useAuthStore } from './auth.store'
+export { useLogicStore } from './logic.store'
+export { useDragStateStore } from './dragState.store'
+export type { SensorTypeDragPayload, SensorDragPayload, ActuatorTypeDragPayload, DashboardWidgetDragPayload } from './dragState.store'
+export { useDatabaseStore } from './database.store'
+export { useZoneStore } from './zone.store'
+export { useActuatorStore } from './actuator.store'
+export { useSensorStore } from './sensor.store'
+export { useGpioStore } from './gpio.store'
+export type { OneWireScanState } from './gpio.store'
+export { useNotificationStore } from './notification.store'
+export { useConfigStore } from './config.store'
+export { useUiStore } from './ui.store'
+export type { ConfirmOptions, ConfirmVariant, ContextMenuItem } from './ui.store'
+export { useDashboardStore } from './dashboard.store'
+export type { StatusFilter, TypeFilter } from './dashboard.store'
+export { useNotificationInboxStore } from './notification-inbox.store'
+export type { InboxFilter, SourceFilterValue } from './notification-inbox.store'
+export { useQuickActionStore } from './quickAction.store'
+export type { QuickAction, ViewContext, QuickActionPanel } from './quickAction.store'
+export { useAlertCenterStore, STATS_POLL_INTERVAL_MS } from './alert-center.store'
+export type { AlertLifecycleFailure, AlertLifecycleResult } from './alert-center.store'
+export { usePluginsStore } from './plugins.store'
+export { useOpsLifecycleStore } from './ops-lifecycle.store'
+export { useDiagnosticsStore } from './diagnostics.store'
+export { useInventoryStore, INVENTORY_COLUMNS } from './inventory.store'
+export type { ComponentItem, SortKey, SortDirection, ColumnDef } from './inventory.store'
+export { usePlantsStore } from './plants.store'
+export type { Plant } from './plants.store'

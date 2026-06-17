@@ -1,0 +1,246 @@
+name: Backend E2E Tests
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  workflow_dispatch:  # Manual trigger
+  push:
+    branches: [main, master, develop]
+    paths:
+      - 'El Servador/**'
+      - 'docker-compose.yml'
+      - 'docker-compose.ci.yml'
+      - 'docker-compose.e2e.yml'
+      - '.github/workflows/backend-e2e-tests.yml'
+  pull_request:
+    branches: [main, master, develop]
+    paths:
+      - 'El Servador/**'
+      - 'docker-compose.yml'
+      - 'docker-compose.ci.yml'
+      - 'docker-compose.e2e.yml'
+
+env:
+  PYTHON_VERSION: '3.11'
+  POETRY_VERSION: '1.7.1'
+  COMPOSE_PROJECT_NAME: automationone-e2e
+
+jobs:
+  backend-e2e:
+    name: Backend E2E Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Cache Docker layers
+        uses: actions/cache@v4
+        with:
+          path: /tmp/.buildx-cache
+          key: ${{ runner.os }}-docker-e2e-${{ hashFiles('**/Dockerfile', '**/package-lock.json', '**/poetry.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-docker-e2e-
+            ${{ runner.os }}-docker-
+
+      - name: Create log directories
+        run: mkdir -p logs/server
+
+      - name: Create shared-infra network (if not exists)
+        run: docker network create shared-infra-net || true
+
+      - name: Start E2E Stack
+        run: |
+          # Use CI compose with E2E overrides for full stack
+          # ci.yml: tmpfs PostgreSQL, fast healthchecks
+          # e2e.yml: CORS, E2E JWT secret, DATABASE_AUTO_INIT
+          # NOTE: Do NOT use --wait here — it fails immediately on container exit
+          # without showing logs. The "Wait for healthy services" step handles
+          # health polling with proper diagnostics instead.
+          docker compose -f docker-compose.yml -f docker-compose.ci.yml -f docker-compose.e2e.yml \
+            up -d --build postgres mqtt-broker el-servador
+        env:
+          # BuildKit for faster cached builds
+          DOCKER_BUILDKIT: 1
+          COMPOSE_DOCKER_CLI_BUILD: 1
+          # Shell env vars for docker-compose.yml base config variable substitution.
+          # NOTE: docker-compose.e2e.yml overrides postgres password and JWT to
+          # e2e_test_password / e2e_test_secret_key_not_for_production respectively.
+          # These values here suppress "variable is not set" warnings from the base config.
+          POSTGRES_USER: god_kaiser
+          POSTGRES_PASSWORD: e2e_test_password
+          POSTGRES_DB: god_kaiser_db
+          JWT_SECRET_KEY: e2e_test_secret_key_not_for_production
+
+      - name: Wait for healthy services
+        run: |
+          echo "Waiting for services to be healthy..."
+          COMPOSE="docker compose -f docker-compose.yml -f docker-compose.ci.yml -f docker-compose.e2e.yml"
+
+          # First wait for DB and MQTT (usually fast)
+          echo "--- Waiting for PostgreSQL ---"
+          for i in $(seq 1 20); do
+            if $COMPOSE exec -T postgres pg_isready -U god_kaiser -d god_kaiser_db 2>/dev/null; then
+              echo "✅ PostgreSQL ready (attempt $i)"
+              break
+            fi
+            [ $i -eq 20 ] && echo "⚠️ PostgreSQL not ready after 20 attempts"
+            sleep 1
+          done
+
+          echo "--- Waiting for MQTT ---"
+          for i in $(seq 1 20); do
+            if $COMPOSE exec -T mqtt-broker mosquitto_pub -h localhost -t healthcheck -m ok 2>/dev/null; then
+              echo "✅ MQTT ready (attempt $i)"
+              break
+            fi
+            [ $i -eq 20 ] && echo "⚠️ MQTT not ready after 20 attempts"
+            sleep 1
+          done
+
+          echo "--- Waiting for Server ---"
+          max_attempts=60
+          for i in $(seq 1 $max_attempts); do
+            # Check if server container is still running
+            if ! docker ps --filter "name=automationone-server" --filter "status=running" -q | grep -q .; then
+              echo "❌ Server container is not running! Capturing logs..."
+              echo "=== Server Container Logs (last 200 lines) ==="
+              $COMPOSE logs el-servador --tail 200 || true
+              echo "=== PostgreSQL Logs ==="
+              $COMPOSE logs postgres --tail 50 || true
+              echo "=== MQTT Logs ==="
+              $COMPOSE logs mqtt-broker --tail 20 || true
+              echo "=== Container Status ==="
+              $COMPOSE ps -a
+              exit 1
+            fi
+            # Check if server is responding
+            if curl -sf http://localhost:8000/api/v1/health/live > /dev/null 2>&1; then
+              echo "✅ Server healthy after ${i} attempts"
+              break
+            fi
+            if [ $i -eq $max_attempts ]; then
+              echo "❌ Server not healthy after ${max_attempts} attempts ($(( max_attempts * 3 ))s)"
+              $COMPOSE logs el-servador --tail 200 || true
+              exit 1
+            fi
+            sleep 3
+          done
+          # Show service status
+          $COMPOSE ps
+        env:
+          POSTGRES_USER: god_kaiser
+          POSTGRES_PASSWORD: e2e_test_password
+          POSTGRES_DB: god_kaiser_db
+          JWT_SECRET_KEY: e2e_test_secret_key_not_for_production
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Poetry
+        uses: snok/install-poetry@v1
+        with:
+          version: ${{ env.POETRY_VERSION }}
+          virtualenvs-create: true
+          virtualenvs-in-project: true
+
+      - name: Cache Poetry dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            El Servador/god_kaiser_server/.venv
+            ~/.cache/pypoetry
+          key: poetry-${{ runner.os }}-${{ hashFiles('El Servador/god_kaiser_server/poetry.lock') }}
+          restore-keys: |
+            poetry-${{ runner.os }}-
+
+      - name: Install dependencies
+        working-directory: El Servador/god_kaiser_server
+        run: poetry install --no-root --no-interaction
+
+      - name: Run Backend E2E Tests
+        working-directory: El Servador/god_kaiser_server
+        env:
+          E2E_TEST_USER: admin
+          E2E_TEST_PASSWORD: ${{ secrets.E2E_TEST_PASSWORD }}
+        run: |
+          poetry run pytest tests/e2e/ \
+            --e2e -v \
+            --timeout=120 \
+            --tb=short \
+            --junitxml=../../logs/server/e2e-results.xml \
+            2>&1 | tee ../../logs/server/e2e-test.log
+        # E2EConfig reads from pytest CLI options with defaults:
+        # --server-url http://localhost:8000 (default)
+        # --mqtt-host localhost (default)
+        # --mqtt-port 1883 (default)
+        # Docker exposes these ports to localhost, so defaults work
+
+      - name: Capture server logs on failure
+        if: failure()
+        run: |
+          docker compose -f docker-compose.yml -f docker-compose.ci.yml -f docker-compose.e2e.yml \
+            logs el-servador > logs/server/e2e-server.log 2>&1 || true
+          docker compose -f docker-compose.yml -f docker-compose.ci.yml -f docker-compose.e2e.yml \
+            logs postgres > logs/server/e2e-postgres.log 2>&1 || true
+          docker compose -f docker-compose.yml -f docker-compose.ci.yml -f docker-compose.e2e.yml \
+            logs mqtt-broker > logs/server/e2e-mqtt.log 2>&1 || true
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-e2e-results
+          path: |
+            logs/server/e2e-test.log
+            logs/server/e2e-results.xml
+            logs/server/e2e-server.log
+            logs/server/e2e-postgres.log
+            logs/server/e2e-mqtt.log
+          retention-days: 7
+
+      - name: Cleanup
+        if: always()
+        run: |
+          docker compose -f docker-compose.yml -f docker-compose.ci.yml -f docker-compose.e2e.yml \
+            down -v --remove-orphans
+
+  test-summary:
+    name: E2E Test Summary
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [backend-e2e]
+    if: always()
+    permissions:
+      contents: read
+      checks: write
+      pull-requests: write
+
+    steps:
+      - name: Download test results
+        uses: actions/download-artifact@v4
+        with:
+          name: backend-e2e-results
+          path: results/
+
+      - name: List downloaded files
+        run: |
+          echo "Downloaded artifacts:"
+          find results/ -type f 2>/dev/null || echo "No files found"
+
+      - name: Publish Test Results
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        if: always()
+        with:
+          files: |
+            results/**/e2e-results.xml
+          check_name: Backend E2E Test Results
+          comment_mode: always

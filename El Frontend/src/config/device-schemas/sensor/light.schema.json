@@ -1,0 +1,32 @@
+{
+  "$id": "automationone://schemas/sensor/light",
+  "allOf": [{ "$ref": "automationone://schemas/base" }],
+  "properties": {
+    "sensor_chip": {
+      "type": "string",
+      "title": "Sensor-Chip",
+      "enum": ["BH1750", "TSL2561", "VEML7700"],
+      "default": "BH1750",
+      "readOnly": true
+    },
+    "i2c_address": {
+      "type": "string",
+      "title": "I2C-Adresse",
+      "enum": ["0x23", "0x5C"],
+      "default": "0x23",
+      "readOnly": true
+    },
+    "measurement_mode": {
+      "type": "string",
+      "title": "Messmodus",
+      "enum": ["continuous_high", "continuous_low", "one_time_high"],
+      "default": "continuous_high"
+    },
+    "range_lux": {
+      "type": "string",
+      "title": "Messbereich",
+      "default": "1-65535 lx",
+      "readOnly": true
+    }
+  }
+}

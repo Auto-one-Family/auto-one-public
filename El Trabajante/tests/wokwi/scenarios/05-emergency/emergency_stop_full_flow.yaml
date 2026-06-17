@@ -1,0 +1,31 @@
+# Emergency Stop Full Flow Test
+# Validates: Activate actuators → Broadcast emergency → All stop → Clear emergency
+# Requires MQTT injection: Actuator ON, then broadcast emergency, then clear
+# Timeout: 120000ms
+
+name: Emergency Stop Full Flow Test
+version: 1
+steps:
+  # Wait for MQTT connection
+  - wait-serial: "MQTT connected successfully"
+
+  # Registration gate: opens on server confirmation or 10s timeout fallback
+  - wait-serial: "REGISTRATION"
+
+  # Wait for system to be operational
+  - wait-serial: "heartbeat"
+
+  # After MQTT injection: Actuator 5 ON
+  # Topic: kaiser/god/esp/ESP_00000001/actuator/5/command
+  # Payload: {"command":"ON","value":1.0}
+  - wait-serial: "Actuator"
+
+  # After MQTT injection: Broadcast emergency stop
+  # Topic: kaiser/broadcast/emergency
+  # Payload: {"auth_token":"master_token"}
+  - wait-serial: "BROADCAST EMERGENCY-STOP RECEIVED"
+
+  # After MQTT injection: Clear emergency
+  # Topic: kaiser/god/esp/ESP_00000001/actuator/emergency
+  # Payload: {"command":"emergency_clear","auth_token":"ESP_00000001"}
+  - wait-serial: "EMERGENCY-CLEAR"

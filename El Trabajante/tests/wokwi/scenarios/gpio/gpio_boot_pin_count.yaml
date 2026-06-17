@@ -1,0 +1,36 @@
+# GPIO-BOOT-002: All SAFE_GPIO_PINS Initialized
+# =============================================
+# Validates that exactly SAFE_PIN_COUNT (20) pins are initialized
+# and tracked in the GPIO Manager's internal state.
+#
+# Test ID: GPIO-BOOT-002
+# Priority: HIGH
+# Requirement: pins_.size() == HardwareConfig::SAFE_PIN_COUNT after init
+#
+# ESP32 WROOM Safe Pins (20):
+#   4, 5, 14, 15, 16, 17, 18, 19, 21, 22, 23, 25, 26, 27, 32, 33,
+#   34, 35, 36, 39  (input-only ADC1 pins)
+#
+# Firmware reference: gpio_manager.cpp lines 42-65
+
+name: All Safe GPIO Pins Initialized
+version: 1
+steps:
+  # Wait for boot to start
+  - wait-serial: "ESP32 Sensor Network"
+
+  # Wait for GPIO initialization
+  - wait-serial: "GPIO SAFE-MODE INITIALIZATION"
+
+  # Verify board type (determines pin count)
+  - wait-serial: "Board Type: ESP32_WROOM_32"
+
+  # Verify correct pin count is reported
+  # ESP32 WROOM has 20 safe pins (16 bidirectional + 4 input-only ADC1)
+  - wait-serial: "Available Pins: 20"
+
+  # Verify reserved pins count
+  - wait-serial: "Reserved Pins: 6"
+
+  # Verify completion
+  - wait-serial: "Safe-Mode initialization complete"

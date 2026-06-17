@@ -1,0 +1,118 @@
+# AutomationOne - E2E Test Environment
+# =====================================
+# Purpose: Full-stack E2E testing with Playwright
+# Usage: docker compose -f docker-compose.yml -f docker-compose.e2e.yml up -d --wait
+#
+# Key differences from CI:
+# - Frontend ALWAYS included (no profile restriction)
+# - Faster healthchecks (3s interval) for quicker test startup
+# - CORS allows localhost:5173 for Playwright browser tests
+# - PostgreSQL uses tmpfs (RAM-based) for speed
+# - JWT secret set for consistent test tokens
+#
+# TM-Decision (2026-02-06): Playwright runs on host, services in Docker
+
+services:
+  # ============================================
+  # PostgreSQL Database (E2E-optimized)
+  # ============================================
+  postgres:
+    # Use default config (no custom postgresql.conf - volumes are reset for tmpfs)
+    command: postgres
+    environment:
+      POSTGRES_USER: god_kaiser
+      POSTGRES_PASSWORD: e2e_test_password
+      POSTGRES_DB: god_kaiser_db
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U god_kaiser -d god_kaiser_db"]
+      interval: 3s
+      timeout: 2s
+      retries: 15
+      start_period: 3s
+    restart: "no"
+    # RAM-based for speed
+    tmpfs:
+      - /var/lib/postgresql/data:size=512M
+    # Clear base volumes (postgres_data) to avoid conflict with tmpfs
+    volumes: !reset []
+
+  # ============================================
+  # MQTT Broker (E2E-optimized)
+  # ============================================
+  mqtt-broker:
+    healthcheck:
+      test: ["CMD", "mosquitto_pub", "-h", "localhost", "-t", "health/check", "-m", "ping"]
+      interval: 3s
+      timeout: 2s
+      retries: 15
+    restart: "no"
+    # Use CI-specific config (no persistence, simpler setup)
+    volumes:
+      - ./.github/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+
+  # ============================================
+  # God-Kaiser Server (E2E-optimized)
+  # ============================================
+  el-servador:
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mqtt-broker:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+asyncpg://god_kaiser:e2e_test_password@postgres:5432/god_kaiser_db
+      DATABASE_AUTO_INIT: "true"
+      ENVIRONMENT: testing
+      LOG_LEVEL: INFO
+      TESTING: "true"
+      # MQTT
+      MQTT_BROKER_HOST: mqtt-broker
+      MQTT_BROKER_PORT: "1883"
+      # JWT for E2E tests (consistent secret for token verification)
+      JWT_SECRET_KEY: e2e_test_secret_key_not_for_production
+      JWT_ACCESS_TOKEN_EXPIRE_MINUTES: "1440"  # 24h — prevents token expiry during long E2E runs
+      # CORS - allow Playwright browser on localhost:5173
+      CORS_ALLOWED_ORIGINS: '["http://localhost:5173","http://127.0.0.1:5173"]'
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+    restart: "no"
+    # No host volume mounts in E2E (avoids PermissionError on /app/logs)
+    volumes: !reset []
+    # No watch/develop section in E2E
+    develop: !reset null
+
+  # ============================================
+  # Frontend (ALWAYS included in E2E)
+  # ============================================
+  el-frontend:
+    profiles: !reset []  # Reset profile restriction so el-frontend always starts in E2E mode
+    environment:
+      # Vite server-side proxy targets (used by Node.js proxy inside the container)
+      # Must use Docker service name — localhost:8000 resolves to the frontend container itself
+      VITE_API_TARGET: http://el-servador:8000
+      VITE_WS_TARGET: ws://el-servador:8000
+      # Legacy vars kept for compatibility (not used by vite.config.ts proxy)
+      VITE_API_URL: http://localhost:8000
+      VITE_WS_URL: ws://localhost:8000
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://localhost:5173').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))\""]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+      start_period: 15s
+    restart: "no"
+    # No host volume mounts in E2E (use built-in container files, not host mounts)
+    volumes: !reset []
+    # No watch/develop section in E2E
+    develop: !reset null
+
+# ============================================
+# Notes:
+# ============================================
+# - pgadmin, loki, alloy, prometheus, grafana excluded via profiles
+# - Playwright runs on HOST, not in container (browser GPU access)
+# - Frontend healthcheck uses Node.js fetch (Alpine-compatible)

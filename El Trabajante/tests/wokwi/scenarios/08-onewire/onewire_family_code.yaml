@@ -1,0 +1,26 @@
+# OneWire Family Code Validation Test (OW-DISC-005)
+# Validates that Family Code 0x28 (DS18B20) is recognized
+# Tests: getDeviceType() mapping, non-DS18B20 handling
+# Timeout: 90000ms
+
+name: OneWire Family Code Validation
+version: 1
+steps:
+  # Boot with OneWire
+  - wait-serial: "Phase 3: Hardware Abstraction READY"
+
+  # When devices are scanned, Family Code is logged
+  # DS18B20 has Family Code 0x28
+  - wait-serial: "Found device: Family=0x28"
+
+  # getDeviceType() maps family codes:
+  # 0x28 -> "ds18b20"
+  # 0x10 -> "ds18s20"
+  # 0x22 -> "ds1822"
+  # Other -> "unknown"
+
+  # Unknown family codes would show:
+  # "Unknown device family 0xXX" (but still added if CRC valid)
+
+  # Device type is logged when verified
+  - wait-serial: "type: ds18b20"

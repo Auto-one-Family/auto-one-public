@@ -1,0 +1,33 @@
+{
+  "$id": "automationone://schemas/actuator/pwm",
+  "allOf": [{ "$ref": "automationone://schemas/base" }],
+  "properties": {
+    "pwm_frequency": {
+      "type": "number",
+      "title": "PWM-Frequenz (Hz)",
+      "default": 25000,
+      "description": "PWM-Frequenz in Hertz"
+    },
+    "pwm_resolution": {
+      "type": "number",
+      "title": "PWM-Auflösung (Bit)",
+      "enum": [8, 10, 12, 16],
+      "default": 8
+    },
+    "min_duty_percent": {
+      "type": "number",
+      "title": "Min. Duty Cycle (%)",
+      "default": 0
+    },
+    "max_duty_percent": {
+      "type": "number",
+      "title": "Max. Duty Cycle (%)",
+      "default": 100
+    },
+    "connected_device": {
+      "type": "string",
+      "title": "Angeschlossenes Gerät",
+      "description": "z.B. Lüfter, LED-Dimmer"
+    }
+  }
+}

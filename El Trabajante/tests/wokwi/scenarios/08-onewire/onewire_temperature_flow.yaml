@@ -1,0 +1,29 @@
+# OneWire Temperature Reading Flow Test (OW-TEMP-003)
+# Validates complete temperature reading and MQTT publishing
+# Tests: Raw reading, MQTT publishing, server-centric flow
+# Note: Wokwi DS18B20 returns configured temperature (22.5°C)
+# Timeout: 90000ms
+
+name: OneWire Temperature Reading Flow
+version: 1
+steps:
+  # Full boot
+  - wait-serial: "Phase 5: Actuator System READY"
+
+  # OneWire bus and sensor ready
+  - wait-serial: "OneWire Bus Manager initialized"
+  - wait-serial: "Sensor Manager initialized"
+
+  # Initial heartbeat
+  - wait-serial: "heartbeat"
+
+  # Wait for measurement cycle (30s default, but may be faster in test)
+  # Temperature measurement occurs
+  - wait-serial: "OneWire raw temperature"
+
+  # Raw value logged (for 22.5°C: approximately 360 raw)
+  # "will be processed by God-Kaiser"
+  - wait-serial: "God-Kaiser"
+
+  # Data published via MQTT
+  - wait-serial: "Published"

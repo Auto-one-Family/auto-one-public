@@ -1,0 +1,42 @@
+# NVS Float Type Tests
+# Test-ID: NVS-TYPE-011, NVS-TYPE-012
+# Validates float storage and retrieval from NVS
+# Timeout: 90000ms
+#
+# Float values are used for:
+# - Sensor calibration offsets
+# - Threshold values (temperature limits, pH ranges)
+# - PWM duty cycle percentages
+# - Actuator runtime durations
+#
+# Expected behavior:
+# - putFloat(key, 3.14159) stores float in NVS
+# - getFloat(key) retrieves value correctly
+# - Negative values (-273.15) supported
+# - Default value returned for missing keys
+#
+# Log patterns (from storage_manager.cpp:395):
+# - Write: "StorageManager: Write {key} = {value}" (4 decimal places)
+# - Read: "StorageManager: Read {key} = {value}" (4 decimal places)
+# - No namespace: "StorageManager: No namespace open for putFloat"
+
+name: NVS Float Type Operations
+version: 1
+steps:
+  # System boots normally
+  - wait-serial: "ESP32 Sensor Network"
+  - wait-serial: "StorageManager: Initialized"
+  - wait-serial: "Phase 1: Core Infrastructure READY"
+
+  # Float values are used in various contexts:
+  # - Calibration factors stored in sensor_config namespace
+  # - PWM duty cycles (0.0 - 1.0 range)
+  # - Temperature thresholds
+
+  # WiFi and MQTT connection
+  - wait-serial: "WiFi connected successfully"
+  - wait-serial: "MQTT connected successfully"
+
+  # System operational - implicitly proves float operations work
+  # (ConfigManager uses floats for calibration values)
+  - wait-serial: "heartbeat"

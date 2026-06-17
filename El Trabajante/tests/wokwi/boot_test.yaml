@@ -1,0 +1,70 @@
+# ============================================
+# Wokwi Boot Sequence Test
+# ============================================
+# Purpose: Validate ESP32 firmware boot sequence
+#
+# Verified Log Messages (from main.cpp, config_manager.cpp):
+# - main.cpp:98     "ESP32 Sensor Network v4.0 (Phase 2)"
+# - main.cpp:100    "Chip Model: ESP32"
+# - main.cpp:114    "Watchdog configured: 30s timeout"
+# - gpio_manager.cpp:33  "=== GPIO SAFE-MODE INITIALIZATION ==="
+# - main.cpp:192    "Logger system initialized"
+# - config_manager.cpp:66  "ConfigManager: WOKWI_SIMULATION mode"
+# - main.cpp:416    "Phase 1: Core Infrastructure READY"
+# - wifi_manager.cpp:86   "Connecting to WiFi: Wokwi-GUEST"
+# - wifi_manager.cpp:140  "WiFi connected! IP: ..."
+# - main.cpp:474    "MQTT connected successfully"
+# - main.cpp:478    "Initial heartbeat sent"
+#
+# NOTE: Timeout is set via CLI --timeout option, not per step
+# Usage:
+#   wokwi-cli . --timeout 90000 --scenario tests/wokwi/boot_test.yaml
+
+name: Boot Sequence Test
+version: 1
+
+steps:
+  # ============================================
+  # Phase 0: Hardware Initialization
+  # ============================================
+  - wait-serial: "ESP32 Sensor Network"
+  - wait-serial: "Chip Model:"
+  - wait-serial: "Watchdog configured"
+
+  # ============================================
+  # Phase 1: Core Infrastructure
+  # ============================================
+  - wait-serial: "GPIO SAFE-MODE"
+  - wait-serial: "Logger system initialized"
+  - wait-serial: "ConfigManager"
+  - wait-serial: "WOKWI_SIMULATION mode"
+  - wait-serial: "Phase 1: Core Infrastructure READY"
+
+  # ============================================
+  # Phase 2: Communication Layer
+  # ============================================
+  - wait-serial: "Phase 2: Communication Layer"
+  - wait-serial: "Connecting to WiFi:"
+  - wait-serial: "WiFi connected"
+  - wait-serial: "MQTT connected"
+  - wait-serial: "Phase 2: Communication Layer READY"
+
+  # ============================================
+  # Phase 3: Hardware Abstraction
+  # ============================================
+  - wait-serial: "Phase 3: Hardware Abstraction"
+  - wait-serial: "I2C Bus Manager initialized"
+  - wait-serial: "Phase 3: Hardware Abstraction READY"
+
+  # ============================================
+  # Phase 4 & 5: Sensor & Actuator
+  # ============================================
+  - wait-serial: "Phase 4: Sensor System"
+  - wait-serial: "Phase 4: Sensor System READY"
+  - wait-serial: "Phase 5: Actuator System"
+  - wait-serial: "Phase 5: Actuator System READY"
+
+  # ============================================
+  # Heartbeat (confirms full boot)
+  # ============================================
+  - wait-serial: "heartbeat"

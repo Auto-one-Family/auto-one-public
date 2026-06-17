@@ -1,0 +1,25 @@
+# I2C Bus Scan Empty Bus Test
+# Test-ID: I2C-SCAN-002
+# Validates: scanBus() returns empty list when no devices connected
+# Expected: Scan completes with 0 devices found
+# Timeout: 90000ms
+# Diagram: Default diagram.json (no I2C devices connected)
+
+name: I2C Bus Scan Empty Bus (I2C-SCAN-002)
+version: 1
+steps:
+  # I2C Bus Manager initializes
+  - wait-serial: "I2C Bus Manager initialized successfully"
+
+  # Phase 3 completes
+  - wait-serial: "Phase 3: Hardware Abstraction READY"
+
+  # If a bus scan is triggered, it should find no devices
+  # This depends on firmware calling scanBus() explicitly
+  # The standard boot doesn't scan unless configured sensors need it
+
+  # Verify system continues to Phase 4 without I2C devices
+  - wait-serial: "Phase 4: Sensor System READY"
+
+# NOTE: To explicitly test empty bus scan, firmware needs to
+# call scanBus() unconditionally or via test command

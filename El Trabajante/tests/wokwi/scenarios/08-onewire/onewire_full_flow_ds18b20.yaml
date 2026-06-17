@@ -1,0 +1,47 @@
+# OneWire DS18B20 Full Flow Test (OW-E2E-001)
+# Validates complete DS18B20 lifecycle: Init → Discover → Read → Publish
+# Tests: End-to-end OneWire sensor functionality
+# Timeout: 90000ms
+
+name: OneWire DS18B20 Full Flow
+version: 1
+steps:
+  # ============================================
+  # PHASE 1: CORE INFRASTRUCTURE
+  # ============================================
+  - wait-serial: "Phase 1: Core Infrastructure READY"
+
+  # ============================================
+  # PHASE 2: COMMUNICATION (MQTT)
+  # ============================================
+  - wait-serial: "MQTT connected successfully"
+  - wait-serial: "Phase 2: Communication Layer READY"
+
+  # ============================================
+  # PHASE 3: HARDWARE ABSTRACTION (ONEWIRE)
+  # ============================================
+  # OneWire bus initialization
+  - wait-serial: "OneWire Bus Manager initialization started"
+  - wait-serial: "OneWire Bus Manager initialized successfully"
+  - wait-serial: "Phase 3: Hardware Abstraction READY"
+
+  # ============================================
+  # PHASE 4: SENSOR SYSTEM
+  # ============================================
+  - wait-serial: "Sensor Manager initialization started"
+  - wait-serial: "Sensor Manager initialized"
+  - wait-serial: "Phase 4: Sensor System READY"
+
+  # ============================================
+  # PHASE 5: ACTUATOR SYSTEM (COMPLETE BOOT)
+  # ============================================
+  - wait-serial: "Phase 5: Actuator System READY"
+
+  # ============================================
+  # OPERATIONAL: HEARTBEAT + READINGS
+  # ============================================
+  # Initial heartbeat confirms system running
+  - wait-serial: "heartbeat"
+
+  # OneWire temperature reading occurs
+  # (May take up to 30s depending on measurement interval)

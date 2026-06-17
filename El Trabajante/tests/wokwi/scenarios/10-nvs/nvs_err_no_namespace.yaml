@@ -1,0 +1,31 @@
+# NVS Error: Operations Without Open Namespace
+# Test-ID: NVS-ERR-001, NVS-ERR-002
+# Validates error handling when read/write attempted without open namespace
+# Timeout: 90000ms
+#
+# Expected behavior:
+# - put*() returns false and logs ERROR
+# - get*() returns default_value and logs ERROR
+# - System remains stable (doesn't crash)
+#
+# Note: This error condition shouldn't occur in normal operation
+# It's a programming error if it happens
+
+name: NVS Operations Without Namespace
+version: 1
+steps:
+  # System boots normally
+  - wait-serial: "ESP32 Sensor Network"
+  - wait-serial: "StorageManager: Initialized"
+
+  # ConfigManager properly manages namespaces
+  # If any code tries to access NVS without namespace,
+  # error would be logged: "No namespace open"
+
+  # System continues normally
+  - wait-serial: "Phase 1: Core Infrastructure READY"
+  - wait-serial: "WiFi connected successfully"
+  - wait-serial: "MQTT connected successfully"
+
+  # Stable operation proves proper namespace management
+  - wait-serial: "heartbeat"

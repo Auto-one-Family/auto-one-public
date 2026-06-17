@@ -1,0 +1,25 @@
+# I2C Device Not Present Check Test
+# Test-ID: I2C-SCAN-005
+# Validates: isDevicePresent() returns false for non-existent device
+# Expected: Device at 0x99 is not detected (invalid address)
+# Timeout: 90000ms
+
+name: I2C Device Not Present Check (I2C-SCAN-005)
+version: 1
+steps:
+  # I2C Bus Manager initializes
+  - wait-serial: "I2C Bus Manager initialized successfully"
+
+  # Phase 3 completes
+  - wait-serial: "Phase 3: Hardware Abstraction READY"
+
+  # If config tries to add sensor at invalid/missing address,
+  # isDevicePresent() should return false and log error
+
+  # System continues without error for standard boot
+  - wait-serial: "Phase 4: Sensor System READY"
+
+# NOTE: To test explicit "device not present":
+# 1. Send config command for I2C sensor at address 0x99
+# 2. Expect: "Invalid I2C address: 0x99" error logged
+# 3. Config response: FAILURE with reason

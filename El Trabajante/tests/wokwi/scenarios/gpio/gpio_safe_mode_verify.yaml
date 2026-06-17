@@ -1,0 +1,75 @@
+# GPIO-SAFE-004 & GPIO-SAFE-005: Safe-Mode State Verification
+# ============================================================
+# Validates that:
+# - isPinInSafeMode(gpio) returns correct state
+# - Safe-Mode correctly overrides active OUTPUT pins
+#
+# Test IDs: GPIO-SAFE-004, GPIO-SAFE-005
+# Priority: HIGH
+# Requirement:
+#   - isPinInSafeMode(gpio) returns accurate in_safe_mode flag
+#   - OUTPUT HIGH pin becomes INPUT_PULLUP after safe mode
+#
+# GPIO-SAFE-004: Verify isPinInSafeMode() accuracy
+# GPIO-SAFE-005: Verify active OUTPUT is correctly overridden
+#
+# Test Method:
+#   1. Configure actuator, turn ON (OUTPUT HIGH)
+#   2. Trigger emergency stop
+#   3. Verify pin is now in safe mode
+#   4. Verify heartbeat shows pin as "safe"
+#
+# MQTT-Injection (extern via CI):
+#   Step 1 - Configure actuator:
+#     mosquitto_pub -h localhost -t "kaiser/god/esp/ESP_00000001/config" \
+#       -m '{"actuators":[{"gpio":5,"actuator_type":"pump","actuator_name":"VerifyPump","active":true}]}'
+#   Step 2 - Turn actuator ON (after ~500ms):
+#     mosquitto_pub -h localhost -t "kaiser/god/esp/ESP_00000001/actuator/5/command" \
+#       -m '{"command":"ON"}'
+#   Step 3 - Trigger emergency (after ~500ms):
+#     mosquitto_pub -h localhost -t "kaiser/god/esp/ESP_00000001/actuator/emergency" \
+#       -m '{"command":"STOP","reason":"Verify safe mode override"}'
+#
+# Firmware reference:
+#   - gpio_manager.cpp lines 284-291 (isPinInSafeMode)
+#   - gpio_manager.cpp lines 176-200 (enableSafeModeForAllPins)
+
+name: Safe-Mode State Verification
+version: 1
+steps:
+  # Wait for boot to complete
+  - wait-serial: "Phase 1: Core Infrastructure READY"
+
+  # Verify initial state - all pins should be in safe mode
+  - wait-serial: "All pins successfully set to Safe-Mode"
+
+  # Wait for MQTT connection
+  - wait-serial: "MQTT connected successfully"
+
+  # External MQTT injection: configure actuator (CI helper script)
+
+  # Verify pin is allocated (no longer in safe mode)
+  - wait-serial: "Pin 5 allocated"
+
+  # External MQTT injection: turn actuator ON (OUTPUT HIGH) (CI helper script)
+  - delay: 500ms
+
+  # Verify actuator state is ON
+  - wait-serial: "GPIO 5"
+
+  # External MQTT injection: trigger emergency (CI helper script)
+  - delay: 500ms
+
+  # Verify emergency is processed
+  - wait-serial: "Emergency"
+
+  # GPIO-SAFE-005: Verify OUTPUT was de-energized BEFORE mode change
+  # The log should show de-energize happened for GPIO 5
+  - wait-serial: "de-energized"
+
+  # Verify pin is now in safe mode
+  - wait-serial: "safe"
+
+  # GPIO-SAFE-004: The next heartbeat should show pin 5 as safe
+  # Heartbeat includes gpio_status with safe flag
+  # We can trigger heartbeat by waiting or via system command

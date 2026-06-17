@@ -1,0 +1,96 @@
+# I2C Auto Bus Recovery on Error 4/5 (I2C-ERR-HIGH-002)
+# ============================================================================
+# PRIORITY: HIGH
+# CATEGORY: error-handling, bus-recovery
+#
+# REAL-WORLD SCENARIO:
+# An I2C bus can "hang" (error code 4 or 5) due to:
+# - Sensor holding SDA/SCL low (communication glitch)
+# - ESD event causing bus state corruption
+# - Noise on long cables causing timing issues
+# Without auto-recovery, ALL I2C sensors become non-functional until
+# manual power cycle - unacceptable for 24/7 greenhouse operation.
+#
+# I2C BUS RECOVERY TECHNIQUE:
+# 1. Toggle SCL 9+ times while SDA is high (clock out stuck data)
+# 2. Generate STOP condition (SDA low→high while SCL high)
+# 3. Re-initialize Wire library
+#
+# EXPECTED FIRMWARE BEHAVIOR:
+# 1. Detect error code 4 or 5 on any I2C operation
+# 2. Increment error counter for that operation
+# 3. After N consecutive failures (e.g., 3), trigger bus recovery
+# 4. Log "I2C bus recovery initiated" or similar
+# 5. Attempt bus clock recovery sequence
+# 6. Re-initialize Wire with same SDA/SCL/frequency
+# 7. Verify bus functional by scanning
+# 8. Alert server about recovery event
+#
+# WOKWI LIMITATION:
+# Wokwi does NOT simulate I2C bus errors (code 4/5).
+# The virtual bus is always functional.
+# This test documents EXPECTED behavior for code review.
+#
+# FIRMWARE LIMITATION: Recovery exists but Wokwi cannot simulate I2C bus errors
+# File: El Trabajante/src/drivers/i2c_bus.cpp
+# Status: Bus recovery mechanism EXISTS (I2CBusManager::recoverBus(), line ~398)
+#
+# Implemented recovery (verified 2026-02-23):
+#   - Wire.end() to release current session
+#   - 9 SCL clock pulses to release stuck slaves
+#   - STOP condition generation (SDA rising while SCL high)
+#   - Wire.begin() re-initialization
+#   - Bus verification via general-call probe
+#   - Error tracking with ERROR_I2C_BUS_RECOVERY_STARTED/FAILED
+#
+# Cannot be tested in Wokwi because the virtual I2C bus never produces
+# error codes 4/5. Test on real hardware by shorting SDA to GND.
+# ============================================================================
+
+name: I2C Auto Bus Recovery
+version: 1
+
+# NOTE: This test documents expected behavior. Wokwi cannot simulate
+# bus errors, so the test verifies basic I2C functionality.
+
+steps:
+  # ============================================
+  # PHASE 1: SYSTEM BOOT
+  # ============================================
+  - wait-serial: "I2C Bus Manager initialized successfully"
+
+  # ============================================
+  # PHASE 2: NORMAL OPERATION
+  # ============================================
+  - wait-serial: "Phase 4: Sensor System READY"
+
+  # ============================================
+  # PHASE 3: CONTINUOUS OPERATION
+  # ============================================
+  - wait-serial: "heartbeat"
+
+  # ============================================
+  # VERIFICATION FOR CODE REVIEW:
+  #
+  # When bus error (code 4/5) occurs:
+  #
+  # CURRENT BEHAVIOR (PROBLEMATIC):
+  # - "I2C bus error: Bus not functional"
+  # - Wire.end() called
+  # - Function returns false
+  # - ALL I2C operations fail permanently
+  #
+  # EXPECTED BEHAVIOR (WITH FIX):
+  # - "I2C bus recovery initiated"
+  # - Clock recovery sequence executed
+  # - Wire re-initialized
+  # - "I2C bus recovery successful" or "FAILED"
+  # - On success: Operations resume
+  # - On failure: Track error, alert server
+  #
+  # TEST ON REAL HARDWARE:
+  # 1. Boot system with I2C sensors
+  # 2. Briefly short SDA to GND (causes bus hang)
+  # 3. Observe recovery attempt
+  # 4. Verify sensors resume operation
+  # ============================================

@@ -1,0 +1,28 @@
+# Error-Injection: Watchdog Stability Under Load
+# Configures multiple sensors and actuators to create high system load,
+# then triggers emergency stop/clear cycle. Verifies system survives the stress.
+# Expected: ConfigResponse success, then system handles emergency cycle gracefully.
+# Timeout: 90000ms
+#
+# MQTT-Injection (extern via CI, 3 messages):
+#   mosquitto_pub -h localhost -t "kaiser/god/esp/ESP_00000001/config" \
+#     -m '{"sensors":[{"gpio":4,"sensor_type":"ds18b20","sensor_name":"S1","active":true},{"gpio":15,"sensor_type":"dht22","sensor_name":"S2","active":true}],"actuators":[{"gpio":5,"actuator_type":"led","actuator_name":"A1","active":true}]}'
+#   sleep 2
+#   mosquitto_pub -h localhost -t "kaiser/broadcast/emergency" \
+#     -m '{"auth_token":"master_token"}'
+#   sleep 1
+#   mosquitto_pub -h localhost -t "kaiser/god/esp/ESP_00000001/actuator/emergency" \
+#     -m '{"command":"clear_emergency","auth_token":"ESP_00000001"}'
+
+name: Error Injection - Watchdog Stability Under Load
+version: 1
+steps:
+  - wait-serial: "Phase 5: Actuator System READY"
+  - wait-serial: "MQTT connected successfully"
+  - wait-serial: "REGISTRATION"
+  - wait-serial: "heartbeat"
+  # External MQTT config injection happens here (sleep 25 in CI)
+  - wait-serial: "ConfigResponse published"
+  # External emergency trigger + clear happens after config
+  - wait-serial: "BROADCAST EMERGENCY-STOP RECEIVED"
+  - wait-serial: "EMERGENCY-CLEAR"

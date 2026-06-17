@@ -1,0 +1,118 @@
+# OneWire Sensor Disappears During Operation (OW-ERR-CRITICAL-003)
+# ============================================================================
+# PRIORITY: CRITICAL
+# CATEGORY: error-handling, device-monitoring
+#
+# REAL-WORLD SCENARIO:
+# A technician accidentally disconnects a sensor cable, a mouse chews through
+# wiring, or a sensor fails mechanically. The system must detect that a
+# previously-working sensor is now unavailable and alert the operator.
+# Without detection: No data, no decisions, no alerts = crop damage.
+#
+# DETECTION METHODS:
+# 1. Bus reset fails before read (no devices respond)
+# 2. Device-specific select fails (ROM not found)
+# 3. CRC error on scratchpad read (partial data)
+# 4. Timeout during conversion (device lost power mid-operation)
+#
+# EXPECTED FIRMWARE BEHAVIOR:
+# 1. Detect when previously-discovered sensor stops responding
+# 2. Log ERROR with sensor ROM code or GPIO
+# 3. Track error via ErrorTracker (ERROR_ONEWIRE_DEVICE_DISCONNECTED)
+# 4. Publish alert to MQTT: kaiser/{kaiser_id}/esp/{esp_id}/system/error
+# 5. Continue attempting to read other sensors (fault isolation)
+#
+# WOKWI LIMITATION:
+# Wokwi does NOT support disconnecting sensors during simulation.
+# The virtual DS18B20 is always connected and responsive.
+# This test documents EXPECTED behavior for code review.
+#
+# FIRMWARE STATUS (2026-01-29):
+# File: El Trabajante/src/drivers/onewire_bus.cpp
+# Function: readRawTemperature(), isDevicePresent()
+#
+# PARTIAL IMPLEMENTATION EXISTS:
+# - isDevicePresent() CAN detect missing device
+# - readRawTemperature() checks bus reset (lines 232-238)
+# - CRC validation exists (lines 271-277)
+#
+# GAPS:
+# - No automatic alert generation when sensor disappears
+# - No tracking of "was present, now gone" state
+# - SensorManager does not call isDevicePresent() periodically
+# - No MQTT publish for sensor-loss events
+#
+# REQUIRED FIRMWARE ENHANCEMENT:
+# In SensorManager or dedicated health monitor:
+#   // Track discovered sensors
+#   static std::map<String, bool> sensor_present_state;
+#
+#   // On each read cycle:
+#   bool currently_present = oneWireBusManager.isDevicePresent(rom);
+#   if (sensor_present_state[rom_hex] && !currently_present) {
+#       LOG_ERROR("Sensor LOST: " + rom_hex + " was present, now disconnected");
+#       errorTracker.trackError(ERROR_ONEWIRE_DEVICE_DISCONNECTED, ...);
+#       mqttClient.publishSystemError("sensor_lost", rom_hex);
+#   }
+#   sensor_present_state[rom_hex] = currently_present;
+# ============================================================================
+
+name: OneWire Sensor Disappears Detection
+version: 1
+
+# NOTE: This test documents expected behavior. Wokwi cannot simulate
+# sensor disconnection, so the test verifies basic OneWire functionality.
+
+steps:
+  # ============================================
+  # PHASE 1: SYSTEM BOOT
+  # ============================================
+  - wait-serial: "Phase 3: Hardware Abstraction READY"
+
+  # ============================================
+  # PHASE 2: ONEWIRE INITIALIZATION
+  # ============================================
+  - wait-serial: "OneWire Bus Manager initialized"
+
+  # ============================================
+  # PHASE 3: INITIAL SENSOR DISCOVERY
+  # ============================================
+  # Sensor is discovered and working
+  - wait-serial: "Found device: Family=0x28"
+  - wait-serial: "devices found"
+
+  # ============================================
+  # PHASE 4: SUCCESSFUL READINGS
+  # ============================================
+  # First reading succeeds (sensor present)
+  - wait-serial: "OneWire raw temperature"
+
+  # ============================================
+  # PHASE 5: SYSTEM OPERATIONAL
+  # ============================================
+  - wait-serial: "heartbeat"
+
+  # ============================================
+  # SIMULATION NOTE:
+  # In a REAL test with physical hardware:
+  # 1. Let system boot and take readings
+  # 2. Physically disconnect sensor cable
+  # 3. Expected serial output:
+  #    - "ERROR" or "error"
+  #    - "disconnected" or "lost" or "missing"
+  #    - "DEVICE_NOT_FOUND" or "NO_DEVICES"
+  #    - ROM code or GPIO number
+  # 4. Expected MQTT publish to error topic
+  # ============================================
+
+  # ============================================
+  # VERIFICATION FOR CODE REVIEW:
+  # Check that these error codes exist and are used:
+  # - ERROR_ONEWIRE_DEVICE_NOT_FOUND (1025)
+  # - ERROR_ONEWIRE_NO_DEVICES (1021)
+  # - ERROR_ONEWIRE_DEVICE_DISCONNECTED (if added)
+  #
+  # Check that these functions handle device loss:
+  # - readRawTemperature() returns false on bus reset fail
+  # - isDevicePresent() can detect missing device
+  # ============================================

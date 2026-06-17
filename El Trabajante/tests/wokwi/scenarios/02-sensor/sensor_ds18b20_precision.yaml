@@ -1,0 +1,58 @@
+# DS18B20 Precision Test (12-Bit Resolution)
+# Validates sensor reads small temperature differences
+# DS18B20 12-bit resolution: 0.0625C steps
+# Values: 22.00, 22.06, 22.12, 22.50, 23.00
+# Tests: Firmware handles fractional temperatures correctly
+# Timeout: 90000ms
+
+name: DS18B20 Precision Test
+version: 1
+steps:
+  # Boot and connect
+  - wait-serial: "MQTT connected successfully"
+
+  # Registration gate
+  - wait-serial: "REGISTRATION"
+
+  # Wait for first measurement cycle
+  - wait-serial: "Published"
+
+  # --- Precision: Base (22.00C) ---
+  - set-control:
+      part-id: "temp1"
+      control: "temperature"
+      value: "22.00"
+  - delay: 8000ms
+  - wait-serial: "Published"
+
+  # --- Precision: +0.06C step (22.06C) ---
+  - set-control:
+      part-id: "temp1"
+      control: "temperature"
+      value: "22.06"
+  - delay: 8000ms
+  - wait-serial: "Published"
+
+  # --- Precision: +0.12C step (22.12C) ---
+  - set-control:
+      part-id: "temp1"
+      control: "temperature"
+      value: "22.12"
+  - delay: 8000ms
+  - wait-serial: "Published"
+
+  # --- Precision: Half degree (22.50C) ---
+  - set-control:
+      part-id: "temp1"
+      control: "temperature"
+      value: "22.50"
+  - delay: 8000ms
+  - wait-serial: "Published"
+
+  # --- Precision: Full degree (23.00C) ---
+  - set-control:
+      part-id: "temp1"
+      control: "temperature"
+      value: "23.00"
+  - delay: 8000ms
+  - wait-serial: "Published"

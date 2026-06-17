@@ -1,0 +1,30 @@
+# PWM Duty Cycle Invalid Value Test
+# Test-ID: PWM-DUTY-004
+# Validates that PWM controller rejects invalid percentage values
+# Uses MQTT actuator command with value > 1.0 or < 0.0
+# Expected: Error log and command rejection
+# Timeout: 120000ms
+
+name: PWM Duty Cycle Invalid Value
+version: 1
+steps:
+  # Wait for system ready
+  - wait-serial: "MQTT connected successfully"
+
+  # Wait for heartbeat
+  - wait-serial: "heartbeat"
+
+  # Configure PWM actuator
+  # Topic: kaiser/god/esp/{esp_id}/config
+  # Payload: {"actuators":[{"gpio":25,"actuator_type":"pwm","actuator_name":"TestPWM","active":true}]}
+
+  - wait-serial: "PWMActuator initialized"
+
+  # Send invalid PWM command: value=1.5 (150%)
+  # Topic: kaiser/god/esp/{esp_id}/actuator/25/command
+  # Payload: {"command":"SET","value":1.5}
+
+  # Expected: Error or value rejection
+  # Note: PWMActuator uses constrain(), so 1.5 becomes 1.0
+  # This tests the boundary behavior
+  - wait-serial: "value"

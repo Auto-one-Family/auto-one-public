@@ -1,0 +1,323 @@
+/* ============================================================================
+   DESIGN SYSTEM TOKENS — AutomationOne Mission Control
+   Single source of truth. Every visual decision lives here.
+   ============================================================================ */
+
+:root {
+  /* ═══════════════════════════════════════════════════════════════════════════
+     BACKGROUND HIERARCHY — 4 stops, deep void to overlay
+     Intentional: each step is a clear visual shift, no ambiguity
+     ═══════════════════════════════════════════════════════════════════════════ */
+  --color-bg-primary:    #07070d;   /* void — body, deepest layer */
+  --color-bg-secondary:  #0d0d16;   /* base — sidebar, header, main panels */
+  --color-bg-tertiary:   #15151f;   /* raised — cards, inputs, table headers */
+  --color-bg-quaternary: #1d1d2a;   /* overlay — hover states, dropdowns */
+  --color-bg-hover:      #1d1d2a;   /* alias for hover (= quaternary) */
+
+  /* Zoom depth: each level feels physically closer */
+  --color-bg-level-1:    #07070d;   /* Zone Overview — deepest void */
+  --color-bg-level-2:    #0a0a14;   /* Zone Detail — slightly warmer */
+  --color-bg-level-3:    #0e0e1a;   /* Device Detail — noticeably raised */
+
+  /* ═══════════════════════════════════════════════════════════════════════════
+     TEXT HIERARCHY — 3 stops, high contrast on dark
+     ═══════════════════════════════════════════════════════════════════════════ */
+  --color-text-primary:   #eaeaf2;  /* headlines, primary values, white-ish */
+  --color-text-secondary: #8585a0;  /* labels, descriptions, body text */
+  --color-text-muted:     #7e7e9a;  /* timestamps, hints — 4.7:1 on bg-secondary; disabled elements are WCAG-exempt */
+  --color-text-inverse:   #ffffff;  /* light text on dark/accent buttons */
+
+  /* ═══════════════════════════════════════════════════════════════════════════
+     ACCENT — 1 color, 3 intensities
+     Blue: the calm authority of mission control
+     ═══════════════════════════════════════════════════════════════════════════ */
+  --color-accent:        #3b82f6;   /* actions, focus, active states */
+  --color-accent-bright: #60a5fa;   /* highlights, hover accent */
+  --color-accent-dim:    #1e3a5f;   /* subtle accent backgrounds */
+
+  /* ═══════════════════════════════════════════════════════════════════════════
+     IRIDESCENT — for premium/active elements only
+     Water-reflection gradient: used sparingly for "alive" feeling
+     ═══════════════════════════════════════════════════════════════════════════ */
+  --color-iridescent-1: #60a5fa;    /* blue */
+  --color-iridescent-2: #818cf8;    /* violet-blue */
+  --color-iridescent-3: #a78bfa;    /* violet */
+  --color-iridescent-4: #c084fc;    /* pink-violet */
+
+  --gradient-iridescent: linear-gradient(
+    135deg,
+    var(--color-iridescent-1) 0%,
+    var(--color-iridescent-2) 50%,
+    var(--color-iridescent-3) 100%
+  );
+  --gradient-iridescent-full: linear-gradient(
+    135deg,
+    var(--color-iridescent-1) 0%,
+    var(--color-iridescent-2) 25%,
+    var(--color-iridescent-3) 50%,
+    var(--color-iridescent-4) 75%,
+    var(--color-iridescent-1) 100%
+  );
+
+  /* ═══════════════════════════════════════════════════════════════════════════
+     STATUS COLORS — functional, always same meaning
+     ═══════════════════════════════════════════════════════════════════════════ */
+  --color-success: #34d399;
+  --color-warning: #fbbf24;
+  --color-error:   #f87171;
+  --color-info:    #60a5fa;
+  --color-category-esp-status: var(--color-info);
+  --color-category-sensors: var(--color-success);
+  --color-category-actuators: var(--color-warning);
+  --color-category-system: var(--color-iridescent-2);
+
+  /* ═══════════════════════════════════════════════════════════════════════════
+     STATUS TINT BACKGROUNDS — subtle tinted surfaces at various intensities
+     ═══════════════════════════════════════════════════════════════════════════ */
+  --color-warning-bg:           rgba(245, 158, 11, 0.04);
+  --color-warning-bg-hover:     rgba(245, 158, 11, 0.06);
+  --color-warning-border:       rgba(245, 158, 11, 0.15);
+  --color-warning-glow:         rgba(245, 158, 11, 0.08);
+  --color-success-bg:           color-mix(in srgb, var(--color-success) 12%, transparent);
+  --color-success-bg-hover:     color-mix(in srgb, var(--color-success) 16%, transparent);
+  --color-success-border:       color-mix(in srgb, var(--color-success) 30%, transparent);
+  --color-error-bg:             color-mix(in srgb, var(--color-error) 12%, transparent);
+  --color-error-bg-hover:       color-mix(in srgb, var(--color-error) 16%, transparent);
+  --color-error-border:         color-mix(in srgb, var(--color-error) 35%, transparent);
+  --color-info-bg:              color-mix(in srgb, var(--color-info) 12%, transparent);
+  --color-info-bg-hover:        color-mix(in srgb, var(--color-info) 16%, transparent);
+  --color-info-border:          color-mix(in srgb, var(--color-info) 30%, transparent);
+  --color-category-sensors-bg:   color-mix(in srgb, var(--color-category-sensors) 12%, transparent);
+  --color-category-actuators-bg: color-mix(in srgb, var(--color-category-actuators) 12%, transparent);
+  --color-category-system-bg:    color-mix(in srgb, var(--color-category-system) 12%, transparent);
+  --color-category-esp-bg:       color-mix(in srgb, var(--color-category-esp-status) 12%, transparent);
+  --color-accent-bg:            rgba(96, 165, 250, 0.04);
+  --color-iridescent-glow:      rgba(167, 139, 250, 0.3);
+  --color-iridescent-glow-hover: rgba(167, 139, 250, 0.45);
+  --color-mock-bg:              rgba(168, 85, 247, 0.15);
+  --gradient-danger-end: color-mix(in srgb, var(--color-error) 70%, var(--color-warning) 30%);
+  --gradient-warning-end: color-mix(in srgb, var(--color-warning) 75%, var(--color-error) 25%);
+
+  /* ═══════════════════════════════════════════════════════════════════════════
+     MOCK / REAL DISTINCTION
+     ═══════════════════════════════════════════════════════════════════════════ */
+  --color-mock: #a78bfa;
+  --color-real: #22d3ee;
+
+  /* ═══════════════════════════════════════════════════════════════════════════
+     BORDERS — thin, precise, purposeful
+     ═══════════════════════════════════════════════════════════════════════════ */
+  /* Glass depth hierarchy — 3 levels */
+  /* Level 1: Background panels (navigation, tab bars, section containers) */
+  --glass-bg-l1:     rgba(255, 255, 255, 0.01);
+  --glass-blur-l1:   8px;
+  --glass-border-l1: rgba(255, 255, 255, 0.04);
+  --glass-shadow-l1: 0 4px 16px rgba(0, 0, 0, 0.2);
+
+  /* Level 2: Content cards (widgets, zone tiles, info cards) */
+  --glass-bg-l2:     rgba(255, 255, 255, 0.02);
+  --glass-blur-l2:   12px;
+  --glass-border-l2: rgba(255, 255, 255, 0.06);
+  --glass-shadow-l2: 0 8px 32px rgba(0, 0, 0, 0.4);
+
+  /* Level 3: Overlays (modals, slide-overs, hover toolbars, dropdowns) */
+  --glass-bg-l3:     rgba(255, 255, 255, 0.06);
+  --glass-blur-l3:   16px;
+  --glass-border-l3: rgba(255, 255, 255, 0.12);
+  --glass-shadow-l3: 0 12px 48px rgba(0, 0, 0, 0.5);
+
+  /* Backward-compatible aliases → L2 (no visual change for existing consumers) */
+  --glass-bg:           var(--glass-bg-l2);
+  --glass-bg-light:     rgba(255, 255, 255, 0.04);
+  --glass-border:       var(--glass-border-l2);
+  --glass-border-hover: rgba(255, 255, 255, 0.12);
+  --glass-shadow:       var(--glass-shadow-l2);
+  --glass-shadow-glow:  0 0 20px rgba(96, 165, 250, 0.2);
+
+  /* Semantic aliases — point to existing values for consistent usage */
+  --color-border:        var(--glass-border);
+  --color-surface-hover: var(--color-bg-hover);
+
+  /* ═══════════════════════════════════════════════════════════════════════════
+     SPACING — 4px grid, strict adherence
+     4  8  12  16  24  32  48
+     ═══════════════════════════════════════════════════════════════════════════ */
+  --space-1:   0.25rem;    /*  4px */
+  --space-2:   0.5rem;     /*  8px */
+  --space-3:   0.75rem;    /* 12px */
+  --space-4:   1rem;       /* 16px */
+  --space-6:   1.5rem;     /* 24px */
+  --space-8:   2rem;       /* 32px */
+  --space-10:  2.5rem;     /* 40px — Major section separation */
+  --space-12:  3rem;       /* 48px */
+  /* Legacy aliases */
+  --space-xs:  var(--space-1);
+  --space-sm:  var(--space-2);
+  --space-md:  var(--space-4);
+  --space-lg:  var(--space-6);
+  --space-xl:  var(--space-8);
+  --space-2xl: var(--space-12);
+
+  /* ═══════════════════════════════════════════════════════════════════════════
+     BORDER RADIUS — 3 steps only
+     ═══════════════════════════════════════════════════════════════════════════ */
+  --radius-xs:   4px;     /* micro: tiny indicators, progress bars, inner elements */
+  --radius-sm:   6px;     /* pills, badges, small inputs */
+  --radius-md:   10px;    /* cards, buttons, standard elements */
+  --radius-lg:   16px;    /* modals, large containers, zone cards */
+  --radius-full: 9999px;  /* circles, full-round pills */
+  /* Legacy aliases */
+  --radius-xl:  var(--radius-lg);
+  --radius-2xl: var(--radius-lg);
+
+  /* ═══════════════════════════════════════════════════════════════════════════
+     ELEVATION — 3 levels: flat, raised, floating
+     Combines box-shadow + border for depth perception
+     ═══════════════════════════════════════════════════════════════════════════ */
+  --elevation-flat:     none;
+  --elevation-raised:   0 1px 2px rgba(0, 0, 0, 0.3),
+                        0 0 0 1px rgba(255, 255, 255, 0.04);
+  --elevation-floating: 0 12px 40px rgba(0, 0, 0, 0.5),
+                        0 0 0 1px rgba(255, 255, 255, 0.06);
+
+  /* ═══════════════════════════════════════════════════════════════════════════
+     TRANSITIONS & EASING
+     ═══════════════════════════════════════════════════════════════════════════ */
+  --ease-out:     cubic-bezier(0.16, 1, 0.3, 1);     /* snappy, responsive */
+  --ease-in-out:  cubic-bezier(0.4, 0, 0.2, 1);      /* smooth, natural */
+  --ease-spring:  cubic-bezier(0.34, 1.56, 0.64, 1);  /* bouncy, playful */
+
+  --duration-fast: 120ms;
+  --duration-base: 200ms;
+  --duration-slow: 350ms;
+
+  --transition-fast: var(--duration-fast) var(--ease-out);
+  --transition-base: var(--duration-base) var(--ease-out);
+  --transition-slow: var(--duration-slow) var(--ease-out);
+
+  /* Overlay / sheet specific */
+  --transition-overlay: var(--duration-base) var(--ease-out);
+  --transition-sheet:   var(--duration-slow) var(--ease-out);
+
+  /* ═══════════════════════════════════════════════════════════════════════════
+     Z-INDEX SCALE
+     ═══════════════════════════════════════════════════════════════════════════ */
+  --z-base:           0;
+  --z-dropdown:       10;
+  --z-sticky:         20;
+  --z-fixed:          30;
+  --z-tray:           35;  /* bottom tray (UnassignedDropBar) — below modals */
+  --z-fab:            38;  /* Quick Action Ball — above tray, below modal-backdrop */
+  --z-modal-backdrop: 40;
+  --z-modal:          50;
+  --z-dialog:         65;  /* BaseModal (generic) — above SlideOver high (60) */
+  --z-popover:        60;
+  --z-tooltip:        70;
+  --z-drag-overlay:   72;  /* drag feedback — ephemeral, above tooltip */
+  --z-prompt:         78;  /* ConfirmDialog — above other BaseModals (e.g. ConfigWizardModal at 65) */
+  --z-toast:          80;  /* toasts — above modals and prompts */
+  --z-safety:         85;  /* EmergencyStop — highest interactive priority */
+
+  /* ═══════════════════════════════════════════════════════════════════════════
+     BACKDROP / OVERLAY
+     ═══════════════════════════════════════════════════════════════════════════ */
+  --backdrop-color:       rgba(7, 7, 13, 0.85);
+  --backdrop-color-light: rgba(7, 7, 13, 0.60);
+  --backdrop-blur:        8px;
+  --backdrop-blur-light:  4px;
+
+  /* ═══════════════════════════════════════════════════════════════════════════
+     TYPOGRAPHY
+     ═══════════════════════════════════════════════════════════════════════════ */
+  --font-display: 'Outfit', system-ui, sans-serif;
+  --font-body:    'Outfit', system-ui, sans-serif;
+  --font-mono:    'JetBrains Mono', 'Fira Code', monospace;
+
+  /* Type scale: designed for 14px base on dark backgrounds */
+  --text-xxs:     0.625rem;   /* 10px — compact labels, badges */
+  --text-xs:      0.6875rem;  /* 11px — micro labels */
+  --text-sm:      0.75rem;    /* 12px — secondary info */
+  --text-base:    0.875rem;   /* 14px — body text */
+  --text-lg:      1rem;       /* 16px — section headers */
+  --text-xl:      1.25rem;    /* 20px — page titles */
+  --text-2xl:     1.5rem;     /* 24px — display */
+  --text-display: 2rem;       /* 32px — hero text */
+
+  /* Line heights per scale step */
+  --leading-tight:  1.25;
+  --leading-normal: 1.5;
+  --leading-loose:  1.75;
+
+  /* Letter spacing per use */
+  --tracking-tight:  -0.01em;
+  --tracking-normal:  0;
+  --tracking-wide:    0.04em;  /* for uppercase labels */
+
+  /* ═══════════════════════════════════════════════════════════════════════════
+     SIDEBAR DIMENSIONS
+     ═══════════════════════════════════════════════════════════════════════════ */
+  --sidebar-width: 15rem;  /* 240px */
+  --header-height: 3.5rem;   /* 56px — consolidated command strip */
+
+  /* ═══════════════════════════════════════════════════════════════════════════
+     SENSOR STATUS COLORS — Functional status indicators
+     ═══════════════════════════════════════════════════════════════════════════ */
+  --color-status-good:     #22c55e;   /* green-500 */
+  --color-status-warning:  #eab308;   /* yellow-500 */
+  --color-status-alarm:    #ef4444;   /* red-500 */
+  --color-status-offline:  #6b7280;   /* gray-500 */
+
+  /* 4-level canonical aliases (AUT-250) — ok/warn/alarm/offl */
+  --color-status-ok:       var(--color-status-good);
+  --color-status-warn:     var(--color-status-warning);
+  --color-status-offl:     var(--color-status-offline);
+
+  /* Alert lifecycle state colors (AUT-561) */
+  --color-status-active:       var(--color-error);
+  --color-status-acknowledged: var(--color-warning);
+  --color-status-resolved:     var(--color-success);
+
+  /* ═══════════════════════════════════════════════════════════════════════════
+     THRESHOLD ZONES — For charts and range sliders
+     ═══════════════════════════════════════════════════════════════════════════ */
+  --color-zone-alarm:      rgba(239, 68, 68, 0.15);
+  --color-zone-warning:    rgba(234, 179, 8, 0.10);
+  --color-zone-normal:     rgba(34, 197, 94, 0.10);
+
+  /* Chart gap overlay */
+  --color-chart-gap:        rgba(90, 90, 117, 0.10);
+  --color-chart-gap-stroke: rgba(90, 90, 117, 0.25);
+
+  /* ═══════════════════════════════════════════════════════════════════════════
+     SLIDE-OVER PANEL
+     ═══════════════════════════════════════════════════════════════════════════ */
+  --slide-over-width-sm:   320px;
+  --slide-over-width-md:   400px;
+  --slide-over-width-lg:   560px;
+  --slide-over-backdrop:   rgba(0, 0, 0, 0.5);
+  --slide-over-duration:   300ms;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   LAYOUT UTILITIES — Standardized auto-fill grid patterns
+   Mapping: minmax(150px-220px)=sm, minmax(240px-300px)=md, minmax(320px-400px)=lg
+   AUT-25: 3xl (1600px) and 4xl (1920px) breakpoints used in MonitorView.vue (.monitor-card-grid scoped overrides).
+   ═══════════════════════════════════════════════════════════════════════════ */
+.grid-auto-sm { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }
+.grid-auto-md { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
+.grid-auto-lg { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); }
+
+/* Fallback for devices without backdrop-filter (Raspberry Pi, older browsers) */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  :root {
+    --glass-bg-l1:     rgba(17, 24, 39, 0.80);
+    --glass-bg-l2:     rgba(17, 24, 39, 0.88);
+    --glass-bg-l3:     rgba(17, 24, 39, 0.95);
+    --glass-blur-l1:   0px;
+    --glass-blur-l2:   0px;
+    --glass-blur-l3:   0px;
+    --glass-border-l1: rgba(255, 255, 255, 0.08);
+    --glass-border-l2: rgba(255, 255, 255, 0.10);
+    --glass-border-l3: rgba(255, 255, 255, 0.14);
+  }
+}

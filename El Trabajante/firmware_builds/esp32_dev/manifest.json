@@ -1,0 +1,17 @@
+{
+  "board": "esp32_dev",
+  "chip_family": "ESP32",
+  "version": "auto-debugger/work@AUT-863-logging-fix",
+  "build_date": "2026-06-14T17:50:00Z",
+  "sha256": {
+    "bootloader.bin": "3d234a7471f67b013686dabd4dee7c1fa915c9928463616a94bc9297acf1abf8",
+    "firmware.bin": "31a2f26894eed7d58eea2f442ecf04c1d1ef19dc7f240764d3f583301fee3a8f",
+    "partitions.bin": "23291373c40a15e07104d23f1b60d32990d4983ccfaaaf8c3253965e708fd209"
+  },
+  "flash_offsets": {
+    "bootloader": "0x1000",
+    "partitions": "0x8000",
+    "app": "0x20000",
+    "nvs": "0x9000"
+  }
+}

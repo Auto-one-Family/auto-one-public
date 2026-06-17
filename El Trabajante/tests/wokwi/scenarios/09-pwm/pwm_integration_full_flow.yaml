@@ -1,0 +1,51 @@
+# PWM Integration Full Flow Test
+# Test-ID: PWM-INT-001, PWM-INT-002, PWM-INT-003, PWM-INT-004
+# Validates complete PWM actuator lifecycle:
+# 1. Configuration via MQTT
+# 2. PWMActuator -> PWMController integration
+# 3. MQTT command -> PWM output
+# 4. Status publishing with current_pwm
+# 5. Emergency stop integration
+# Timeout: 240000ms
+
+name: PWM Integration Full Flow
+version: 1
+steps:
+  # === PHASE 1: System Ready ===
+  - wait-serial: "MQTT connected successfully"
+  - wait-serial: "heartbeat"
+
+  # === PHASE 2: Configure PWM Actuator ===
+  # Topic: kaiser/god/esp/{esp_id}/config
+  # Payload: {"actuators":[{"gpio":25,"actuator_type":"pwm","actuator_name":"IntegrationPWM","active":true}]}
+
+  # PWMActuator.begin() calls PWMController.attachChannel()
+  - wait-serial: "PWM Channel"
+  - wait-serial: "attached to GPIO 25"
+  - wait-serial: "PWMActuator initialized on GPIO 25"
+
+  # === PHASE 3: Set PWM via MQTT Command ===
+  # Topic: kaiser/god/esp/{esp_id}/actuator/25/command
+  # Payload: {"command":"SET","value":0.5}
+
+  # PWMActuator.setValue(0.5) -> PWMController.writePercent(50%)
+  - wait-serial: "PWMActuator channel"
+  - wait-serial: "50"
+
+  # === PHASE 4: Verify Status ===
+  # Status should include current_pwm value
+  # Published to: kaiser/god/esp/{esp_id}/actuator/25/status
+
+  - wait-serial: "Actuator"
+
+  # === PHASE 5: Change Value ===
+  # Topic: kaiser/god/esp/{esp_id}/actuator/25/command
+  # Payload: {"command":"SET","value":1.0}
+
+  - wait-serial: "100"
+
+  # === PHASE 6: Turn Off ===
+  # Topic: kaiser/god/esp/{esp_id}/actuator/25/command
+  # Payload: {"command":"OFF"}
+
+  - wait-serial: "0"

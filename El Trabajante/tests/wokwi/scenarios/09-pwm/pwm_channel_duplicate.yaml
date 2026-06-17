@@ -1,0 +1,26 @@
+# PWM Channel Duplicate GPIO Test
+# Test-ID: PWM-CH-002
+# Validates that attaching same GPIO twice returns existing channel
+# Expected: Warning log "already attached to channel"
+# Requires special test setup or firmware modification
+# Timeout: 120000ms
+
+name: PWM Channel Duplicate GPIO Test
+version: 1
+steps:
+  # Wait for system ready
+  - wait-serial: "MQTT connected successfully"
+
+  # Wait for heartbeat
+  - wait-serial: "heartbeat"
+
+  # After first MQTT injection: PWM actuator on GPIO 25
+  # After second MQTT injection: Another PWM actuator on GPIO 25
+  # Expected: Warning about already attached GPIO
+
+  # Wait for first attachment
+  - wait-serial: "attached to GPIO 25"
+
+  # If duplicate config sent, expect warning
+  # Note: ActuatorManager may reject duplicate configs at higher level
+  - wait-serial: "already attached"

@@ -1,0 +1,52 @@
+# GPIO-EDGE-002 & GPIO-EDGE-003: String Edge Cases
+# =================================================
+# Validates that:
+# - Empty owner/component strings are handled gracefully
+# - Very long component names are truncated to 31 characters
+#
+# Test IDs: GPIO-EDGE-002, GPIO-EDGE-003
+# Priority: LOW
+# Requirement:
+#   - requestPin(4, "", "") is still valid (empty strings allowed)
+#   - 50-char component name is truncated to 31 chars
+#
+# GPIOPinInfo Structure:
+#   char owner[32];          // 31 chars + null terminator
+#   char component_name[32]; // 31 chars + null terminator
+#
+# MQTT-Injection (extern via CI):
+#   Test 1 - Very long name (50 chars):
+#     mosquitto_pub -h localhost -t "kaiser/god/esp/ESP_00000001/config" \
+#       -m '{"sensors":[{"gpio":4,"sensor_type":"temp_ds18b20","sensor_name":"ThisIsAVeryLongSensorNameThatExceedsThirtyOneCharacters","active":true}]}'
+#   Test 2 - Short/minimal name (after ~500ms):
+#     mosquitto_pub -h localhost -t "kaiser/god/esp/ESP_00000001/config" \
+#       -m '{"sensors":[{"gpio":5,"sensor_type":"analog","sensor_name":"X","active":true}]}'
+#
+# Firmware reference: gpio_manager.cpp lines 115-118 (strncpy with size limit)
+
+name: GPIO String Edge Cases
+version: 1
+steps:
+  # Wait for boot to complete
+  - wait-serial: "Phase 1: Core Infrastructure READY"
+
+  # Wait for MQTT connection
+  - wait-serial: "MQTT connected successfully"
+
+  # GPIO-EDGE-002: External MQTT injection - very long component name (CI helper script)
+
+  # Verify allocation succeeds (name is truncated, not rejected)
+  - wait-serial: "Pin 4 allocated"
+
+  # The truncated name should appear in logs
+  # First 31 characters: "ThisIsAVeryLongSensorNameThatE"
+  - wait-serial: "ThisIsAVeryLongSensorName"
+
+  # Wait for config to complete
+  - delay: 500ms
+
+  # GPIO-EDGE-003: External MQTT injection - short/minimal name (CI helper script)
+
+  # Verify short name works
+  - wait-serial: "Pin 5 allocated"
+  - wait-serial: "X"

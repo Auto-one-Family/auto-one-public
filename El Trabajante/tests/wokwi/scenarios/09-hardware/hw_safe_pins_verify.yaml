@@ -1,0 +1,63 @@
+# HW-GPIO-001 & HW-GPIO-002: Safe GPIO Pins Verification
+# =======================================================
+# Validates that SAFE_GPIO_PINS are correctly defined and usable.
+#
+# Test IDs: HW-GPIO-001, HW-GPIO-002
+# Priority: HIGH
+# Requirement:
+#   - SAFE_PIN_COUNT matches actual array size
+#   - All pins in SAFE_GPIO_PINS can be configured for sensors/actuators
+#
+# Safe GPIO Pins:
+#   ESP32-WROOM-32: 4, 5, 14, 15, 16, 17, 18, 19, 21, 22, 23, 25, 26, 27, 32, 33 (16 pins)
+#   XIAO ESP32-C3:  2, 4, 5, 6, 7, 8, 9, 10, 21 (9 pins)
+#
+# Note: GPIO 21, 22 (WROOM) or 4, 5 (XIAO) are auto-reserved for I2C
+#
+# MQTT-Injection (extern via CI):
+#   Test 1 - Sensor on valid safe pin GPIO 4:
+#     mosquitto_pub -h localhost -t "kaiser/god/esp/ESP_00000001/config" \
+#       -m '{"sensors":[{"gpio":4,"sensor_type":"temp_ds18b20","sensor_name":"ValidSensor","active":true}]}'
+#   Test 2 - Actuator on valid safe pin GPIO 5 (after ~1.5s):
+#     mosquitto_pub -h localhost -t "kaiser/god/esp/ESP_00000001/config" \
+#       -m '{"actuators":[{"gpio":5,"actuator_type":"led","actuator_name":"ValidLED","active":true}]}'
+#
+# Firmware references:
+#   - esp32_dev.h lines 46-49: SAFE_GPIO_PINS array
+#   - gpio_manager.cpp: Uses SAFE_GPIO_PINS for validation
+
+name: Safe GPIO Pins Verification
+version: 1
+steps:
+  # Wait for boot to start
+  - wait-serial: "ESP32 Sensor Network"
+
+  # GPIO Safe-Mode initialization
+  - wait-serial: "GPIO SAFE-MODE INITIALIZATION"
+
+  # Verify pin count is logged
+  # The log should show how many safe pins are available
+  - wait-serial: "pins"
+
+  # Verify initialization completes
+  - wait-serial: "Safe-Mode initialization complete"
+
+  # Phase 1 complete
+  - wait-serial: "Phase 1: Core Infrastructure READY"
+
+  # Wait for MQTT connection
+  - wait-serial: "MQTT connected successfully"
+
+  # TEST 1: External MQTT injection - sensor on valid safe pin GPIO 4 (CI helper script)
+
+  # Verify sensor configuration succeeds
+  # Should see pin reservation success, not "not in safe pins"
+  - wait-serial: "Sensor"
+
+  # Wait for config response
+  - delay: 1500ms
+
+  # TEST 2: External MQTT injection - actuator on valid safe pin GPIO 5 (CI helper script)
+
+  # Verify actuator configuration succeeds
+  - wait-serial: "Actuator"

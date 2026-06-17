@@ -1,0 +1,30 @@
+# OneWire Scratchpad Read Test (OW-TEMP-005)
+# Validates scratchpad reading and CRC verification
+# Tests: 9-byte scratchpad read, CRC-8 validation
+# Timeout: 90000ms
+
+name: OneWire Scratchpad Read
+version: 1
+steps:
+  # Boot completes
+  - wait-serial: "Phase 5: Actuator System READY"
+
+  # OneWire initialized
+  - wait-serial: "OneWire Bus Manager"
+
+  # When readRawTemperature is called:
+  # 1. Reset and select device
+  # 2. Write 0x44 (convert T)
+  # 3. Wait 750ms
+  # 4. Reset and select device
+  # 5. Write 0xBE (read scratchpad)
+  # 6. Read 9 bytes
+  # 7. Verify CRC (crc8 of bytes 0-7 must match byte 8)
+  # 8. Extract temperature from bytes 0-1 (little endian)
+
+  # If CRC fails: "OneWire CRC error on temperature read"
+  # If successful: raw value is logged
+  - wait-serial: "OneWire raw temperature"
+
+  # Heartbeat confirms operation
+  - wait-serial: "heartbeat"

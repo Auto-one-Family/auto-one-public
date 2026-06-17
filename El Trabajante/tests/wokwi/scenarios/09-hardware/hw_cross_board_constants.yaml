@@ -1,0 +1,78 @@
+# HW-CROSS-001 & HW-CROSS-003: Cross-Board Constant Verification
+# ==============================================================
+# Validates that board-specific constants are correctly applied.
+#
+# Test IDs: HW-CROSS-001, HW-CROSS-003
+# Priority: MEDIUM
+# Requirement:
+#   - Same namespace (HardwareConfig) on all boards
+#   - Same interface constants available (SAFE_GPIO_PINS, I2C pins, etc.)
+#   - Board-specific values are correct
+#
+# Board Comparison:
+#   | Constant         | ESP32-WROOM-32 | XIAO ESP32-C3 |
+#   |------------------|----------------|---------------|
+#   | SAFE_PIN_COUNT   | 16             | 9             |
+#   | RESERVED_PIN_COUNT| 6             | 3             |
+#   | I2C_SDA_PIN      | 21             | 4             |
+#   | I2C_SCL_PIN      | 22             | 5             |
+#   | PWM_CHANNELS     | 16             | 6             |
+#   | DEFAULT_ONEWIRE  | 4              | 6             |
+#   | LED_PIN          | 5              | 21            |
+#
+# This test runs on WROOM (wokwi_simulation) and verifies WROOM-specific values.
+#
+# MQTT-Injection (extern via CI):
+#   Test 1 - Verify WROOM-specific safe pin GPIO 32:
+#     mosquitto_pub -h localhost -t "kaiser/god/esp/ESP_00000001/config" \
+#       -m '{"sensors":[{"gpio":32,"sensor_type":"analog","sensor_name":"WROOMOnlySensor","active":true}]}'
+#   Test 2 - Verify WROOM-specific safe pin GPIO 33 (after ~1.5s):
+#     mosquitto_pub -h localhost -t "kaiser/god/esp/ESP_00000001/config" \
+#       -m '{"actuators":[{"gpio":33,"actuator_type":"relay","actuator_name":"WROOMOnlyRelay","active":true}]}'
+#
+# Firmware references:
+#   - esp32_dev.h: ESP32-WROOM-32 configuration
+#   - xiao_esp32c3.h: XIAO ESP32-C3 configuration
+
+name: Cross-Board Constant Verification
+version: 1
+steps:
+  # Wait for boot banner
+  - wait-serial: "ESP32 Sensor Network"
+
+  # GPIO Safe-Mode initialization
+  - wait-serial: "GPIO SAFE-MODE INITIALIZATION"
+
+  # Verify board type is ESP32 (WROOM) for wokwi_simulation
+  - wait-serial: "ESP32"
+
+  # Verify safe pin count is logged (should be 16 for WROOM)
+  # Look for pin count in initialization log
+  - wait-serial: "pins"
+
+  # GPIO initialization complete
+  - wait-serial: "Safe-Mode initialization complete"
+
+  # Phase 1 complete
+  - wait-serial: "Phase 1: Core Infrastructure READY"
+
+  # Wait for MQTT connection
+  - wait-serial: "MQTT connected successfully"
+
+  # TEST 1: External MQTT injection - sensor on WROOM-specific GPIO 32 (CI helper script)
+  # GPIO 32 is only available on WROOM, not on XIAO
+
+  # Verify GPIO 32 is accepted on WROOM
+  # This would fail on XIAO because GPIO 32 is not in XIAO's SAFE_GPIO_PINS
+  - wait-serial: "Sensor"
+
+  # Wait for config response
+  - delay: 1500ms
+
+  # TEST 2: External MQTT injection - actuator on WROOM-specific GPIO 33 (CI helper script)
+
+  # Verify GPIO 33 is accepted on WROOM
+  - wait-serial: "Actuator"
+
+  # Wait for heartbeat to verify configuration
+  - wait-serial: "heartbeat"

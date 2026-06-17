@@ -1,0 +1,21 @@
+# Subzone Assignment Test
+# Validates subzone assignment handling via MQTT
+# Requires prior zone assignment + MQTT injection
+# Timeout: 90000ms
+
+name: Subzone Assignment Test
+version: 1
+steps:
+  # Wait for MQTT connection
+  - wait-serial: "MQTT connected successfully"
+
+  # Registration gate: opens on server confirmation or 10s timeout fallback
+  - wait-serial: "REGISTRATION"
+
+  # Wait for heartbeat (system operational)
+  - wait-serial: "heartbeat"
+
+  # After zone assignment, inject subzone:
+  # Topic: kaiser/god/esp/{esp_id}/subzone/assign
+  # Payload: {"subzone_id":"subzone_1","subzone_name":"Subzone 1","parent_zone_id":"test_zone_1","assigned_gpios":[4,5]}
+  - wait-serial: "SUBZONE"

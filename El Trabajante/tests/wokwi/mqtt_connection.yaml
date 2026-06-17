@@ -1,0 +1,56 @@
+# ============================================
+# Wokwi MQTT Connection Test
+# ============================================
+# Purpose: Validate MQTT connectivity and heartbeat publishing
+#
+# Prerequisites:
+# - Mosquitto broker running (via Wokwi Gateway or localhost)
+# - Anonymous authentication enabled
+#
+# Verified Log Messages (from source code):
+# - wifi_manager.cpp:140  "WiFi connected! IP: ..."
+# - mqtt_client.cpp:77    "MQTTClient initialized"
+# - main.cpp:474          "MQTT connected successfully"
+# - main.cpp:508          "Subscribed to system + actuator + zone assignment"
+# - main.cpp:478          "Initial heartbeat sent for ESP registration"
+# - main.cpp:428          "Free Heap: ..."
+#
+# NOTE: Timeout is set via CLI --timeout option, not per step
+# Usage:
+#   wokwi-cli . --timeout 90000 --scenario tests/wokwi/mqtt_connection.yaml
+
+name: MQTT Connection Test
+version: 1
+
+steps:
+  # ============================================
+  # Wait for boot completion
+  # ============================================
+  - wait-serial: "Phase 2: Communication Layer"
+
+  # ============================================
+  # WiFi Connection
+  # ============================================
+  - wait-serial: "WiFi connected"
+  - wait-serial: "IP:"
+
+  # ============================================
+  # MQTT Connection
+  # ============================================
+  - wait-serial: "MQTTClient"
+  - wait-serial: "MQTT connected"
+
+  # ============================================
+  # Topic Subscriptions
+  # ============================================
+  - wait-serial: "Subscribed to"
+
+  # ============================================
+  # Initial Heartbeat
+  # ============================================
+  - wait-serial: "heartbeat"
+
+  # ============================================
+  # Memory Status (confirms stable operation)
+  # ============================================
+  - wait-serial: "Free Heap:"

@@ -1,0 +1,60 @@
+# HW-I2C-001 to HW-I2C-006: I2C Configuration Verification
+# =========================================================
+# Validates that I2C pins are correctly configured and auto-reserved
+# during GPIO initialization.
+#
+# Test IDs: HW-I2C-001, HW-I2C-002, HW-I2C-004, HW-I2C-006
+# Priority: MEDIUM
+# Requirement:
+#   - I2C_SDA_PIN and I2C_SCL_PIN are defined
+#   - I2C pins are in SAFE_GPIO_PINS list
+#   - I2C pins are auto-reserved during GPIO init
+#
+# Board-Specific I2C Pins:
+#   ESP32-WROOM-32: SDA=21, SCL=22
+#   XIAO ESP32-C3:  SDA=4,  SCL=5
+#
+# MQTT-Injection (extern via CI):
+#   Test - Try to configure sensor on I2C SDA pin (GPIO 21, should fail):
+#     mosquitto_pub -h localhost -t "kaiser/god/esp/ESP_00000001/config" \
+#       -m '{"sensors":[{"gpio":21,"sensor_type":"analog","sensor_name":"ConflictSensor","active":true}]}'
+#
+# Firmware references:
+#   - esp32_dev.h lines 68-70: I2C_SDA_PIN=21, I2C_SCL_PIN=22
+#   - xiao_esp32c3.h lines 54-56: I2C_SDA_PIN=4, I2C_SCL_PIN=5
+#   - gpio_manager.cpp: Auto-reserves I2C pins during initializeAllPinsToSafeMode()
+
+name: I2C Configuration Verification
+version: 1
+steps:
+  # Wait for boot to start
+  - wait-serial: "ESP32 Sensor Network"
+
+  # GPIO Safe-Mode initialization
+  - wait-serial: "GPIO SAFE-MODE INITIALIZATION"
+
+  # I2C pins should be auto-reserved during GPIO init
+  # Look for I2C-related log messages
+  - wait-serial: "I2C"
+
+  # Verify GPIO 21 (SDA on WROOM) is reserved
+  # The log should show pin 21 being reserved for I2C
+  - wait-serial: "21"
+
+  # Verify GPIO 22 (SCL on WROOM) is reserved
+  - wait-serial: "22"
+
+  # GPIO initialization complete
+  - wait-serial: "Safe-Mode initialization complete"
+
+  # Phase 1 complete
+  - wait-serial: "Phase 1: Core Infrastructure READY"
+
+  # Wait for MQTT connection
+  - wait-serial: "MQTT connected successfully"
+
+  # TEST: External MQTT injection - try to use I2C SDA pin GPIO 21 (CI helper script)
+  # This should fail because I2C pins are auto-reserved
+
+  # Verify conflict is detected (pin already reserved for I2C)
+  - wait-serial: "already"

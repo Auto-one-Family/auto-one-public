@@ -1,0 +1,86 @@
+# ============================================
+# Wokwi Szenario Template v1.0 (Verbindlich ab 2026-04-06)
+# ============================================
+# Jedes neue Szenario MUSS diesem Template folgen.
+#
+# Aufbau:
+#   1. Boot-Sequenz (PFLICHT)
+#   2. Kommunikations-Verifikation (PFLICHT)
+#   3. Registration Gate (PFLICHT fuer Sensor/Actuator Tests)
+#   4. Wartefenster (falls MQTT-Injection noetig)
+#   5. Test-spezifische Schritte
+#   6. Klares Timeout-Verhalten (via wokwi-cli --timeout)
+#
+# MQTT-Injection Pattern:
+#   - YAML enthaelt NUR wait-serial + delay Schritte
+#   - MQTT-Injection erfolgt EXTERN via mosquitto_pub/mqtt_inject.py
+#   - CI nutzt Dynamic Wait (nicht sleep 25)
+#   - Injection-Befehl steht im Kommentar-Header
+#
+# Serial-Vertraege:
+#   - Immer spezifische Strings verwenden (nicht generisch)
+#   - Keine Annahme ueber Log-Level (nur LOG_INFO+ sichtbar)
+#   - KORREKT: "MQTT connected successfully" (Firmware-Output)
+#   - FALSCH:  "MQTT connected" (zu generisch, kann Substring matchen)
+#
+# Timing:
+#   - wokwi-cli --timeout 90000 (Standard: 90s)
+#   - delay: nur fuer asynchrone Operationen (GPIO, MQTT roundtrip)
+#   - KEIN delay als Ersatz fuer wait-serial
+#
+# ============================================
+# BEISPIEL: Szenario mit MQTT-Injection
+# ============================================
+#
+# MQTT-Injection (extern via CI):
+#   mosquitto_pub -h localhost -t "kaiser/god/esp/ESP_00000001/config" \
+#     -m '{"sensors":[{"gpio":4,"sensor_type":"temp_ds18b20","sensor_name":"Test","active":true}],"actuators":[]}'
+#
+# name: Template Example Scenario
+# version: 1
+# steps:
+#   # --- Phase 1: Boot-Sequenz (PFLICHT) ---
+#   - wait-serial: "ESP32 Sensor Network"
+#   - wait-serial: "Phase 1: Core Infrastructure READY"
+#
+#   # --- Phase 2: Kommunikation (PFLICHT) ---
+#   - wait-serial: "MQTT connected successfully"
+#
+#   # --- Phase 3: Registration Gate (PFLICHT bei Sensor/Actuator) ---
+#   - wait-serial: "REGISTRATION CONFIRMED"
+#
+#   # --- Phase 4: Loop-Verifikation (empfohlen) ---
+#   - wait-serial: "heartbeat"
+#
+#   # --- Phase 5: Test-spezifisch ---
+#   # Externe MQTT-Injection passiert hier (Dynamic Wait in CI)
+#   - wait-serial: "ConfigResponse published"
+#
+# ============================================
+# REGELN fuer wait-serial Strings
+# ============================================
+#
+# ERLAUBT (spezifisch, in Firmware verifiziert):
+#   "ESP32 Sensor Network"              → main.cpp:148
+#   "Phase 1: Core Infrastructure READY" → main.cpp
+#   "Phase 2: Communication Layer READY" → main.cpp
+#   "Phase 3: Hardware Abstraction READY" → main.cpp
+#   "Phase 4: Sensor System READY"       → main.cpp
+#   "Phase 5: Actuator System READY"     → main.cpp
+#   "WiFi connected successfully"        → wifi_manager.cpp
+#   "MQTT connected successfully"        → mqtt_client.cpp
+#   "REGISTRATION CONFIRMED"             → mqtt_client.cpp:750
+#   "heartbeat"                          → main.cpp:787 (LOG_INFO, nur beim Boot)
+#   "ConfigResponse published"           → config_response.cpp:45
+#   "GPIO SAFE-MODE INITIALIZATION"      → gpio_manager.cpp
+#   "Safe-Mode initialization complete"  → gpio_manager.cpp
+#   "Logger system initialized"          → main.cpp
+#
+# VERBOTEN (fragil oder mehrdeutig):
+#   "MQTT connected"       → Substring von "MQTT connected successfully"
+#   "success"              → Zu generisch
+#   "error"                → Matched auch LOG_ERROR prefix
+#   "Published"            → LOG_DEBUG, bei default Level unsichtbar
+#   "Subscribed to"        → Kann sich mit Firmware-Updates aendern
+#
+# ============================================

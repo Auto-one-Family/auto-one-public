@@ -1,0 +1,35 @@
+# PWM Multi-Channel Test
+# Test-ID: PWM-CH-004, PWM-MULTI-001
+# Validates that multiple GPIOs can be attached to different PWM channels
+# Uses PWM actuator configuration via MQTT for 3 actuators
+# Requires MQTT injection: Multiple PWM actuator configs
+# Timeout: 120000ms
+
+name: PWM Multi-Channel Test
+version: 1
+steps:
+  # Wait for system ready
+  - wait-serial: "MQTT connected successfully"
+
+  # Wait for heartbeat
+  - wait-serial: "heartbeat"
+
+  # After MQTT injection: 3 PWM actuators on GPIO 25, 26, 27
+  # Topic: kaiser/god/esp/{esp_id}/config
+  # Payload: {"actuators":[
+  #   {"gpio":25,"actuator_type":"pwm","actuator_name":"PWM1","active":true},
+  #   {"gpio":26,"actuator_type":"pwm","actuator_name":"PWM2","active":true},
+  #   {"gpio":27,"actuator_type":"pwm","actuator_name":"PWM3","active":true}
+  # ]}
+
+  # Verify first channel attachment
+  - wait-serial: "attached to GPIO 25"
+
+  # Verify second channel attachment
+  - wait-serial: "attached to GPIO 26"
+
+  # Verify third channel attachment
+  - wait-serial: "attached to GPIO 27"
+
+  # Verify all actuators initialized
+  - wait-serial: "PWMActuator initialized"

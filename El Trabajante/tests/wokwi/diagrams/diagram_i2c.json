@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "author": "AutomationOne - I2C Test Suite",
+  "editor": "wokwi",
+  "parts": [
+    {
+      "type": "wokwi-esp32-devkit-v1",
+      "id": "esp",
+      "top": 0,
+      "left": 200,
+      "attrs": {}
+    },
+    {
+      "type": "wokwi-sht30",
+      "id": "sht31",
+      "top": 150,
+      "left": 0,
+      "attrs": {
+        "temperature": "24.5",
+        "humidity": "55"
+      }
+    },
+    {
+      "type": "wokwi-bme280",
+      "id": "bmp280",
+      "top": 150,
+      "left": 100,
+      "attrs": {
+        "temperatureC": "23.0",
+        "humidity": "60",
+        "pressure": "1013.25"
+      }
+    },
+    {
+      "type": "wokwi-ds18b20",
+      "id": "temp1",
+      "top": 300,
+      "left": 0,
+      "attrs": {
+        "temperature": "22.5"
+      }
+    },
+    {
+      "type": "wokwi-resistor",
+      "id": "r_onewire",
+      "top": 250,
+      "left": 30,
+      "rotate": 90,
+      "attrs": {
+        "value": "4700"
+      }
+    },
+    {
+      "type": "wokwi-led",
+      "id": "led_status",
+      "top": 300,
+      "left": 400,
+      "attrs": {
+        "color": "green"
+      }
+    },
+    {
+      "type": "wokwi-resistor",
+      "id": "r_led",
+      "top": 330,
+      "left": 380,
+      "attrs": {
+        "value": "220"
+      }
+    }
+  ],
+  "connections": [
+    ["esp:TX0", "$serialMonitor:RX", "", []],
+    ["esp:RX0", "$serialMonitor:TX", "", []],
+
+    ["esp:GND.1", "sht31:GND", "black", ["v20", "h-100"]],
+    ["esp:3V3", "sht31:VCC", "red", ["v10", "h-110"]],
+    ["esp:D21", "sht31:SDA", "blue", ["v30", "h-80"]],
+    ["esp:D22", "sht31:SCL", "yellow", ["v40", "h-90"]],
+
+    ["esp:D21", "bmp280:SDA", "blue", ["v30", "h-50"]],
+    ["esp:D22", "bmp280:SCL", "yellow", ["v40", "h-60"]],
+    ["esp:3V3", "bmp280:VCC", "red", ["v10", "h-60"]],
+    ["esp:GND.1", "bmp280:GND", "black", ["v20", "h-70"]],
+
+    ["esp:GND.1", "temp1:GND", "black", ["v60", "h-100"]],
+    ["esp:3V3", "temp1:VCC", "red", ["v50", "h-110"]],
+    ["esp:D4", "temp1:DQ", "green", ["v70", "h-80"]],
+    ["temp1:VCC", "r_onewire:1", "red", ["h10"]],
+    ["temp1:DQ", "r_onewire:2", "orange", ["h20", "v-30"]],
+
+    ["esp:GND.2", "led_status:C", "black", ["v100", "h100"]],
+    ["esp:D5", "r_led:1", "yellow", ["v90", "h80"]],
+    ["r_led:2", "led_status:A", "yellow", ["h20"]]
+  ]
+}

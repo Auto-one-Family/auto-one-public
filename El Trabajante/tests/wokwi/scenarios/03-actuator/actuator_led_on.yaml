@@ -1,0 +1,23 @@
+# LED Actuator ON Command Test
+# Validates actuator command handling via MQTT
+# Requires MQTT injection: mosquitto_pub to actuator/5/command
+# Timeout: 90000ms
+
+name: LED Actuator ON Command Test
+version: 1
+steps:
+  # Wait for MQTT connection
+  - wait-serial: "MQTT connected successfully"
+
+  # Registration gate: opens on server confirmation or 10s timeout fallback
+  - wait-serial: "REGISTRATION"
+
+  # Wait for heartbeat (system fully operational)
+  - wait-serial: "heartbeat"
+
+  # Deterministisches Injection-Fenster fuer externe MQTT-Publisher
+  - delay: 5000ms
+
+  # After MQTT injection: {"command":"ON","value":1.0}
+  # Topic: kaiser/god/esp/{esp_id}/actuator/5/command
+  - wait-serial: "Actuator"

@@ -1,0 +1,23 @@
+# NVS Init Status Test
+# Test-ID: NVS-INIT-004
+# Validates initialization status can be queried
+# Timeout: 90000ms
+#
+# Expected behavior:
+# - After begin(), status is initialized
+# - System can query init state before operations
+
+name: NVS Init Status Query
+version: 1
+steps:
+  # System boots
+  - wait-serial: "ESP32 Sensor Network"
+  - wait-serial: "StorageManager: Initialized"
+
+  # Status is queryable
+  - wait-serial: "Phase 1: Core Infrastructure READY"
+
+  # System uses NVS successfully
+  - wait-serial: "WiFi connected successfully"
+  - wait-serial: "MQTT connected successfully"
+  - wait-serial: "heartbeat"

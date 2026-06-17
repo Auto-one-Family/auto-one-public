@@ -1,0 +1,25 @@
+# I2C Invalid Address Range Test
+# Test-ID: I2C-SCAN-006
+# Validates: isDevicePresent() rejects addresses outside 0x08-0x77
+# Expected: Error logged for reserved addresses (0x00-0x07, 0x78-0x7F)
+# Timeout: 90000ms
+
+name: I2C Invalid Address Range (I2C-SCAN-006)
+version: 1
+steps:
+  # I2C Bus Manager initializes
+  - wait-serial: "I2C Bus Manager initialized successfully"
+
+  # Phase 3 completes
+  - wait-serial: "Phase 3: Hardware Abstraction READY"
+
+  # System operates normally without invalid address access
+  - wait-serial: "Phase 4: Sensor System READY"
+
+# NOTE: Full validation requires firmware test mode or MQTT command:
+# Send config with i2c_address: 0x05 (reserved)
+# Expected error: "Invalid I2C address: 0x05"
+#
+# Reserved I2C addresses:
+# - 0x00-0x07: General call, START byte, CBUS, reserved
+# - 0x78-0x7F: 10-bit addressing, reserved

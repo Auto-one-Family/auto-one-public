@@ -1,0 +1,26 @@
+# Combined Sensor-Actuator Flow Test
+# Validates: Sensor reads data → Server receives → Logic Engine triggers → Actuator activates
+# Simulates the full sensor→actuator pipeline via MQTT injection
+# Timeout: 120000ms
+
+name: Combined Sensor-Actuator Flow Test
+version: 1
+steps:
+  # Wait for MQTT connection
+  - wait-serial: "MQTT connected successfully"
+
+  # Sensors active - data published
+  - wait-serial: "Published"
+
+  # After MQTT injection: Actuator ON (simulates Logic Engine trigger)
+  # Topic: kaiser/god/esp/ESP_00000001/actuator/5/command
+  # Payload: {"command":"ON","value":1.0}
+  - wait-serial: "Actuator"
+
+  # Sensor continues reading while actuator is active
+  - wait-serial: "Published"
+
+  # After MQTT injection: Actuator OFF
+  # Topic: kaiser/god/esp/ESP_00000001/actuator/5/command
+  # Payload: {"command":"OFF"}
+  - wait-serial: "Actuator"

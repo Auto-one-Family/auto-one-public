@@ -1,0 +1,4 @@
+# S3 N8R8 only — overrides sdkconfig.defaults for esp32-s3-devkitc-1
+# AUT-494: 64KB OUTBOX (~15-20 QoS2 bursts), 32KB LWIP send buffer (proportional)
+CONFIG_MQTT_OUTBOX_SIZE_BYTES=65536
+CONFIG_LWIP_TCP_SND_BUF_DEFAULT=32768

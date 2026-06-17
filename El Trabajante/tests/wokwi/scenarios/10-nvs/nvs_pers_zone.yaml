@@ -1,0 +1,31 @@
+# NVS Zone Config Persistence Test
+# Test-ID: NVS-PERS-003
+# CRITICAL: Validates zone assignment survives ESP32 reboot
+# Timeout: 120000ms (includes reboot time)
+#
+# Zone assignment is critical for MQTT topic routing!
+# Lost zone config = ESP32 cannot communicate properly
+#
+# Expected behavior:
+# 1. Receive zone assignment via MQTT
+# 2. Verify NVS write to zone_config namespace
+# 3. Reboot
+# 4. Verify zone is restored and MQTT topics use correct zone_id
+
+name: NVS Zone Config Persistence
+version: 1
+steps:
+  # Initial boot
+  - wait-serial: "ESP32 Sensor Network"
+  - wait-serial: "StorageManager: Initialized"
+  - wait-serial: "MQTT connected successfully"
+
+  # Wait for system to be operational
+  - wait-serial: "heartbeat"
+
+  # MQTT injection point for zone assignment:
+  # Topic: kaiser/god/esp/{esp_id}/zone/assign
+  # Payload: {"zone_id":"test_zone","master_zone_id":"master","zone_name":"Test Zone","kaiser_id":"god"}
+  #
+  # Look for zone assignment processing
+  - wait-serial: "ZONE ASSIGNMENT"

@@ -1,0 +1,31 @@
+# NVS UInt16 Type Tests
+# Test-ID: NVS-TYPE-002
+# Validates uint16_t storage and retrieval from NVS
+# Timeout: 90000ms
+#
+# UInt16 is used for:
+# - mqtt_port (1-65535)
+# - boot_count
+# - Various counters and port numbers
+#
+# Expected behavior:
+# - putUInt16() stores 0-65535 correctly
+# - getUInt16() retrieves value correctly
+# - Default value used for missing keys
+
+name: NVS UInt16 Type Operations
+version: 1
+steps:
+  # System boots
+  - wait-serial: "ESP32 Sensor Network"
+  - wait-serial: "StorageManager: Initialized"
+
+  # mqtt_port is uint16 (default 8883)
+  - wait-serial: "Phase 1: Core Infrastructure READY"
+
+  # boot_count is uint16
+  - wait-serial: "WiFi connected successfully"
+  - wait-serial: "MQTT connected successfully"
+
+  # MQTT connection on correct port proves uint16 works
+  - wait-serial: "heartbeat"

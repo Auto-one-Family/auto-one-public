@@ -1,0 +1,29 @@
+# I2C Write Success Test
+# Test-ID: I2C-COMM-002
+# Validates: writeRaw() successfully writes data to I2C sensor
+# Expected: Write operation completes without error
+# Timeout: 90000ms
+# Diagram: diagrams/diagram_i2c.json (with I2C sensors)
+
+name: I2C Write Success (I2C-COMM-002)
+version: 1
+steps:
+  # I2C Bus Manager initializes
+  - wait-serial: "I2C Bus Manager initialized successfully"
+
+  # Phase 4: Sensor System initializes
+  # Sensor drivers typically write configuration registers on init
+  - wait-serial: "Phase 4: Sensor System"
+
+  # No I2C write errors logged
+  - wait-serial: "Phase 4: Sensor System READY"
+
+  # System continues to operate normally
+  - wait-serial: "heartbeat"
+
+# NOTE: writeRaw() is used for sensor configuration:
+# - SHT31: Soft reset command (0x30, 0xA2)
+# - BMP280: Control register configuration
+# - ADS1115: Configuration register
+#
+# Debug logging shows: "I2C write: X bytes to 0xYY reg 0xZZ"

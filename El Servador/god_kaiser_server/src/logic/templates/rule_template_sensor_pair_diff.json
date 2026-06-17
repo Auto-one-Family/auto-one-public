@@ -1,0 +1,116 @@
+{
+  "template_name": "Sensor-Paar Differenz-Ueberwachung",
+  "template_id": "sensor_pair_diff_v1",
+  "template_description": "Ueberwacht die Differenz zwischen zwei Sensoren gleichen Typs. Universell einsetzbar fuer Sensor-Vergleich ohne Substrat-Spezifika. Loest aus wenn (Sensor B - Sensor A) den Schwellwert ueberschreitet.",
+  "version": "1.0",
+  "parameters": {
+    "required": [
+      "sensor_a_id",
+      "sensor_b_id"
+    ],
+    "configurable": {
+      "threshold": {
+        "type": "float",
+        "default": 0.8,
+        "min": -999.99,
+        "max": 999.99,
+        "description": "Ausloes-Schwellwert fuer die Differenz (B - A)"
+      },
+      "operator": {
+        "type": "string",
+        "enum": [
+          ">",
+          ">=",
+          "<",
+          "<=",
+          "==",
+          "!="
+        ],
+        "default": ">",
+        "description": "Vergleichsoperator fuer (B - A) [operator] threshold"
+      },
+      "consecutive_count": {
+        "type": "integer",
+        "default": 3,
+        "min": 1,
+        "max": 100,
+        "description": "Aufeinanderfolgende Messungen ueber der Schwelle erforderlich"
+      },
+      "cooldown_seconds": {
+        "type": "integer",
+        "default": 3600,
+        "min": 60,
+        "max": 86400,
+        "description": "Mindestabstand zwischen Ausloesung (Sekunden)"
+      },
+      "hysteresis_deactivate_offset": {
+        "type": "float",
+        "default": 0.2,
+        "min": 0.0,
+        "max": 10.0,
+        "description": "Offset zur Deaktivierung bei Hysterese (optional)"
+      },
+      "notification_severity": {
+        "type": "string",
+        "enum": [
+          "info",
+          "warning",
+          "critical"
+        ],
+        "default": "warning",
+        "description": "Benachrichtigungs-Schweregrad"
+      },
+      "notification_template": {
+        "type": "string",
+        "default": "Differenz ({sensor_b_label} - {sensor_a_label}) = {diff:.2f} ueberschreitet {threshold} seit {count} Messungen.",
+        "description": "Benachrichtigungs-Vorlage mit Platzhaltern"
+      }
+    }
+  },
+  "rule_template": {
+    "trigger_conditions": [
+      {
+        "type": "sensor_diff",
+        "sensor_a_id": "{sensor_a_id}",
+        "sensor_b_id": "{sensor_b_id}",
+        "operator": "{operator}",
+        "value": {
+          "use_parameter": "threshold"
+        },
+        "consecutive_count": {
+          "use_parameter": "consecutive_count"
+        }
+      }
+    ],
+    "logic_operator": "AND",
+    "actions": [
+      {
+        "type": "notification",
+        "channel": "websocket",
+        "target": "alerts",
+        "message_template": "{notification_template}"
+      }
+    ],
+    "priority": 50,
+    "cooldown_seconds": {
+      "use_parameter": "cooldown_seconds"
+    },
+    "max_executions_per_hour": 2
+  },
+  "hysteresis": {
+    "activate_threshold": "{threshold}",
+    "deactivate_threshold": "{threshold} - {hysteresis_deactivate_offset}",
+    "description": "Optional: Nutze diese Werte wenn Hysterese-Verhalten gewuenscht ist"
+  },
+  "metadata": {
+    "category": "sensor_comparison",
+    "use_case": "cross_sensor_validation",
+    "tags": [
+      "universal",
+      "sensor_comparison",
+      "multi_sensor"
+    ],
+    "created_at": "2026-04-14T00:00:00Z",
+    "created_by": "automation_one"
+  }
+}

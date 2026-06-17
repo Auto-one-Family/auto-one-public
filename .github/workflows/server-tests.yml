@@ -1,0 +1,238 @@
+name: Server Tests
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  workflow_dispatch:  # Manual trigger
+  push:
+    branches: [main, master, develop]
+    paths:
+      - 'El Servador/**'
+      - '.github/workflows/server-tests.yml'
+  pull_request:
+    branches: [main, master, develop]
+    paths:
+      - 'El Servador/**'
+
+env:
+  PYTHON_VERSION: '3.11'
+  POETRY_VERSION: '1.7.1'
+
+jobs:
+  lint:
+    name: Lint & Format Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Poetry
+        uses: snok/install-poetry@v1
+        with:
+          version: ${{ env.POETRY_VERSION }}
+          virtualenvs-create: true
+          virtualenvs-in-project: true
+
+      - name: Cache Poetry dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            El Servador/god_kaiser_server/.venv
+            ~/.cache/pypoetry
+          key: poetry-${{ runner.os }}-${{ hashFiles('El Servador/god_kaiser_server/poetry.lock') }}
+          restore-keys: |
+            poetry-${{ runner.os }}-
+
+      - name: Install dependencies
+        working-directory: El Servador/god_kaiser_server
+        run: poetry install --no-root --no-interaction
+
+      - name: Run Ruff (Linter)
+        working-directory: El Servador/god_kaiser_server
+        run: poetry run ruff check src/ tests/ --output-format=github
+
+      - name: Run Black (Format Check)
+        working-directory: El Servador/god_kaiser_server
+        run: poetry run black --check src/ tests/
+
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: lint
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Poetry
+        uses: snok/install-poetry@v1
+        with:
+          version: ${{ env.POETRY_VERSION }}
+          virtualenvs-create: true
+          virtualenvs-in-project: true
+
+      - name: Cache Poetry dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            El Servador/god_kaiser_server/.venv
+            ~/.cache/pypoetry
+          key: poetry-${{ runner.os }}-${{ hashFiles('El Servador/god_kaiser_server/poetry.lock') }}
+          restore-keys: |
+            poetry-${{ runner.os }}-
+
+      - name: Install dependencies
+        working-directory: El Servador/god_kaiser_server
+        run: poetry install --no-root --no-interaction
+
+      - name: Run Unit Tests
+        working-directory: El Servador/god_kaiser_server
+        run: |
+          poetry run pytest tests/unit/ \
+            -v \
+            --tb=short \
+            --junitxml=junit-unit.xml \
+            --cov=src \
+            --cov-report=xml:coverage-unit.xml \
+            --cov-report=term-missing
+
+      - name: Upload Unit Test Results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: unit-test-results
+          path: |
+            El Servador/god_kaiser_server/junit-unit.xml
+            El Servador/god_kaiser_server/coverage-unit.xml
+          retention-days: 7
+
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: lint
+
+    services:
+      mosquitto:
+        image: eclipse-mosquitto:2
+        ports:
+          - 1883:1883
+        options: >-
+          --health-cmd "mosquitto_pub -h localhost -p 1883 -t healthcheck -m ok"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Poetry
+        uses: snok/install-poetry@v1
+        with:
+          version: ${{ env.POETRY_VERSION }}
+          virtualenvs-create: true
+          virtualenvs-in-project: true
+
+      - name: Cache Poetry dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            El Servador/god_kaiser_server/.venv
+            ~/.cache/pypoetry
+          key: poetry-${{ runner.os }}-${{ hashFiles('El Servador/god_kaiser_server/poetry.lock') }}
+          restore-keys: |
+            poetry-${{ runner.os }}-
+
+      - name: Install dependencies
+        working-directory: El Servador/god_kaiser_server
+        run: poetry install --no-root --no-interaction
+
+      - name: Install mosquitto clients
+        run: sudo apt-get update && sudo apt-get install -y mosquitto-clients
+
+      - name: Wait for Mosquitto ready
+        run: |
+          for i in $(seq 1 30); do
+            mosquitto_pub -h localhost -p 1883 -t healthcheck -m ok 2>/dev/null && echo "Mosquitto ready" && exit 0
+            echo "Waiting for Mosquitto... ($i/30)"
+            sleep 1
+          done
+          echo "Mosquitto not ready after 30s" && exit 1
+
+      - name: Run Integration Tests
+        working-directory: El Servador/god_kaiser_server
+        env:
+          MQTT_BROKER_HOST: localhost
+          MQTT_BROKER_PORT: 1883
+          DATABASE_URL: sqlite+aiosqlite:///./test.db
+        run: |
+          poetry run pytest tests/integration/ \
+            -v \
+            --tb=short \
+            --timeout=30 \
+            --junitxml=junit-integration.xml \
+            --cov=src \
+            --cov-report=xml:coverage-integration.xml
+
+      - name: Upload Integration Test Results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: integration-test-results
+          path: |
+            El Servador/god_kaiser_server/junit-integration.xml
+            El Servador/god_kaiser_server/coverage-integration.xml
+          retention-days: 7
+
+  test-summary:
+    name: Test Summary
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [unit-tests, integration-tests]
+    if: always()
+    permissions:
+      contents: read
+      checks: write
+      pull-requests: write
+
+    steps:
+      - name: Download all test results
+        uses: actions/download-artifact@v4
+        with:
+          pattern: '*-test-results'
+          merge-multiple: true
+
+      - name: List downloaded files
+        run: |
+          echo "Downloaded artifacts:"
+          find . -name "*.xml" -type f 2>/dev/null || echo "No XML files found"
+
+      - name: Publish Test Results
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        if: always()
+        with:
+          files: |
+            **/junit-*.xml
+          check_name: Test Results
+          comment_mode: always

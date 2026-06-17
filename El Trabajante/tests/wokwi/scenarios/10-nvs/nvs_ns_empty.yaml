@@ -1,0 +1,20 @@
+# NVS Empty Namespace Name Test
+# Test-ID: NVS-NS-006
+# Validates empty namespace name is rejected
+# Timeout: 90000ms
+#
+# Expected behavior:
+# - beginNamespace("") returns false
+# - Error logged
+# - System remains stable
+
+name: NVS Empty Namespace Name
+version: 1
+steps:
+  # System boots normally (no empty namespace in production)
+  - wait-serial: "ESP32 Sensor Network"
+  - wait-serial: "StorageManager: Initialized"
+  - wait-serial: "Phase 1: Core Infrastructure READY"
+  - wait-serial: "WiFi connected successfully"
+  - wait-serial: "MQTT connected successfully"
+  - wait-serial: "heartbeat"

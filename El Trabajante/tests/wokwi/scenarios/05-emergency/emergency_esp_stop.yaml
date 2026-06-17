@@ -1,0 +1,21 @@
+# ESP-Specific Emergency Stop Test
+# Validates ESP-specific emergency stop mechanism
+# Requires MQTT injection with valid auth_token
+# Timeout: 90000ms
+
+name: ESP-Specific Emergency Stop Test
+version: 1
+steps:
+  # Wait for MQTT connection
+  - wait-serial: "MQTT connected successfully"
+
+  # Registration gate: opens on server confirmation or 10s timeout fallback
+  - wait-serial: "REGISTRATION"
+
+  # Wait for heartbeat (system operational)
+  - wait-serial: "heartbeat"
+
+  # After ESP-specific emergency injection:
+  # Topic: kaiser/god/esp/{esp_id}/actuator/emergency
+  # Payload: {"command":"emergency_stop","auth_token":"{esp_id}"}
+  - wait-serial: "AUTHORIZED EMERGENCY-STOP TRIGGERED"

@@ -1,0 +1,20 @@
+# PWM Actuator Control Test
+# Validates PWM actuator command handling
+# Requires MQTT injection with PWM value
+# Timeout: 90000ms
+
+name: PWM Actuator Control Test
+version: 1
+steps:
+  # Wait for MQTT connection
+  - wait-serial: "MQTT connected successfully"
+
+  # Registration gate: opens on server confirmation or 10s timeout fallback
+  - wait-serial: "REGISTRATION"
+
+  # Wait for heartbeat (system fully operational)
+  - wait-serial: "heartbeat"
+
+  # After MQTT injection: {"command":"PWM","value":0.5}
+  # Topic: kaiser/god/esp/{esp_id}/actuator/5/command
+  - wait-serial: "PWM"

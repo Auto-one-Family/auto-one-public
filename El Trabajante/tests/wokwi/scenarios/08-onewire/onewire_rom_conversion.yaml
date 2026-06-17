@@ -1,0 +1,23 @@
+# OneWire ROM Code Conversion Test (OW-UTIL-001)
+# Validates ROM code conversion utilities (romToHexString, hexStringToRom)
+# Tests: ROM code formatting in scan results and sensor configuration
+# Timeout: 90000ms
+
+name: OneWire ROM Code Conversion
+version: 1
+steps:
+  # Boot sequence
+  - wait-serial: "Phase 3: Hardware Abstraction READY"
+
+  # When devices are scanned, ROM codes are converted to hex strings
+  - wait-serial: "OneWire bus scan started"
+
+  # Found device shows ROM in hex format (Family=0x28 Serial=XXXX)
+  - wait-serial: "Found device: Family=0x28"
+
+  # Serial number part is extracted and logged
+  - wait-serial: "Serial="
+
+  # If scan results are published via MQTT, ROM is in hex format
+  # (16 character uppercase hex string, e.g., "28FF641E8D3C0C79")
+  - wait-serial: "devices found"

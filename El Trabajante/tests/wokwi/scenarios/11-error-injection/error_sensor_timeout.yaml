@@ -1,0 +1,20 @@
+# Error-Injection: Sensor Read Timeout
+# Configures a DS18B20 sensor on GPIO 32 where no physical device exists in diagram.json.
+# The firmware will fail to initialize/read the sensor, producing an error in ConfigResponse.
+# Expected: CONFIG_FAILED or SENSOR_INIT_FAILED for GPIO 32.
+# Timeout: 90000ms
+#
+# MQTT-Injection (extern via CI):
+#   mosquitto_pub -h localhost -t "kaiser/god/esp/ESP_00000001/config" \
+#     -m '{"sensors":[{"gpio":32,"sensor_type":"ds18b20","sensor_name":"GhostSensor","active":true,"raw_mode":true}],"actuators":[]}'
+
+name: Error Injection - Sensor Read Timeout
+version: 1
+steps:
+  - wait-serial: "Phase 5: Actuator System READY"
+  - wait-serial: "MQTT connected successfully"
+  - wait-serial: "REGISTRATION"
+  - wait-serial: "heartbeat"
+  # External MQTT config injection happens here (sleep 25 in CI)
+  # Sensor on GPIO 32 has no DS18B20 attached → config fails
+  - wait-serial: "ConfigResponse published"

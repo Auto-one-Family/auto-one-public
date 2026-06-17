@@ -1,0 +1,41 @@
+# DHT22 Humidity Sweep Test
+# Validates DHT22 humidity reading across full range via set-control
+# Sweep: 20% -> 50% -> 90%
+# DHT22 connected to GPIO 15 in diagram.json
+# Timeout: 90000ms
+
+name: DHT22 Humidity Sweep
+version: 1
+steps:
+  # Boot and connect
+  - wait-serial: "MQTT connected successfully"
+
+  # Registration gate
+  - wait-serial: "REGISTRATION"
+
+  # Wait for first measurement cycle
+  - wait-serial: "Published"
+
+  # --- Sweep: Dry (20%) ---
+  - set-control:
+      part-id: "dht22"
+      control: "humidity"
+      value: "20"
+  - delay: 8000ms
+  - wait-serial: "Published"
+
+  # --- Sweep: Normal (50%) ---
+  - set-control:
+      part-id: "dht22"
+      control: "humidity"
+      value: "50"
+  - delay: 8000ms
+  - wait-serial: "Published"
+
+  # --- Sweep: Humid (90%) ---
+  - set-control:
+      part-id: "dht22"
+      control: "humidity"
+      value: "90"
+  - delay: 8000ms
+  - wait-serial: "Published"

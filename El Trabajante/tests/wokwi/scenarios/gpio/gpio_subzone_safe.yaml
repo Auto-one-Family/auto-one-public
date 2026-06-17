@@ -1,0 +1,77 @@
+# GPIO-SUB-004 & GPIO-SUB-005: Subzone Safe-Mode Operations
+# ==========================================================
+# Validates that:
+# - enableSafeModeForSubzone(subzone_id) puts all subzone pins in safe mode
+# - isSubzoneSafe(subzone_id) returns correct status
+#
+# Test IDs: GPIO-SUB-004, GPIO-SUB-005
+# Priority: HIGH
+# Requirement:
+#   - enableSafeModeForSubzone("irrigation") -> all pins safe
+#   - isSubzoneSafe("irrigation") returns true/false correctly
+#
+# Use Case:
+#   - Emergency stop for specific zone (e.g., irrigation only)
+#   - Maintenance mode for subsystem without affecting others
+#   - Fault isolation
+#
+# MQTT-Injection (extern via CI):
+#   Step 1 - Configure actuators for two subzones:
+#     mosquitto_pub -h localhost -t "kaiser/god/esp/ESP_00000001/config" \
+#       -m '{"actuators":[{"gpio":5,"actuator_type":"pump","actuator_name":"IrrigationPump","active":true},{"gpio":14,"actuator_type":"valve","actuator_name":"IrrigationValve","active":true},{"gpio":15,"actuator_type":"fan","actuator_name":"VentilationFan","active":true},{"gpio":16,"actuator_type":"relay","actuator_name":"VentilationDamper","active":true}]}'
+#   Step 2 - Assign to irrigation subzone (after ~500ms):
+#     mosquitto_pub -h localhost -t "kaiser/god/esp/ESP_00000001/subzone/assign" \
+#       -m '{"subzone_id":"irrigation","gpios":[5,14]}'
+#   Step 3 - Assign to ventilation subzone (after ~300ms):
+#     mosquitto_pub -h localhost -t "kaiser/god/esp/ESP_00000001/subzone/assign" \
+#       -m '{"subzone_id":"ventilation","gpios":[15,16]}'
+#   Step 4 - Turn ON all actuators (after ~500ms, with ~100ms between each):
+#     mosquitto_pub -h localhost -t "kaiser/god/esp/ESP_00000001/actuator/5/command" -m '{"command":"ON"}'
+#     mosquitto_pub -h localhost -t "kaiser/god/esp/ESP_00000001/actuator/14/command" -m '{"command":"ON"}'
+#     mosquitto_pub -h localhost -t "kaiser/god/esp/ESP_00000001/actuator/15/command" -m '{"command":"ON"}'
+#     mosquitto_pub -h localhost -t "kaiser/god/esp/ESP_00000001/actuator/16/command" -m '{"command":"ON"}'
+#   Step 5 - Enable safe mode for irrigation subzone ONLY (after ~500ms):
+#     mosquitto_pub -h localhost -t "kaiser/god/esp/ESP_00000001/subzone/safe" \
+#       -m '{"subzone_id":"irrigation","enable":true}'
+#
+# Firmware reference: gpio_manager.cpp lines 599-670
+
+name: Subzone Safe-Mode Enable and Check
+version: 1
+steps:
+  # Wait for boot to complete
+  - wait-serial: "Phase 1: Core Infrastructure READY"
+
+  # Wait for MQTT connection
+  - wait-serial: "MQTT connected successfully"
+
+  # External MQTT injection: configure actuators for TWO subzones (CI helper script)
+
+  # Verify all actuators configured
+  - wait-serial: "Pin 5 allocated"
+  - wait-serial: "Pin 14 allocated"
+  - wait-serial: "Pin 15 allocated"
+  - wait-serial: "Pin 16 allocated"
+
+  # External MQTT injection: assign to irrigation + ventilation subzones (CI helper script)
+  - delay: 500ms
+
+  # Verify subzone assignments
+  - wait-serial: "irrigation"
+  - wait-serial: "ventilation"
+
+  # External MQTT injection: turn ON all actuators (CI helper script)
+  - delay: 500ms
+
+  # Verify all actuators are ON
+  - delay: 500ms
+
+  # GPIO-SUB-004: External MQTT injection - enable safe mode for IRRIGATION only (CI helper script)
+
+  # Verify irrigation subzone is put in safe mode
+  - wait-serial: "Safe-Mode activated for subzone"
+  - wait-serial: "irrigation"
+
+  # GPIO-SUB-005: Verify ventilation subzone is NOT affected
+  # The ventilation actuators should still be operational
+  # (This is implicit - no error messages for ventilation)

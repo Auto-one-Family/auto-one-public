@@ -1,0 +1,20 @@
+# OneWire Device Type Detection Test (OW-UTIL-002)
+# Validates getDeviceType() correctly identifies DS18B20
+# Tests: Family code 0x28 maps to "ds18b20"
+# Timeout: 90000ms
+
+name: OneWire Device Type Detection
+version: 1
+steps:
+  # Boot completes
+  - wait-serial: "Phase 5: Actuator System READY"
+
+  # When OneWire device is verified, type is detected
+  # getDeviceType() returns "ds18b20" for family code 0x28
+  - wait-serial: "type: ds18b20"
+
+  # Or in scan results:
+  # - wait-serial: "device_type\":\"ds18b20"
+
+  # System confirms DS18B20 is working
+  - wait-serial: "heartbeat"

@@ -1,0 +1,39 @@
+{
+  "$id": "automationone://schemas/base",
+  "type": "object",
+  "properties": {
+    "manufacturer": {
+      "type": "string",
+      "title": "Hersteller",
+      "description": "Hersteller des Geräts"
+    },
+    "model": {
+      "type": "string",
+      "title": "Modell",
+      "description": "Modellbezeichnung"
+    },
+    "serial_number": {
+      "type": "string",
+      "title": "Seriennummer"
+    },
+    "firmware_version": {
+      "type": "string",
+      "title": "Firmware-Version"
+    },
+    "installation_date": {
+      "type": "string",
+      "format": "date",
+      "title": "Installationsdatum"
+    },
+    "datasheet_url": {
+      "type": "string",
+      "format": "uri",
+      "title": "Datenblatt-Link"
+    },
+    "notes": {
+      "type": "string",
+      "title": "Notizen",
+      "ui:widget": "textarea"
+    }
+  }
+}

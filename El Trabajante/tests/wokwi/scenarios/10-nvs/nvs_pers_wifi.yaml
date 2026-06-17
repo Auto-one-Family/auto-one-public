@@ -1,0 +1,34 @@
+# NVS WiFi Config Persistence Test
+# Test-ID: NVS-PERS-004
+# CRITICAL: Validates WiFi credentials survive ESP32 reboot
+# Timeout: 90000ms
+#
+# WiFi credentials are the most fundamental persistent data!
+# Without them, ESP32 cannot connect to network after power cycle.
+#
+# Expected behavior:
+# - WiFi credentials loaded from NVS at boot
+# - Connection established without provisioning
+# - Subsequent reboots also auto-connect
+#
+# Note: In Wokwi, WiFi is simulated via WOKWI_WIFI_SSID build flag
+# but the NVS mechanism is still tested
+
+name: NVS WiFi Config Persistence
+version: 1
+steps:
+  # Initial boot
+  - wait-serial: "ESP32 Sensor Network"
+  - wait-serial: "StorageManager: Initialized"
+
+  # WiFi config loaded from NVS (wifi_config namespace)
+  - wait-serial: "Opened namespace: wifi_config"
+
+  # WiFi connection successful proves config was loaded
+  - wait-serial: "WiFi connected successfully"
+
+  # System continues to operational state
+  - wait-serial: "MQTT connected successfully"
+
+  # Heartbeat proves long-term stability
+  - wait-serial: "heartbeat"

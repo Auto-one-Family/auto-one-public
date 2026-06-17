@@ -1,0 +1,49 @@
+# GPIO-EDGE-001: Maximum Pin Reservation
+# =======================================
+# Validates that all 16 SAFE_GPIO_PINS can be reserved
+# simultaneously without errors or memory issues.
+#
+# Test ID: GPIO-EDGE-001
+# Priority: MEDIUM
+# Requirement: All 22 SAFE_GPIO_PINS can be reserved (minus I2C which are auto-reserved)
+#
+# ESP32 WROOM Safe Pins (16 total):
+#   4, 5, 14, 15, 16, 17, 18, 19, 21, 22, 23, 25, 26, 27, 32, 33
+#
+# Auto-Reserved by System:
+#   21 - I2C SDA
+#   22 - I2C SCL
+#
+# Available for User: 14 pins
+#
+# MQTT-Injection (extern via CI):
+#   Configure maximum sensors + actuators in single config:
+#     mosquitto_pub -h localhost -t "kaiser/god/esp/ESP_00000001/config" \
+#       -m '{"sensors":[{"gpio":4,"sensor_type":"temp_ds18b20","sensor_name":"Sensor1","active":true},{"gpio":32,"sensor_type":"analog","sensor_name":"Sensor2","active":true},{"gpio":33,"sensor_type":"analog","sensor_name":"Sensor3","active":true}],"actuators":[{"gpio":5,"actuator_type":"pump","actuator_name":"Actuator1","active":true},{"gpio":14,"actuator_type":"valve","actuator_name":"Actuator2","active":true},{"gpio":15,"actuator_type":"relay","actuator_name":"Actuator3","active":true},{"gpio":16,"actuator_type":"fan","actuator_name":"Actuator4","active":true},{"gpio":17,"actuator_type":"pump","actuator_name":"Actuator5","active":true},{"gpio":18,"actuator_type":"valve","actuator_name":"Actuator6","active":true},{"gpio":19,"actuator_type":"relay","actuator_name":"Actuator7","active":true},{"gpio":23,"actuator_type":"fan","actuator_name":"Actuator8","active":true},{"gpio":25,"actuator_type":"pump","actuator_name":"Actuator9","active":true},{"gpio":26,"actuator_type":"valve","actuator_name":"Actuator10","active":true},{"gpio":27,"actuator_type":"relay","actuator_name":"Actuator11","active":true}]}'
+#
+# Firmware reference: gpio_manager.cpp lines 36-38 (pins_.reserve)
+
+name: Maximum GPIO Pin Reservation
+version: 1
+steps:
+  # Wait for boot to complete
+  - wait-serial: "Phase 1: Core Infrastructure READY"
+
+  # Wait for MQTT connection
+  - wait-serial: "MQTT connected successfully"
+
+  # I2C pins (21, 22) are already reserved by system
+  # We can use: 4, 5, 14, 15, 16, 17, 18, 19, 23, 25, 26, 27, 32, 33 (14 pins)
+
+  # External MQTT injection: configure maximum sensors + actuators (CI helper script)
+
+  # Verify first few allocations
+  - wait-serial: "Pin 4 allocated"
+  - wait-serial: "Pin 5 allocated"
+  - wait-serial: "Pin 27 allocated"
+
+  # Verify no memory errors
+  # System should remain stable after maximum allocation
+
+  # Check memory status (should appear in Phase 1 or heartbeat)
+  - wait-serial: "Free Heap"

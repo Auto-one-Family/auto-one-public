@@ -1,0 +1,33 @@
+{
+  "$id": "automationone://schemas/actuator/relay",
+  "allOf": [{ "$ref": "automationone://schemas/base" }],
+  "properties": {
+    "relay_type": {
+      "type": "string",
+      "title": "Relais-Typ",
+      "enum": ["NO", "NC"],
+      "default": "NO",
+      "description": "Normally Open (NO) oder Normally Closed (NC)"
+    },
+    "max_voltage": {
+      "type": "number",
+      "title": "Max. Spannung (V)",
+      "default": 250
+    },
+    "max_current": {
+      "type": "number",
+      "title": "Max. Strom (A)",
+      "default": 10
+    },
+    "connected_device": {
+      "type": "string",
+      "title": "Angeschlossenes Gerät",
+      "description": "z.B. Pumpe, Lüfter, Licht"
+    },
+    "power_consumption_w": {
+      "type": "number",
+      "title": "Leistungsaufnahme (W)",
+      "description": "Leistung des angeschlossenen Geräts"
+    }
+  }
+}

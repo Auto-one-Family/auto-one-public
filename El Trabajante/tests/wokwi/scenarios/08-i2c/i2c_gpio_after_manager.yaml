@@ -1,0 +1,31 @@
+# I2C Initialization After GPIO Manager Test
+# Test-ID: I2C-INIT-004
+# Validates: I2C initializes correctly after GPIO Manager is ready
+# Expected: GPIO pins 21/22 are properly reserved by system for I2C
+# Timeout: 90000ms
+
+name: I2C Init After GPIO Manager (I2C-INIT-004)
+version: 1
+steps:
+  # Phase 1: GPIO Manager must initialize first
+  - wait-serial: "GPIO SAFE-MODE INITIALIZATION"
+  - wait-serial: "Safe-Mode initialization complete"
+
+  # GPIO Manager is ready
+  - wait-serial: "Phase 1: Core Infrastructure READY"
+
+  # Phase 2: Communication (WiFi/MQTT)
+  - wait-serial: "Phase 2: Communication Layer READY"
+
+  # Phase 3: I2C initialization
+  - wait-serial: "Phase 3: Hardware Abstraction Layer"
+
+  # I2C must start AFTER GPIO Manager
+  - wait-serial: "I2C Bus Manager initialization started"
+
+  # GPIO pins are reserved for I2C
+  # The I2C manager verifies pin ownership through GPIOManager
+  - wait-serial: "I2C Bus Manager initialized successfully"
+
+  # Verify sequence is correct
+  - wait-serial: "Phase 3: Hardware Abstraction READY"

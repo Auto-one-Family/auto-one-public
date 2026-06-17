@@ -1,0 +1,31 @@
+# I2C Multi-Device Sequential Read Test
+# Test-ID: I2C-MULTI-002
+# Validates: Sequential reads from multiple I2C devices
+# Expected: Both SHT31 (0x44) and BMP280 (0x76) read successfully
+# Timeout: 120000ms (longer for multiple sensor cycles)
+# Diagram: diagrams/diagram_i2c.json
+
+name: I2C Multi-Device Sequential Read (I2C-MULTI-002)
+version: 1
+steps:
+  # I2C Bus Manager initializes
+  - wait-serial: "I2C Bus Manager initialized successfully"
+
+  # Both I2C sensors should be found during scan
+  - wait-serial: "Found device at 0x44"
+  - wait-serial: "Found device at 0x76"
+
+  # Phase 4: Sensor System ready with I2C sensors
+  - wait-serial: "Phase 4: Sensor System READY"
+
+  # Wait for sensor loop to read both devices
+  - wait-serial: "Published"
+
+  # Heartbeat confirms continuous operation
+  - wait-serial: "heartbeat"
+
+# NOTE: Sequential access is guaranteed because I2CBusManager
+# uses single-threaded access through Wire library.
+# No explicit mutex needed in current implementation.
+#
+# For thread-safe multi-task access, mutex would be required.

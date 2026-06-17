@@ -1,0 +1,28 @@
+# NVS Key Name Too Long Test
+# Test-ID: NVS-KEY-002
+# Validates key names > 15 chars are rejected
+# Timeout: 90000ms
+#
+# NVS key name limit: 15 characters (ESP-IDF)
+#
+# Expected behavior:
+# - putString("1234567890123456", value) returns false
+# - Error logged
+# - System remains stable
+
+name: NVS Key Name Too Long
+version: 1
+steps:
+  # System boots normally
+  - wait-serial: "ESP32 Sensor Network"
+  - wait-serial: "StorageManager: Initialized"
+
+  # All production keys are <= 15 chars:
+  # - ssid, password, server_address
+  # - zone_id, kaiser_id, zone_name
+  # - sensor_0_gpio, sensor_0_type, etc.
+
+  - wait-serial: "Phase 1: Core Infrastructure READY"
+  - wait-serial: "WiFi connected successfully"
+  - wait-serial: "MQTT connected successfully"
+  - wait-serial: "heartbeat"

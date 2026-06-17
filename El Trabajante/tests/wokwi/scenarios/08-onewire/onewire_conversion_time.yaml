@@ -1,0 +1,26 @@
+# OneWire Conversion Time Test (OW-TEMP-004)
+# Validates 750ms conversion time is properly handled
+# Tests: Temperature conversion waits for 12-bit resolution (750ms)
+# Timeout: 90000ms
+
+name: OneWire Conversion Time
+version: 1
+steps:
+  # Boot completes
+  - wait-serial: "Phase 5: Actuator System READY"
+
+  # OneWire initialized
+  - wait-serial: "OneWire Bus Manager"
+
+  # When temperature is requested, 750ms delay occurs
+  # (This is internal in readRawTemperature())
+  # delay(750) ensures 12-bit conversion completes
+
+  # After delay, scratchpad is read
+  - wait-serial: "OneWire raw temperature"
+
+  # Value is logged
+  - wait-serial: "God-Kaiser"
+
+  # System continues with heartbeat
+  - wait-serial: "heartbeat"

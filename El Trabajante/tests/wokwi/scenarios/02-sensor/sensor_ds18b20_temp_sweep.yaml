@@ -1,0 +1,60 @@
+# DS18B20 Temperature Sweep Test
+# Validates sensor reading across full temperature range via set-control
+# Sweep: -10C -> 0C -> 25C -> 50C -> 100C
+# Verifies firmware handles dynamic temperature changes without crash
+# Timeout: 90000ms
+
+name: DS18B20 Temperature Sweep
+version: 1
+steps:
+  # Boot and connect
+  - wait-serial: "MQTT connected successfully"
+
+  # Registration gate: opens on server confirmation or 10s timeout fallback
+  - wait-serial: "REGISTRATION"
+
+  # OneWire bus ready
+  - wait-serial: "OneWire"
+
+  # Wait for first measurement cycle to complete
+  - wait-serial: "Published"
+
+  # --- Sweep: Cold (-10C) ---
+  - set-control:
+      part-id: "temp1"
+      control: "temperature"
+      value: "-10"
+  - delay: 8000ms
+  - wait-serial: "Published"
+
+  # --- Sweep: Freezing (0C) ---
+  - set-control:
+      part-id: "temp1"
+      control: "temperature"
+      value: "0"
+  - delay: 8000ms
+  - wait-serial: "Published"
+
+  # --- Sweep: Normal (25C) ---
+  - set-control:
+      part-id: "temp1"
+      control: "temperature"
+      value: "25"
+  - delay: 8000ms
+  - wait-serial: "Published"
+
+  # --- Sweep: Hot (50C) ---
+  - set-control:
+      part-id: "temp1"
+      control: "temperature"
+      value: "50"
+  - delay: 8000ms
+  - wait-serial: "Published"
+
+  # --- Sweep: Very Hot (100C) ---
+  - set-control:
+      part-id: "temp1"
+      control: "temperature"
+      value: "100"
+  - delay: 8000ms
+  - wait-serial: "Published"

@@ -1,0 +1,20 @@
+# Sequence Counter in All Payload Types Test
+# Validates that every MQTT publish includes the "seq" field.
+# After Phase 5, heartbeat and sensor data are both published with seq.
+# Timeout: 90000ms
+
+name: Sequence Counter in All Payload Types
+version: 1
+steps:
+  # Full boot with all phases
+  - wait-serial: "Phase 5:"
+
+  # Heartbeat payload has seq
+  - wait-serial: "\"seq\":"
+
+  # Sensor data payload also has seq
+  - wait-serial: "\"seq\":"
+
+  # Actuator status (if configured) also has seq
+  # Verify at least 3 publishes occurred with seq field
+  - wait-serial: "\"seq\":"

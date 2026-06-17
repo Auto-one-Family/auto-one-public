@@ -1,0 +1,26 @@
+# PWM Actuator Full Flow Test (Dimmer 0% → 50% → 100% → 0%)
+# Validates PWM actuator with multiple value changes
+# Requires MQTT injection: PWM commands to actuator/13/command
+# Timeout: 120000ms
+
+name: PWM Actuator Full Flow Test
+version: 1
+steps:
+  # Wait for MQTT connection
+  - wait-serial: "MQTT connected successfully"
+
+  # Registration gate: opens on server confirmation or 10s timeout fallback
+  - wait-serial: "REGISTRATION"
+
+  # Wait for system to be operational
+  - wait-serial: "heartbeat"
+
+  # After MQTT injection: {"command":"PWM","value":0.5}
+  # Topic: kaiser/god/esp/ESP_00000001/actuator/13/command
+  - wait-serial: "Actuator"
+
+  # After MQTT injection: {"command":"PWM","value":1.0}
+  - wait-serial: "Actuator"
+
+  # After MQTT injection: {"command":"OFF"}
+  - wait-serial: "Actuator"

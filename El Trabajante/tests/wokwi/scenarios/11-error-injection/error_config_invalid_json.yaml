@@ -1,0 +1,20 @@
+# Error-Injection: Invalid JSON Config
+# Sends malformed JSON via MQTT config topic.
+# Expected: "Failed to parse sensor config JSON" on serial (LOG_ERROR, visible at default level).
+# The ConfigResponse publishes with error_code "JSON_PARSE_ERROR" via MQTT (not serial).
+# Timeout: 90000ms
+#
+# MQTT-Injection (extern via CI):
+#   mosquitto_pub -h localhost -t "kaiser/god/esp/ESP_00000001/config" \
+#     -m '{"sensors": [{"gpio": 4, "sensor_type": "ds18b20", "broken'
+# IMPORTANT: Payload is intentionally invalid JSON (missing closing braces).
+
+name: Error Injection - Invalid JSON Config
+version: 1
+steps:
+  - wait-serial: "Phase 5: Actuator System READY"
+  - wait-serial: "MQTT connected successfully"
+  - wait-serial: "REGISTRATION"
+  - wait-serial: "heartbeat"
+  # External MQTT injection of malformed JSON happens here (sleep 25 in CI)
+  - wait-serial: "Failed to parse"

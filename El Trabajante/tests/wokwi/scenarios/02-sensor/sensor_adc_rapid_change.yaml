@@ -1,0 +1,49 @@
+# ADC Rapid Change Test (Potentiometer)
+# Validates firmware stability under rapid ADC value transitions
+# Pattern: 0.0 -> 1.0 -> 0.0 -> 1.0 (full swing oscillation)
+# Tests: No ADC glitch, no stuck readings, pipeline continues
+# Potentiometer on GPIO 34 in diagram.json
+# Timeout: 90000ms
+
+name: ADC Rapid Change Test
+version: 1
+steps:
+  # Boot and connect
+  - wait-serial: "MQTT connected successfully"
+
+  # Registration gate
+  - wait-serial: "REGISTRATION"
+
+  # Wait for first measurement cycle
+  - wait-serial: "Published"
+
+  # --- Rapid: Full swing to max ---
+  - set-control:
+      part-id: "pot_analog"
+      control: "position"
+      value: "1.0"
+  - delay: 3000ms
+
+  # --- Rapid: Full swing to min ---
+  - set-control:
+      part-id: "pot_analog"
+      control: "position"
+      value: "0.0"
+  - delay: 3000ms
+
+  # --- Rapid: Full swing to max again ---
+  - set-control:
+      part-id: "pot_analog"
+      control: "position"
+      value: "1.0"
+  - delay: 3000ms
+
+  # --- Rapid: Full swing to min ---
+  - set-control:
+      part-id: "pot_analog"
+      control: "position"
+      value: "0.0"
+  - delay: 3000ms
+
+  # Verify system survived rapid ADC changes
+  - wait-serial: "Published"

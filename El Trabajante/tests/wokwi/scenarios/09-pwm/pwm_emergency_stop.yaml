@@ -1,0 +1,43 @@
+# PWM Emergency Stop Test
+# Test-ID: PWM-SAFE-003, PWM-SAFE-004
+# Validates that emergency stop sets all PWM actuators to 0%
+# Uses broadcast emergency MQTT message
+# Timeout: 180000ms
+
+name: PWM Emergency Stop
+version: 1
+steps:
+  # Wait for system ready
+  - wait-serial: "MQTT connected successfully"
+
+  # Wait for heartbeat
+  - wait-serial: "heartbeat"
+
+  # Configure PWM actuator and set to 100%
+  # Topic: kaiser/god/esp/{esp_id}/config
+  # Payload: {"actuators":[{"gpio":25,"actuator_type":"pwm","actuator_name":"EmergencyPWM","active":true}]}
+
+  - wait-serial: "PWMActuator initialized"
+
+  # Set PWM to 100%
+  # Topic: kaiser/god/esp/{esp_id}/actuator/25/command
+  # Payload: {"command":"SET","value":1.0}
+
+  - wait-serial: "100.0%"
+
+  # === EMERGENCY STOP ===
+  # Topic: kaiser/broadcast/emergency
+  # Payload: {"command":"stop","reason":"Test emergency"}
+
+  # Verify emergency is processed
+  - wait-serial: "emergency"
+
+  # Verify PWM is stopped
+  - wait-serial: "emergency stop"
+
+  # === CLEAR EMERGENCY ===
+  # Topic: kaiser/god/esp/{esp_id}/system/command
+  # Payload: {"command":"clear_emergency"}
+
+  # Verify emergency is cleared
+  - wait-serial: "emergency"

@@ -1,0 +1,44 @@
+# GPIO-BOOT-001: Safe-Mode Must Initialize First
+# =============================================
+# Validates that GPIO Manager initializes all pins to safe mode
+# BEFORE any other system component starts (WiFi, MQTT, etc.)
+#
+# Test ID: GPIO-BOOT-001
+# Priority: CRITICAL
+# Requirement: initializeAllPinsToSafeMode() MUST be called as FIRST action in setup()
+#
+# Expected boot order:
+#   1. Serial.begin()
+#   2. Boot Banner
+#   3. Factory Reset Check (optional)
+#   4. GPIO SAFE-MODE INITIALIZATION  <-- THIS MUST COME BEFORE:
+#   5. Logger Init
+#   6. Storage Manager
+#   7. WiFi Manager
+#   8. MQTT Client
+#
+# Firmware reference: main.cpp line 140
+
+name: GPIO Safe-Mode Must Initialize First
+version: 1
+steps:
+  # Wait for boot to start
+  - wait-serial: "ESP32 Sensor Network"
+
+  # GPIO Safe-Mode MUST appear BEFORE Logger
+  - wait-serial: "GPIO SAFE-MODE INITIALIZATION"
+
+  # Verify board type is detected
+  - wait-serial: "Board Type:"
+
+  # Verify initialization completes
+  - wait-serial: "Safe-Mode initialization complete"
+
+  # Verify Logger starts AFTER GPIO (order check)
+  - wait-serial: "Logger System Initialized"
+
+  # Phase 1 complete means GPIO was successful (comes before Phase 2)
+  - wait-serial: "Phase 1: Core Infrastructure READY"
+
+  # Verify WiFi/MQTT starts AFTER GPIO (Phase 2 requires Phase 1 complete)
+  - wait-serial: "Phase 2: Communication"

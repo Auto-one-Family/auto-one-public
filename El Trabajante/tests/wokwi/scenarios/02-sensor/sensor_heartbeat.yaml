@@ -1,0 +1,18 @@
+# Heartbeat Publishing Test
+# Validates that heartbeat is sent after boot and periodically
+# Timeout: 90000ms (must wait 60s+ for second heartbeat)
+
+name: Heartbeat Publishing Test
+version: 1
+steps:
+  # Wait for MQTT connection
+  - wait-serial: "MQTT connected successfully"
+
+  # Initial heartbeat should be sent immediately after MQTT connect
+  - wait-serial: "Initial heartbeat sent"
+
+  # Verify heap is monitored
+  - wait-serial: "Free Heap:"
+
+  # Wait for periodic heartbeat (every 60s)
+  - wait-serial: "heartbeat"

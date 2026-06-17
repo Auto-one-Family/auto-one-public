@@ -1,0 +1,72 @@
+# HW-INPUT-001 & HW-INPUT-002: Input-Only Pin Restrictions
+# =========================================================
+# Validates that INPUT_ONLY_PINS (GPIO 34, 35, 36, 39 on ESP32 WROOM)
+# cannot be used as actuator outputs.
+#
+# Test IDs: HW-INPUT-001, HW-INPUT-002, HW-ADC-003
+# Priority: HIGH (Safety)
+# Requirement:
+#   - GPIO 34-39 are INPUT-only (no OUTPUT mode, no internal pull-ups)
+#   - Attempting to configure actuator on these pins MUST fail
+#   - These pins are NOT in SAFE_GPIO_PINS array
+#
+# Critical Note:
+#   GPIO 34-39 are NOT in SAFE_GPIO_PINS, so they will be rejected
+#   with "not in safe pins" error, not specifically "input-only".
+#   This is the current implementation behavior.
+#
+# Input-Only Pins (ESP32 WROOM only):
+#   34 - ADC1_CH6
+#   35 - ADC1_CH7
+#   36 (VP) - ADC1_CH0
+#   39 (VN) - ADC1_CH3
+#
+# XIAO ESP32-C3 has NO input-only pins (all GPIOs are bidirectional)
+#
+# MQTT-Injection (extern via CI):
+#   Test 1 - Actuator on GPIO 34 (INPUT-only):
+#     mosquitto_pub -h localhost -t "kaiser/god/esp/ESP_00000001/config" \
+#       -m '{"actuators":[{"gpio":34,"actuator_type":"relay","actuator_name":"InvalidRelay34","active":true}]}'
+#   Test 2 - Actuator on GPIO 39 (INPUT-only, after ~500ms):
+#     mosquitto_pub -h localhost -t "kaiser/god/esp/ESP_00000001/config" \
+#       -m '{"actuators":[{"gpio":39,"actuator_type":"pump","actuator_name":"InvalidPump39","active":true}]}'
+#   Test 3 - Sensor on GPIO 34 (also fails, after ~500ms):
+#     mosquitto_pub -h localhost -t "kaiser/god/esp/ESP_00000001/config" \
+#       -m '{"sensors":[{"gpio":34,"sensor_type":"analog","sensor_name":"AnalogSensor34","active":true}]}'
+#
+# Firmware references:
+#   - esp32_dev.h lines 57-60: INPUT_ONLY_PINS array
+#   - gpio_manager.cpp: Rejects pins not in SAFE_GPIO_PINS
+
+name: Input-Only Pin Restrictions
+version: 1
+steps:
+  # Wait for boot to complete
+  - wait-serial: "Phase 1: Core Infrastructure READY"
+
+  # Wait for MQTT connection
+  - wait-serial: "MQTT connected successfully"
+
+  # TEST 1: External MQTT injection - actuator on GPIO 34 (CI helper script)
+  # This MUST fail because GPIO 34 is not in SAFE_GPIO_PINS
+
+  # Verify pin is rejected (not in safe pins list)
+  - wait-serial: "not in safe pins"
+
+  # Wait before next test
+  - delay: 500ms
+
+  # TEST 2: External MQTT injection - actuator on GPIO 39 (CI helper script)
+
+  # Verify pin is rejected
+  - wait-serial: "not in safe pins"
+
+  # Wait before next test
+  - delay: 500ms
+
+  # TEST 3: External MQTT injection - sensor on GPIO 34 (CI helper script)
+  # Note: This will ALSO fail because GPIO 34 is not in SAFE_GPIO_PINS
+  # The current implementation does NOT allow GPIO 34-39 even as inputs
+
+  # Verify pin is rejected
+  - wait-serial: "not in safe pins"

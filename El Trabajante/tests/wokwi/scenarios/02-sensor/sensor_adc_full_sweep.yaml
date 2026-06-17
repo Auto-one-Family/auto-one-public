@@ -1,0 +1,57 @@
+# ADC Full Sweep Test (Potentiometer)
+# Validates analog sensor reading across full ADC range via set-control
+# Potentiometer position: 0.0 (min) -> 0.25 -> 0.5 -> 0.75 -> 1.0 (max)
+# Potentiometer on GPIO 34 (ADC input-only pin) in diagram.json
+# Timeout: 90000ms
+
+name: ADC Full Sweep Test
+version: 1
+steps:
+  # Boot and connect
+  - wait-serial: "MQTT connected successfully"
+
+  # Registration gate
+  - wait-serial: "REGISTRATION"
+
+  # Wait for first measurement cycle
+  - wait-serial: "Published"
+
+  # --- Sweep: Minimum (0.0 = 0V) ---
+  - set-control:
+      part-id: "pot_analog"
+      control: "position"
+      value: "0.0"
+  - delay: 8000ms
+  - wait-serial: "Published"
+
+  # --- Sweep: Quarter (0.25) ---
+  - set-control:
+      part-id: "pot_analog"
+      control: "position"
+      value: "0.25"
+  - delay: 8000ms
+  - wait-serial: "Published"
+
+  # --- Sweep: Center (0.5 = default) ---
+  - set-control:
+      part-id: "pot_analog"
+      control: "position"
+      value: "0.5"
+  - delay: 8000ms
+  - wait-serial: "Published"
+
+  # --- Sweep: Three-quarter (0.75) ---
+  - set-control:
+      part-id: "pot_analog"
+      control: "position"
+      value: "0.75"
+  - delay: 8000ms
+  - wait-serial: "Published"
+
+  # --- Sweep: Maximum (1.0 = 3.3V) ---
+  - set-control:
+      part-id: "pot_analog"
+      control: "position"
+      value: "1.0"
+  - delay: 8000ms
+  - wait-serial: "Published"

@@ -1,0 +1,66 @@
+# GPIO-RES-003 & GPIO-RES-007: Invalid Pin Rejection
+# ===================================================
+# Validates that GPIO Manager rejects requests for:
+# - Reserved pins (GPIO 0, 1, 2, 3, 12, 13)
+# - Input-only pins used as OUTPUT (GPIO 34, 35, 36, 39)
+#
+# Test IDs: GPIO-RES-003, GPIO-RES-007
+# Priority: CRITICAL (Safety)
+# Requirement:
+#   - requestPin(6, ...) returns false (Flash pin)
+#   - requestPin(34, ...) for actuator returns false (INPUT-only)
+#
+# Reserved Pins (ESP32 WROOM):
+#   0  - Boot Button
+#   1  - UART0 TX
+#   2  - Boot Strapping
+#   3  - UART0 RX
+#   12 - Flash Voltage
+#   13 - Flash Voltage
+#
+# Input-Only Pins:
+#   34, 35, 36, 39 - Cannot be used as OUTPUT
+#
+# MQTT-Injection (extern via CI):
+#   Test 1 - Reserved pin GPIO 12 (Flash):
+#     mosquitto_pub -h localhost -t "kaiser/god/esp/ESP_00000001/config" \
+#       -m '{"sensors":[{"gpio":12,"sensor_type":"analog","sensor_name":"InvalidSensor","active":true}]}'
+#   Test 2 - UART TX pin GPIO 1 (after ~500ms):
+#     mosquitto_pub -h localhost -t "kaiser/god/esp/ESP_00000001/config" \
+#       -m '{"sensors":[{"gpio":1,"sensor_type":"analog","sensor_name":"UARTSensor","active":true}]}'
+#   Test 3 - INPUT-only pin GPIO 34 as actuator (after ~500ms):
+#     mosquitto_pub -h localhost -t "kaiser/god/esp/ESP_00000001/config" \
+#       -m '{"actuators":[{"gpio":34,"actuator_type":"pump","actuator_name":"InvalidPump","active":true}]}'
+#
+# Firmware reference: gpio_manager.cpp lines 98-102, 218-231
+
+name: Invalid GPIO Pin Rejection
+version: 1
+steps:
+  # Wait for boot to complete
+  - wait-serial: "Phase 1: Core Infrastructure READY"
+
+  # Wait for MQTT connection
+  - wait-serial: "MQTT connected successfully"
+
+  # TEST 1: External MQTT injection - reserved pin GPIO 12 (CI helper script)
+
+  # Verify reserved pin is rejected
+  - wait-serial: "reserved pin"
+
+  # Wait before next test
+  - delay: 500ms
+
+  # TEST 2: External MQTT injection - UART TX pin GPIO 1 (CI helper script)
+
+  # Verify UART pin is rejected
+  - wait-serial: "reserved pin 1"
+
+  # Wait before next test
+  - delay: 500ms
+
+  # TEST 3: External MQTT injection - INPUT-only pin GPIO 34 as actuator (CI helper script)
+
+  # Verify INPUT-only pin rejection for OUTPUT
+  # Note: GPIO 34 is not in SAFE_GPIO_PINS array
+  - wait-serial: "not in safe pins"

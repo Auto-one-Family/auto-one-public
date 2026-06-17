@@ -1,0 +1,103 @@
+# AutomationOne - CI Environment
+# ==============================
+# Purpose: CI-optimized configuration for GitHub Actions
+# Usage: docker compose -f docker-compose.yml -f docker-compose.ci.yml up -d --wait
+#
+# Key differences from local:
+# - PostgreSQL uses tmpfs (RAM-based) for speed
+# - Faster healthcheck intervals
+# - No persistence, no monitoring
+# - Mosquitto uses CI-specific config from .github/mosquitto/
+#
+# TM-Decision (2026-02-06): PostgreSQL in CI for production-identical testing
+
+services:
+  # ============================================
+  # PostgreSQL Database (CI-optimized)
+  # ============================================
+  postgres:
+    # Real PostgreSQL for integration tests (not SQLite)
+    # Override command: base config references postgresql.conf which is removed by volumes: !reset
+    command: postgres
+    environment:
+      POSTGRES_USER: god_kaiser
+      POSTGRES_PASSWORD: ci_password
+      POSTGRES_DB: god_kaiser_db
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U god_kaiser -d god_kaiser_db"]
+      interval: 5s      # Faster for CI
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    restart: "no"
+    # RAM-based for speed (overrides named volume from base config)
+    tmpfs:
+      - /var/lib/postgresql/data:size=512M
+    # Clear base volumes to avoid conflict with tmpfs
+    volumes: !reset []
+
+  # ============================================
+  # MQTT Broker (CI-optimized)
+  # ============================================
+  mqtt-broker:
+    healthcheck:
+      test: ["CMD", "mosquitto_pub", "-h", "localhost", "-t", "health/check", "-m", "ping"]
+      interval: 5s      # Faster for CI
+      timeout: 3s
+      retries: 10
+    restart: "no"
+    # Use CI-specific config (no persistence, no WebSocket)
+    volumes:
+      - ./.github/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+
+  # ============================================
+  # God-Kaiser Server (CI-optimized)
+  # ============================================
+  el-servador:
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mqtt-broker:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+    environment:
+      DATABASE_URL: postgresql+asyncpg://god_kaiser:ci_password@postgres:5432/god_kaiser_db
+      DATABASE_AUTO_INIT: "true"
+      ENVIRONMENT: testing
+      LOG_LEVEL: WARNING
+      TESTING: "true"
+      # MQTT points to service name
+      MQTT_BROKER_HOST: mqtt-broker
+      MQTT_BROKER_PORT: "1883"
+      # JWT for test environment
+      JWT_SECRET_KEY: ci_test_secret_key_not_for_production
+    restart: "no"
+    # No host volume mounts in CI (avoids PermissionError on /app/logs)
+    volumes: !reset []
+    # No watch/develop section in CI
+    develop: !reset null
+
+  # ============================================
+  # Frontend (opt-in via profile)
+  # ============================================
+  el-frontend:
+    profiles:
+      - frontend  # Only start when explicitly requested
+    environment:
+      # Vite server-side proxy targets (Node.js proxy inside the container)
+      # Must use Docker service name — localhost resolves to the frontend container itself
+      VITE_API_TARGET: http://el-servador:8000
+      VITE_WS_TARGET: ws://el-servador:8000
+    restart: "no"
+    develop: !reset null
+
+# ============================================
+# Override: No monitoring services in CI
+# ============================================
+# pgadmin, loki, alloy, prometheus, grafana are excluded
+# via their profiles (devtools, monitoring) which are not activated in CI

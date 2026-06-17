@@ -1,0 +1,32 @@
+# Complete Boot Sequence Test
+# Validates all 5 phases of ESP32 firmware initialization
+# Timeout: 90000ms (includes 60s wait for first heartbeat)
+
+name: Complete Boot Sequence Test
+version: 1
+steps:
+  # Phase 0: Hardware Init
+  - wait-serial: "ESP32 Sensor Network"
+
+  # Phase 1: Core Infrastructure
+  - wait-serial: "GPIO SAFE-MODE INITIALIZATION"
+  - wait-serial: "Safe-Mode initialization complete"
+  - wait-serial: "Logger system initialized"
+  - wait-serial: "Phase 1: Core Infrastructure READY"
+
+  # Phase 2: Communication Layer
+  - wait-serial: "WiFi connected successfully"
+  - wait-serial: "MQTT connected successfully"
+  - wait-serial: "Phase 2: Communication Layer READY"
+
+  # Phase 3: Hardware Abstraction
+  - wait-serial: "Phase 3: Hardware Abstraction READY"
+
+  # Phase 4: Sensor System
+  - wait-serial: "Phase 4: Sensor System READY"
+
+  # Phase 5: Actuator System
+  - wait-serial: "Phase 5: Actuator System READY"
+
+  # Verify loop() is running (heartbeat after ~60s)
+  - wait-serial: "heartbeat"

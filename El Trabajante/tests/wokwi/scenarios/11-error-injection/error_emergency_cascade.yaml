@@ -1,0 +1,31 @@
+# Error-Injection: Emergency Cascade
+# Sends rapid Emergency -> Clear -> Emergency sequence via broadcast/ESP topics.
+# Validates the safety state machine handles rapid transitions correctly.
+# Expected: Two EMERGENCY-STOP events with EMERGENCY-CLEAR in between.
+# Timeout: 90000ms
+#
+# MQTT-Injection (extern via CI, 5 messages with precise timing):
+#   See: tests/wokwi/helpers/emergency_cascade.sh
+#   1. Config: sensors + actuator on GPIO 5
+#   2. Actuator ON command on GPIO 5
+#   3. Broadcast emergency stop
+#   4. Emergency clear via ESP-specific topic
+#   5. Second broadcast emergency stop
+#
+# Topic reference:
+#   Broadcast stop:  kaiser/broadcast/emergency
+#   ESP emergency:   kaiser/god/esp/ESP_00000001/actuator/emergency
+#   Actuator cmd:    kaiser/god/esp/ESP_00000001/actuator/5/command
+
+name: Error Injection - Emergency Cascade
+version: 1
+steps:
+  - wait-serial: "Phase 5: Actuator System READY"
+  - wait-serial: "MQTT connected successfully"
+  - wait-serial: "REGISTRATION"
+  - wait-serial: "heartbeat"
+  # External config + actuator activation + emergency cascade via helper script
+  - wait-serial: "ConfigResponse published"
+  - wait-serial: "BROADCAST EMERGENCY-STOP RECEIVED"
+  - wait-serial: "EMERGENCY-CLEAR"
+  - wait-serial: "BROADCAST EMERGENCY-STOP RECEIVED"

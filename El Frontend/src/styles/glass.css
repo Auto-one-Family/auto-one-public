@@ -1,0 +1,73 @@
+/* ============================================================================
+   GLASSMORPHISM & IRIDESCENT EFFECTS — Mission Control
+   ============================================================================ */
+
+@layer components {
+  /* Glass Panel — base glass effect (L2) */
+  .glass-panel {
+    background: var(--glass-bg);
+    -webkit-backdrop-filter: blur(var(--glass-blur-l2));
+    backdrop-filter: blur(var(--glass-blur-l2));
+    border: 1px solid var(--glass-border);
+    box-shadow: var(--elevation-raised);
+  }
+
+  /* Glass Modal Overlay */
+  .glass-overlay {
+    background: var(--backdrop-color);
+    -webkit-backdrop-filter: blur(var(--backdrop-blur));
+    backdrop-filter: blur(var(--backdrop-blur));
+  }
+
+  /* Iridescent Border — for active/premium elements */
+  .iridescent-border {
+    position: relative;
+    border: 1px solid transparent;
+    background:
+      linear-gradient(var(--color-bg-secondary), var(--color-bg-secondary)) padding-box,
+      var(--gradient-iridescent-full) border-box;
+  }
+
+  /* Water Reflection / Shimmer sweep */
+  .water-reflection {
+    position: relative;
+    overflow: hidden;
+  }
+
+  .water-reflection::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 50%;
+    height: 100%;
+    background: linear-gradient(
+      90deg,
+      transparent,
+      rgba(255, 255, 255, 0.02),
+      transparent
+    );
+    animation: shimmer 4s infinite;
+    pointer-events: none;
+  }
+
+  /* Glass Card Variant (L2) */
+  .card-glass {
+    @apply card;
+    background: var(--glass-bg);
+    -webkit-backdrop-filter: blur(var(--glass-blur-l2));
+    backdrop-filter: blur(var(--glass-blur-l2));
+    box-shadow: var(--elevation-raised);
+  }
+
+  /* Subtle noise texture overlay for depth */
+  .noise-overlay::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    opacity: 0.015;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+    pointer-events: none;
+    z-index: 0;
+  }
+}

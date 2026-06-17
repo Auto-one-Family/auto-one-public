@@ -1,0 +1,21 @@
+# Sequence Counter Resets on Reboot Test
+# Validates that seq starts at 0 after a fresh boot.
+# publish_seq_ is initialized to 0 in MQTTClient constructor.
+# First publish gets seq=1 (pre-increment via ++publish_seq_).
+# Timeout: 90000ms
+
+name: Sequence Counter Resets on Reboot
+version: 1
+steps:
+  # Boot sequence starts fresh
+  - wait-serial: "Phase 1:"
+
+  # MQTT connects
+  - wait-serial: "MQTT connected successfully"
+
+  # First heartbeat is the first publish — should have seq=1
+  # (publish_seq_ starts at 0, getNextSeq() returns ++publish_seq_ = 1)
+  - wait-serial: "\"seq\":1,"
+
+  # Second publish gets seq=2
+  - wait-serial: "\"seq\":2,"

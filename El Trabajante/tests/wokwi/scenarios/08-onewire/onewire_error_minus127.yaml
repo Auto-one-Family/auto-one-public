@@ -1,0 +1,77 @@
+# OneWire DS18B20 Error Value -127°C Detection (OW-ERR-CRITICAL-001)
+# ============================================================================
+# PRIORITY: CRITICAL
+# CATEGORY: error-handling, sensor-validation
+#
+# REAL-WORLD SCENARIO:
+# A loose cable or defective sensor in a greenhouse causes the DS18B20 to
+# return -127°C (RAW: -2032). Without detection, the server sees this as a
+# real measurement and activates emergency heating, killing plants.
+#
+# DS18B20 BEHAVIOR:
+# - Returns -127°C (RAW: -2032) when: CRC error, disconnected sensor, defect
+# - This value CAN pass CRC validation (the scratchpad is all 0xFF)
+# - Normal range: -55°C to +125°C (RAW: -880 to +2000)
+#
+# EXPECTED FIRMWARE BEHAVIOR:
+# 1. Detect -127°C as error value (not valid measurement)
+# 2. Log ERROR or WARNING with "invalid", "fault", "disconnected", or "-127"
+# 3. DO NOT publish to MQTT as valid data
+# 4. Track error via ErrorTracker
+#
+# WOKWI LIMITATION: Cannot simulate -127°C (sensor disconnect). Detection verified in native tests.
+# The Wokwi DS18B20 simulator does NOT return -127°C under any conditions.
+# Setting temperature=-127 in diagram.json may not work as Wokwi simulates
+# a "healthy" sensor. This test documents EXPECTED behavior for code review.
+# Verification: Backend unit tests (test_services_sensor.py, test_ds18b20_cross_esp_logic.py)
+# cover -127°C / RAW -2032 detection. No ESP32 native unit test exists yet.
+#
+# FIRMWARE STATUS (updated 2026-02-23):
+# Detection IS implemented in SensorManager (not in onewire_bus.cpp):
+# File: El Trabajante/src/services/sensor/sensor_manager.cpp:693
+# LOG_E: "SensorManager: DS18B20 SENSOR FAULT detected: -127°C (GPIO %d)"
+# LOG_E: "Possible causes: Sensor disconnected, CRC failure, bus wiring issue"
+# RAW -2032 = -127°C is correctly flagged as sensor fault.
+# ============================================================================
+
+name: DS18B20 Error Value -127°C Detection
+version: 1
+
+# NOTE: This test may PASS even without the firmware fix because Wokwi
+# does not simulate the -127°C error condition. The test documents expected
+# behavior for manual code review and future firmware validation.
+
+steps:
+  # ============================================
+  # PHASE 1: SYSTEM BOOT
+  # ============================================
+  - wait-serial: "Phase 3: Hardware Abstraction READY"
+
+  # ============================================
+  # PHASE 2: ONEWIRE INITIALIZATION
+  # ============================================
+  - wait-serial: "OneWire Bus Manager initialized"
+
+  # ============================================
+  # PHASE 3: SENSOR DISCOVERY
+  # ============================================
+  # Sensor should be discovered on bus
+  - wait-serial: "Found device: Family=0x28"
+
+  # ============================================
+  # PHASE 4: TEMPERATURE READING
+  # ============================================
+  # In normal Wokwi operation, this will show valid temperature
+  # If firmware has -127°C validation, it would show ERROR here
+  - wait-serial: "OneWire raw temperature"
+
+  # ============================================
+  # VERIFICATION NOTE:
+  # In a REAL hardware test or when firmware fix is implemented,
+  # we would expect to see one of these patterns when -127°C occurs:
+  # - "ERROR" or "error"
+  # - "invalid" or "fault"
+  # - "disconnected"
+  # - "-127" or "-2032"
+  # - "ONEWIRE_DEVICE_DISCONNECTED"
+  # ============================================

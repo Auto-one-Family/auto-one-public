@@ -1,0 +1,39 @@
+# NVS Default Values Tests
+# Test-ID: NVS-DEF-001, NVS-DEF-002, NVS-DEF-003, NVS-DEF-004
+# Validates default values are returned for missing keys
+# Timeout: 90000ms
+#
+# Default values are critical for:
+# - First boot (no NVS data exists)
+# - Factory reset recovery
+# - Graceful handling of missing config
+#
+# Expected behavior:
+# - getUInt8("missing", 42) returns 42
+# - getStringObj("missing", "default") returns "default"
+# - getBool("missing", true) returns true
+# - getFloat("missing", 1.5f) returns 1.5f
+
+name: NVS Default Values for Missing Keys
+version: 1
+steps:
+  # System boots
+  - wait-serial: "ESP32 Sensor Network"
+  - wait-serial: "StorageManager: Initialized"
+
+  # On first boot or factory reset, many keys don't exist
+  # Default values are used:
+  # - esp_id: generated if missing
+  # - server_address: "192.168.0.198"
+  # - mqtt_port: 8883
+  # - sensor_count: 0
+  # - boot_count: 0
+
+  - wait-serial: "Phase 1: Core Infrastructure READY"
+
+  # System boots successfully with defaults
+  - wait-serial: "WiFi connected successfully"
+  - wait-serial: "MQTT connected successfully"
+
+  # Heartbeat proves defaults work
+  - wait-serial: "heartbeat"

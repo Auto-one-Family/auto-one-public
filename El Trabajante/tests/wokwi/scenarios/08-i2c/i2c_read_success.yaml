@@ -1,0 +1,28 @@
+# I2C Read Success Test
+# Test-ID: I2C-COMM-001
+# Validates: readRaw() successfully reads data from I2C sensor
+# Expected: Read operation completes without error
+# Timeout: 90000ms
+# Diagram: diagrams/diagram_i2c.json (with SHT31)
+
+name: I2C Read Success (I2C-COMM-001)
+version: 1
+steps:
+  # I2C Bus Manager initializes
+  - wait-serial: "I2C Bus Manager initialized successfully"
+
+  # Phase 4: Sensor System initializes
+  - wait-serial: "Phase 4: Sensor System"
+
+  # I2C sensor reads are logged at DEBUG level
+  # The SensorManager performs periodic reads via I2C
+  - wait-serial: "Phase 4: Sensor System READY"
+
+  # Wait for sensor loop to start reading
+  - wait-serial: "Sensor Manager"
+
+  # MQTT publish indicates successful sensor read
+  - wait-serial: "Published"
+
+# NOTE: Explicit readRaw() success logging requires LOG_DEBUG level
+# Enable with: -DCORE_DEBUG_LEVEL=4 in platformio.ini

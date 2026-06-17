@@ -1,0 +1,40 @@
+# PWM Duty Cycle Full Range Test
+# Test-ID: PWM-DUTY-002, PWM-DUTY-003
+# Validates PWM duty cycle at 0%, 50%, and 100%
+# Uses MQTT actuator commands with values 0.0, 0.5, 1.0
+# Timeout: 180000ms
+
+name: PWM Duty Cycle Full Range
+version: 1
+steps:
+  # Wait for system ready
+  - wait-serial: "MQTT connected successfully"
+
+  # Wait for heartbeat
+  - wait-serial: "heartbeat"
+
+  # Configure PWM actuator via MQTT injection
+  # Topic: kaiser/god/esp/{esp_id}/config
+  # Payload: {"actuators":[{"gpio":25,"actuator_type":"pwm","actuator_name":"RangePWM","active":true}]}
+
+  # Wait for actuator setup
+  - wait-serial: "PWMActuator initialized"
+
+  # === TEST 0% ===
+  # Send PWM command: value=0.0
+  # Topic: kaiser/god/esp/{esp_id}/actuator/25/command
+  # Payload: {"command":"SET","value":0.0}
+
+  - wait-serial: "0.0%"
+
+  # === TEST 50% ===
+  # Send PWM command: value=0.5
+  # Payload: {"command":"SET","value":0.5}
+
+  - wait-serial: "50.0%"
+
+  # === TEST 100% ===
+  # Send PWM command: value=1.0
+  # Payload: {"command":"SET","value":1.0}
+
+  - wait-serial: "100.0%"

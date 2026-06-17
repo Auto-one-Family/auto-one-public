@@ -1,0 +1,27 @@
+# OneWire Device Discovery - Single Sensor (OW-DISC-001)
+# Validates that a single DS18B20 is discovered on the bus
+# Tests: scanDevices() finds 1 device, correct Family Code (0x28)
+# Note: Wokwi diagram.json includes one DS18B20 on GPIO 4
+# Timeout: 90000ms
+
+name: OneWire Discovery Single Sensor
+version: 1
+steps:
+  # Boot completes
+  - wait-serial: "Phase 3: Hardware Abstraction READY"
+
+  # Sensor Manager initializes
+  - wait-serial: "Sensor Manager initialization started"
+
+  # When sensor config arrives, discovery happens
+  # The scan starts when config is processed
+  - wait-serial: "OneWire bus scan started"
+
+  # Device found with Family Code 0x28 (DS18B20)
+  - wait-serial: "Found device: Family=0x28"
+
+  # Scan complete
+  - wait-serial: "OneWire bus scan complete"
+
+  # devices found (at least 1)
+  - wait-serial: "devices found"

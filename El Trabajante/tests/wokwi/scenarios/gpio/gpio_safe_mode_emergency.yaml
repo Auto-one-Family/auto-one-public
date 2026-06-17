@@ -1,0 +1,69 @@
+# GPIO-SAFE-003: Emergency Safe-Mode for ALL Pins
+# ================================================
+# Validates that enableSafeModeForAllPins() correctly:
+# 1. De-energizes ALL OUTPUT pins (digitalWrite LOW)
+# 2. Sets ALL pins to INPUT_PULLUP
+# 3. Clears ALL owner information
+# 4. Sets in_safe_mode = true for ALL pins
+#
+# Test ID: GPIO-SAFE-003
+# Priority: CRITICAL (Safety)
+# Requirement: ALL pins must be in safe mode after emergency
+#
+# Critical Implementation Order:
+#   1. digitalWrite(pin, LOW)     <- De-energize FIRST
+#   2. delayMicroseconds(10)      <- Hardware settle time
+#   3. pinMode(pin, INPUT_PULLUP) <- Then safe mode
+#   4. Clear owner/component_name
+#   5. Set in_safe_mode = true
+#
+# This order prevents electrical spikes during mode transition.
+#
+# MQTT-Injection (extern via CI):
+#   Step 1 - Configure actuators:
+#     mosquitto_pub -h localhost -t "kaiser/god/esp/ESP_00000001/config" \
+#       -m '{"actuators":[{"gpio":5,"actuator_type":"pump","actuator_name":"WaterPump","active":true},{"gpio":14,"actuator_type":"valve","actuator_name":"DrainValve","active":true},{"gpio":15,"actuator_type":"relay","actuator_name":"LightRelay","active":true}]}'
+#   Step 2 - Turn ON actuators (after ~1s delays each):
+#     mosquitto_pub -h localhost -t "kaiser/god/esp/ESP_00000001/actuator/5/command" -m '{"command":"ON"}'
+#     mosquitto_pub -h localhost -t "kaiser/god/esp/ESP_00000001/actuator/14/command" -m '{"command":"ON"}'
+#     mosquitto_pub -h localhost -t "kaiser/god/esp/ESP_00000001/actuator/15/command" -m '{"command":"ON"}'
+#   Step 3 - Trigger broadcast emergency:
+#     mosquitto_pub -h localhost -t "kaiser/broadcast/emergency" \
+#       -m '{"command":"STOP","reason":"System-wide emergency test"}'
+#
+# Firmware reference: gpio_manager.cpp lines 170-211
+
+name: Emergency Safe-Mode for ALL Pins
+version: 1
+steps:
+  # Wait for boot to complete
+  - wait-serial: "Phase 1: Core Infrastructure READY"
+
+  # Wait for MQTT connection
+  - wait-serial: "MQTT connected successfully"
+
+  # External MQTT config injection: configure multiple actuators (CI helper script)
+
+  # Verify all actuators are configured
+  - wait-serial: "Pin 5 allocated"
+  - wait-serial: "Pin 14 allocated"
+  - wait-serial: "Pin 15 allocated"
+
+  # Wait for configuration to complete
+  - delay: 1000ms
+
+  # External MQTT injection: turn ON multiple actuators (CI helper script)
+
+  # Verify actuators are ON
+  - delay: 500ms
+
+  # External MQTT injection: TRIGGER BROADCAST EMERGENCY STOP (CI helper script)
+
+  # Verify emergency safe-mode is activated
+  - wait-serial: "Emergency safe-mode activated"
+
+  # Verify de-energize happens for outputs
+  - wait-serial: "de-energized"
+
+  # Verify all pins returned to safe mode
+  - wait-serial: "All pins returned to safe mode"

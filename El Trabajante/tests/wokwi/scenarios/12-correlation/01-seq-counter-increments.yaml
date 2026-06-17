@@ -1,0 +1,19 @@
+# Sequence Counter Increment Test
+# Validates that the seq counter increments monotonically across publishes.
+# After boot, the first heartbeat gets seq=1, sensor data gets seq=2+.
+# Timeout: 90000ms
+
+name: Sequence Counter Increment Test
+version: 1
+steps:
+  # Wait for MQTT connection
+  - wait-serial: "MQTT connected successfully"
+
+  # Initial heartbeat carries seq (first publish after connect)
+  - wait-serial: "Initial heartbeat sent"
+
+  # Sensor data publish contains seq field
+  - wait-serial: "\"seq\":"
+
+  # Second occurrence proves counter keeps incrementing
+  - wait-serial: "\"seq\":"

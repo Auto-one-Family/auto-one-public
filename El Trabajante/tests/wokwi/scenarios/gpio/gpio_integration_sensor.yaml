@@ -1,0 +1,62 @@
+# GPIO-INT-001: Sensor Manager Integration
+# =========================================
+# Validates that SensorManager correctly uses GPIO Manager
+# for pin reservation when configuring sensors.
+#
+# Test ID: GPIO-INT-001
+# Priority: HIGH
+# Requirement: sensorManager.configureSensor() calls gpioManager.requestPin()
+#
+# Integration Flow:
+#   1. MQTT config arrives with sensor definition
+#   2. SensorManager processes config
+#   3. SensorManager calls gpioManager.requestPin(gpio, "sensor", name)
+#   4. GPIO Manager reserves pin and updates tracking
+#   5. Sensor becomes operational
+#
+# MQTT-Injection (extern via CI):
+#   Step 1 - Configure DS18B20 sensor:
+#     mosquitto_pub -h localhost -t "kaiser/god/esp/ESP_00000001/config" \
+#       -m '{"sensors":[{"gpio":4,"sensor_type":"temp_ds18b20","sensor_name":"GreenhouseTemp","raw_mode":true,"active":true}]}'
+#   Step 2 - Configure I2C sensor SHT31 (after ~2.5s):
+#     mosquitto_pub -h localhost -t "kaiser/god/esp/ESP_00000001/config" \
+#       -m '{"sensors":[{"gpio":255,"sensor_type":"sht31","sensor_name":"HumiditySensor","i2c_address":68,"raw_mode":true,"active":true}]}'
+#
+# Firmware reference:
+#   - sensor_manager.cpp (configureSensor method)
+#   - gpio_manager.cpp (requestPin method)
+
+name: Sensor Manager GPIO Integration
+version: 1
+steps:
+  # Wait for boot to complete
+  - wait-serial: "Phase 1: Core Infrastructure READY"
+
+  # Wait for Sensor Manager initialization
+  - wait-serial: "Sensor Manager initialized"
+
+  # Wait for MQTT connection
+  - wait-serial: "MQTT connected successfully"
+
+  # External MQTT injection: configure DS18B20 temperature sensor (CI helper script)
+
+  # Verify GPIO Manager allocates pin
+  - wait-serial: "Pin 4 allocated"
+  - wait-serial: "sensor"
+
+  # Verify sensor name is tracked
+  - wait-serial: "GreenhouseTemp"
+
+  # Verify sensor becomes operational (starts publishing)
+  # Sensor data will be published on measurement interval
+  - delay: 2000ms
+
+  # Verify config response is successful
+  - wait-serial: "config_response"
+
+  # External MQTT injection: configure I2C sensor SHT31 (CI helper script)
+  - delay: 500ms
+
+  # I2C sensor uses pre-reserved I2C pins (21, 22)
+  # GPIO field is 255 (marker for I2C device)
+  - wait-serial: "HumiditySensor"

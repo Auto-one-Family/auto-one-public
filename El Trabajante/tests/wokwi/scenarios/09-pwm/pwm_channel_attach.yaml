@@ -1,0 +1,28 @@
+# PWM Channel Attach Test
+# Test-ID: PWM-CH-001, PWM-CH-003
+# Validates that a GPIO can be attached to a PWM channel
+# Uses PWM actuator configuration via MQTT
+# Requires MQTT injection: PWM actuator config
+# Timeout: 120000ms
+
+name: PWM Channel Attach Test
+version: 1
+steps:
+  # Wait for system ready
+  - wait-serial: "MQTT connected successfully"
+
+  # Wait for heartbeat (system operational)
+  - wait-serial: "heartbeat"
+
+  # After MQTT injection: PWM actuator config on GPIO 25
+  # Topic: kaiser/god/esp/{esp_id}/config
+  # Payload: {"actuators":[{"gpio":25,"actuator_type":"pwm","actuator_name":"TestPWM","active":true}]}
+
+  # Verify PWM channel attachment
+  - wait-serial: "PWM Channel"
+
+  # Verify GPIO attachment
+  - wait-serial: "attached to GPIO 25"
+
+  # Verify actuator initialization
+  - wait-serial: "PWMActuator initialized on GPIO 25"

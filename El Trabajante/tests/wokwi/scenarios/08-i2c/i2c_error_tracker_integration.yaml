@@ -1,0 +1,34 @@
+# I2C ErrorTracker Integration Test
+# Test-ID: I2C-ERR-005
+# Validates: I2C errors are properly tracked via ErrorTracker
+# Expected: Errors appear in system diagnostics
+# Timeout: 90000ms
+
+name: I2C ErrorTracker Integration (I2C-ERR-005)
+version: 1
+steps:
+  # System boots normally
+  - wait-serial: "I2C Bus Manager initialized successfully"
+  - wait-serial: "Phase 4: Sensor System READY"
+
+  # Wait for heartbeat with diagnostics
+  - wait-serial: "heartbeat"
+
+  # Diagnostics should report error_count
+  # (may be 0 if no I2C errors occurred)
+  - wait-serial: "error_count"
+
+# NOTE: I2C error codes tracked:
+# - ERROR_I2C_INIT_FAILED (1010)
+# - ERROR_I2C_DEVICE_NOT_FOUND (1011)
+# - ERROR_I2C_READ_FAILED (1012)
+# - ERROR_I2C_WRITE_FAILED (1013)
+# - ERROR_I2C_BUS_ERROR (1014)
+#
+# ErrorTracker integration (i2c_bus.cpp uses):
+#   errorTracker.trackError(code, severity, message);
+#
+# Errors appear in:
+# - Serial log
+# - MQTT diagnostics payload
+# - HealthMonitor snapshot

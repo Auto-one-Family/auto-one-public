@@ -1,0 +1,21 @@
+# Error-Injection: NVS Factory Reset
+# Sends a factory_reset system command via MQTT.
+# The firmware clears WiFi and zone config from NVS, then reboots.
+# Expected: "FACTORY RESET via MQTT" on serial before reboot.
+# Timeout: 90000ms
+#
+# MQTT-Injection (extern via CI):
+#   mosquitto_pub -h localhost -t "kaiser/god/esp/ESP_00000001/system/command" \
+#     -m '{"command":"factory_reset","confirm":true}'
+# IMPORTANT: "confirm":true is REQUIRED — without it the command is silently ignored.
+
+name: Error Injection - NVS Factory Reset
+version: 1
+steps:
+  - wait-serial: "Phase 5: Actuator System READY"
+  - wait-serial: "MQTT connected successfully"
+  - wait-serial: "REGISTRATION"
+  - wait-serial: "heartbeat"
+  # External factory_reset command injected via mosquitto_pub
+  # Firmware requires confirm:true in payload
+  - wait-serial: "FACTORY RESET via MQTT"

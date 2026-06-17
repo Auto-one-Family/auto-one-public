@@ -1,0 +1,23 @@
+server:
+  - changed-files:
+      - any-glob-to-any-file: 'El Servador/**'
+
+frontend:
+  - changed-files:
+      - any-glob-to-any-file: 'El Frontend/**'
+
+firmware:
+  - changed-files:
+      - any-glob-to-any-file: 'El Trabajante/**'
+
+tests:
+  - changed-files:
+      - any-glob-to-any-file: '**/tests/**'
+
+documentation:
+  - changed-files:
+      - any-glob-to-any-file: '**/*.md'
+
+ci:
+  - changed-files:
+      - any-glob-to-any-file: '.github/**'

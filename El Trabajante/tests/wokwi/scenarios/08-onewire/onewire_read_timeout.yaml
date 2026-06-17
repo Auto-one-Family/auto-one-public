@@ -1,0 +1,25 @@
+# OneWire Read Timeout Handling Test (OW-ERR-005)
+# Validates timeout handling during temperature read
+# Tests: Timeout detection during 750ms conversion wait
+# Note: Wokwi simulation provides stable readings, actual timeouts unlikely
+# Timeout: 90000ms
+
+name: OneWire Read Timeout Handling
+version: 1
+steps:
+  # Boot completes
+  - wait-serial: "Phase 5: Actuator System READY"
+
+  # OneWire bus initialized
+  - wait-serial: "OneWire Bus Manager"
+
+  # Temperature readings occur normally
+  # If timeout occurred, would see:
+  # "OneWire reset failed after conversion"
+  # ERROR_ONEWIRE_READ_FAILED (1022) or ERROR_ONEWIRE_READ_TIMEOUT (1028)
+
+  # In normal operation, readings succeed
+  - wait-serial: "OneWire raw temperature"
+
+  # System continues
+  - wait-serial: "heartbeat"

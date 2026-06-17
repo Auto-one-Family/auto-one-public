@@ -1,0 +1,26 @@
+# NVS Initialization Success Test
+# Test-ID: NVS-INIT-001
+# Validates successful NVS subsystem initialization at boot
+# Timeout: 90000ms
+#
+# Expected behavior:
+# - NVS initializes before other modules
+# - StorageManager logs successful initialization
+# - No NVS corruption errors
+
+name: NVS Initialization Success
+version: 1
+steps:
+  # Phase 0: Hardware Init - NVS must initialize early
+  - wait-serial: "ESP32 Sensor Network"
+
+  # NVS initialization happens in Phase 1 Core Infrastructure
+  # StorageManager::begin() is called before WiFi, Config, etc.
+  - wait-serial: "StorageManager: Initialized"
+
+  # Phase 1 completes with NVS ready
+  - wait-serial: "Phase 1: Core Infrastructure READY"
+
+  # Verify system continues to boot normally
+  - wait-serial: "WiFi connected successfully"
+  - wait-serial: "MQTT connected successfully"

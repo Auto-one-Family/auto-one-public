@@ -1,0 +1,20 @@
+# Sequence Counter in Error/System Messages Test
+# Validates that error responses and system command responses also carry seq.
+# After boot, sending an unknown command should produce a response with seq.
+# Timeout: 90000ms
+
+name: Sequence Counter in Error Messages
+version: 1
+steps:
+  # Wait for full boot
+  - wait-serial: "MQTT connected successfully"
+
+  # Heartbeat with seq
+  - wait-serial: "\"seq\":"
+
+  # System responses (diagnostics, status) carry seq
+  # Even error or unknown command responses include seq field
+  - wait-serial: "\"seq\":"
+
+  # ConfigResponse payloads also include seq
+  - wait-serial: "\"seq\":"

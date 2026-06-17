@@ -1,0 +1,225 @@
+[tool.poetry]
+name = "god-kaiser-server"
+version = "1.0.1"
+description = "God-Kaiser Server - Industrial IoT Backend for ESP32 Firmware Management"
+authors = ["Auto-One Team"]
+readme = "README.md"
+packages = [{include = "src"}]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+# FastAPI Stack
+# Upgraded from 0.109→0.115 to fix starlette DoS CVEs (CVE-2024-24762, CVE-2024-47874).
+# FastAPI 0.115+ depends on starlette >=0.40.0 which resolves both CVEs.
+fastapi = ">=0.115.0,<1.0.0"
+uvicorn = {extras = ["standard"], version = "^0.27.0"}
+python-multipart = ">=0.0.22,<1.0.0"  # CVE-2026-24486 fix requires >=0.0.22
+
+# Database
+sqlalchemy = "^2.0.25"
+alembic = "^1.13.1"
+psycopg2-binary = "^2.9.9"  # PostgreSQL sync driver
+asyncpg = "^0.29.0"  # PostgreSQL async driver for create_async_engine
+
+# Pydantic
+pydantic = {extras = ["email"], version = "^2.5.3"}
+pydantic-settings = "^2.1.0"
+
+# MQTT
+paho-mqtt = "^1.6.1"
+aiomqtt = "^2.0.1"  # Async MQTT client
+
+# Security
+python-jose = {extras = ["cryptography"], version = "^3.3.1"}  # CVE-2024-33664 (JWE-Bomb DoS) fix
+passlib = {extras = ["bcrypt"], version = "^1.7.4"}
+python-dotenv = "^1.0.0"
+
+# Utilities
+python-dateutil = "^2.8.2"
+pytz = "^2024.1"
+pyyaml = "^6.0"  # Required by AutoOps profile_validator
+jsonschema = "^4.21.0"  # Phase K4 L0.2 — Backend Schema-Registry validation
+cachetools = "^5.3"
+
+# HTTP Client
+httpx = "^0.26.0"
+aiohttp = "^3.9.3"
+
+# USB/Serial — ESP32 device detection for flash workflow (AUT-765)
+pyserial = "^3.5"
+
+# AI Analysis — Claude API integration (AUT-168)
+anthropic = ">=0.49.0"
+
+# Email (Resend — primary email provider, Phase 4A.1)
+resend = ">=2.0.0,<3.0.0"
+jinja2 = "^3.1.0"
+
+# WebSocket
+websockets = "^12.0"
+
+# Monitoring & Logging
+prometheus-client = "^0.19.0"
+prometheus-fastapi-instrumentator = "^7.0.0"
+psutil = "^5.9.0"
+apscheduler = "^3.11.2"
+requests = "^2.32.5"
+
+# Google Sheets Export (AUT-442 / S1: AUT-443)
+# google-auth is required for Service-Account credentials; gspread is the
+# Sheets client that the S2+ export pipeline will use. Both are optional at
+# runtime — guarded by SHEETS_EXPORT_ENABLED feature flag.
+google-auth = "^2.29.0"
+gspread = "^6.1.2"
+
+[tool.poetry.group.dev.dependencies]
+# Testing
+pytest = "^8.0.0"
+pytest-asyncio = "^0.23.3"
+pytest-cov = "^4.1.0"
+pytest-mock = "^3.12.0"
+pytest-timeout = "^2.3.1"  # Prevent hanging tests in CI (test_websocket_manager teardown)
+pyjwt = "^2.9.0"
+aiosqlite = "^0.20.0"  # Async SQLite driver for tests
+
+# Code Quality
+ruff = "^0.8.0"  # Fast Python linter (replaces flake8)
+black = "^24.1.1"
+isort = "^5.13.2"
+flake8 = "^7.0.0"
+mypy = "^1.8.0"
+pylint = "^3.0.3"
+
+# Type Stubs
+types-python-dateutil = "^2.8.19"
+types-pytz = "^2024.1"
+
+[tool.poetry.scripts]
+server = "src.main:main"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
+ignore = [
+    "F541",   # f-string-missing-placeholders (used for logging format strings)
+    "E712",   # true-false-comparison (required for SQLAlchemy query filters)
+    "E402",   # module-import-not-at-top (conditional/deferred imports)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["F401", "F811", "F841"]     # pytest fixtures: unused imports, redefinitions, variables
+"src/**/__init__.py" = ["F401"]           # re-exports in __init__.py
+"src/db/models/**" = ["F821"]             # SQLAlchemy string-based relationship references
+"src/autoops/core/**" = ["F821"]          # TYPE_CHECKING forward references
+
+[tool.black]
+line-length = 100
+target-version = ['py311']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | build
+  | dist
+  | alembic
+)/
+'''
+
+[tool.isort]
+profile = "black"
+line_length = 100
+multi_line_output = 3
+include_trailing_comma = true
+force_grid_wrap = 0
+use_parentheses = true
+ensure_newline_before_comments = true
+skip_glob = ["alembic/*"]
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = false
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+strict_equality = true
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+addopts = "-ra -q --strict-markers"
+# Coverage separat: poetry run pytest --cov=src --cov-report=term-missing --cov-report=html
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+asyncio_mode = "auto"
+markers = [
+    "unit: Unit tests",
+    "integration: Integration tests",
+    "esp32: ESP32 mock tests",
+    "e2e: End-to-end tests",
+    "hardware: Tests requiring real ESP32 hardware (deselect with '-m \"not hardware\"')",
+    "performance: Performance benchmarking tests",
+    "slow: Slow-running tests (can be skipped with '-m \"not slow\"')",
+    "slow_e2e: Slow end-to-end tests",
+    "logic: Logic engine integration tests",
+    "temperature: Temperature-related tests",
+    "critical: Safety-critical tests (must always pass)",
+    "daily_ops: Daily operation routine tests",
+    "irrigation: Irrigation system tests",
+    "ventilation: Ventilation system tests",
+    "night_mode: Night operation mode tests",
+    "edge_case: Edge case scenario tests",
+    "gpio: GPIO-related tests",
+    "onewire: OneWire bus tests",
+    "pwm: PWM actuator tests",
+    "safety: Safety system tests",
+    "sensor: Sensor-related tests",
+    "ds18b20: DS18B20 temperature sensor tests",
+    "cross_esp: Cross-ESP communication tests",
+    "ph_sensor: pH sensor tests",
+    "relay: Relay actuator tests",
+    "sht31: SHT31 humidity/temperature sensor tests",
+]
+
+[tool.coverage.run]
+source = ["src"]
+omit = [
+    "*/tests/*",
+    "*/alembic/*",
+    "*/__init__.py",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+    "@abstractmethod",
+]
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

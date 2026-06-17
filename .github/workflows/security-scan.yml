@@ -1,0 +1,90 @@
+name: Security Scan
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  push:
+    branches: [master, main]
+    paths:
+      - 'El Servador/Dockerfile'
+      - 'El Servador/god_kaiser_server/pyproject.toml'
+      - 'El Servador/god_kaiser_server/poetry.lock'
+      - 'El Frontend/Dockerfile'
+      - 'El Frontend/package.json'
+      - 'El Frontend/package-lock.json'
+  pull_request:
+    branches: [master, main]
+    paths:
+      - 'El Servador/Dockerfile'
+      - 'El Frontend/Dockerfile'
+      - 'El Frontend/package.json'
+      - 'El Frontend/package-lock.json'
+      - '.trivyignore'
+  schedule:
+    - cron: '0 6 * * 1'  # Mondays 6:00 UTC
+  workflow_dispatch:
+
+jobs:
+  scan-server:
+    name: Scan Server Image
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build Server Image
+        run: docker build -t el-servador:scan "./El Servador"
+
+      - name: Run Trivy (Server)
+        uses: aquasecurity/trivy-action@v0.35.0
+        with:
+          image-ref: 'el-servador:scan'
+          format: 'table'
+          exit-code: '1'
+          severity: 'CRITICAL,HIGH'
+          ignore-unfixed: true
+          trivyignores: '.trivyignore'
+
+  scan-frontend:
+    name: Scan Frontend Image
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build Frontend Image
+        run: docker build -t el-frontend:scan --target development "./El Frontend"
+
+      - name: Run Trivy (Frontend)
+        uses: aquasecurity/trivy-action@v0.35.0
+        with:
+          image-ref: 'el-frontend:scan'
+          format: 'table'
+          exit-code: '1'
+          severity: 'CRITICAL,HIGH'
+          ignore-unfixed: true
+          trivyignores: '.trivyignore'
+
+  scan-config:
+    name: Scan Docker Configs
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Trivy Config Scan
+        uses: aquasecurity/trivy-action@v0.35.0
+        with:
+          scan-type: 'config'
+          scan-ref: '.'
+          format: 'table'
+          exit-code: '0'  # Warn only for config issues
+          severity: 'CRITICAL,HIGH'

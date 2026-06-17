@@ -1,0 +1,27 @@
+# PWM Frequency Change Test
+# Test-ID: PWM-FREQ-001, PWM-FREQ-002, PWM-FREQ-003
+# Validates PWM frequency configuration
+# Note: Frequency changes require firmware-level test commands
+# This test validates initial frequency configuration
+# Timeout: 120000ms
+#
+# NOTE: "Freq=1000Hz" is LOG_DEBUG, invisible at CORE_DEBUG_LEVEL=3.
+# Use LOG_INFO "Default Frequency: 1000 Hz" instead.
+
+name: PWM Frequency Configuration
+version: 1
+steps:
+  # Wait for boot banner
+  - wait-serial: "ESP32 Sensor Network"
+
+  # Wait for full initialization (LOG_INFO)
+  - wait-serial: "PWM Controller initialized successfully"
+
+  # Verify default frequency is logged (LOG_INFO)
+  - wait-serial: "Default Frequency: 1000 Hz"
+
+  # Wait for system ready
+  - wait-serial: "MQTT connected successfully"
+
+  # Note: To test runtime frequency changes, firmware would need
+  # to expose setFrequency() via MQTT command or diagnostic endpoint

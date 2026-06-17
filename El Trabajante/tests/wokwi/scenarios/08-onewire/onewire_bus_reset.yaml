@@ -1,0 +1,24 @@
+# OneWire Bus Reset Test (OW-INIT-004)
+# Validates OneWire bus reset operation
+# Tests: reset() called during readRawTemperature(), failure handling
+# Timeout: 90000ms
+
+name: OneWire Bus Reset Verification
+version: 1
+steps:
+  # Boot with OneWire
+  - wait-serial: "OneWire Bus Manager initialization started"
+
+  # Bus reset is attempted during init
+  # If no devices, warning logged but init continues
+  # "OneWire bus reset failed - no devices present or bus error"
+  # (This is warning, not error - bus can still be used)
+
+  # Initialization succeeds regardless
+  - wait-serial: "OneWire Bus Manager initialized successfully"
+
+  # Phase 3 completes
+  - wait-serial: "Phase 3: Hardware Abstraction READY"
+
+  # When temperature is read, reset occurs before each operation
+  # readRawTemperature() calls reset() twice (before command, before read)

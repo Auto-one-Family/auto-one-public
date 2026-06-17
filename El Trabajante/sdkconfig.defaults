@@ -1,0 +1,27 @@
+# SAFETY-RTOS M2: Pin ESP-IDF MQTT client task to Core 0 so Safety-Task (Core 1, prio 5)
+# is not preempted by MQTT reconnect/network work. Applied via PlatformIO board_build.sdkconfig_defaults.
+CONFIG_MQTT_TASK_CORE_SELECTION_ENABLED=y
+CONFIG_MQTT_TASK_CORE_SELECTION=0
+# MQTT task stack increased from default 6144 to 10240 — stack overflow on connect with 11 topics
+CONFIG_MQTT_TASK_STACK_SIZE=10240
+
+# AUT-54 / AAAAA.md: 10s expiry correlated with post-command disconnect (~11s): IDF expiry
+# handler runs while QoS-1 PUBACKs are still pending under TCP backpressure → write timeout.
+# 60s lets slow-broker ACK paths clear before expired-message handling (still bounded).
+CONFIG_MQTT_OUTBOX_EXPIRED_TIMEOUT_MS=60000
+
+# AUT-54: Larger lwIP TCP send buffer reduces EAGAIN under MQTT bursts (default often ~5744).
+# NOTE [AUT-665-S1 / AUT-666]: The line below has NO runtime effect with framework=arduino.
+# liblwip.a ships PREBUILT, so the effective CONFIG_LWIP_TCP_SND_BUF_DEFAULT is hardcoded to
+# 5760 bytes (see tools/sdk/esp32/<flash_mode>/include/sdkconfig.h). sdkconfig.defaults does
+# NOT rebuild liblwip.a (same prebuilt-lib mechanism documented for libmqtt.a in platformio.ini).
+# Raising the TCP send buffer would require an IDF-native build. This entry is kept only to
+# document intent; the value is dead code under the current build chain.
+CONFIG_LWIP_TCP_SND_BUF_DEFAULT=16384
+
+# AUT-331: Increase OUTBOX from 4096 (default) to 16384 bytes.
+# Root cause: rapid ON+OFF actuator commands within <2s generate ~2300 bytes of QoS-1
+# messages (lifecycle chain stages + terminal intent_outcome) per command cycle.
+# At default 4096 bytes, two cycles saturate the outbox → TCP write timeout → disconnect.
+# 16384 bytes gives 4x headroom for burst scenarios without changing delivery semantics.
+CONFIG_MQTT_OUTBOX_SIZE_BYTES=16384

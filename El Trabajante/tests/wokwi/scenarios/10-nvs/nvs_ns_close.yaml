@@ -1,0 +1,25 @@
+# NVS Namespace Close Test
+# Test-ID: NVS-NS-002
+# Validates namespace is properly closed after operations
+# Timeout: 90000ms
+#
+# Expected behavior:
+# - endNamespace() closes current namespace
+# - Log shows "Closed namespace: {name}"
+# - Multiple namespaces can be used sequentially
+
+name: NVS Namespace Close
+version: 1
+steps:
+  # Wait for system initialization
+  - wait-serial: "ESP32 Sensor Network"
+  - wait-serial: "StorageManager: Initialized"
+
+  # Namespace open
+  - wait-serial: "Opened namespace:"
+
+  # Namespace close should follow
+  - wait-serial: "Closed namespace:"
+
+  # System continues normally
+  - wait-serial: "Phase 1: Core Infrastructure READY"

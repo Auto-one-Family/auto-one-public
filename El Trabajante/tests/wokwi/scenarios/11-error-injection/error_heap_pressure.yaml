@@ -1,0 +1,29 @@
+# Error-Injection: Heap Pressure (Heavy Config)
+# Configures maximum sensors (8) and actuators (6) simultaneously
+# to stress heap allocation. Verifies system processes the config without crashing.
+# Expected: ConfigResponse published (success or partial) — system survives.
+# Timeout: 90000ms
+#
+# MQTT-Injection (extern via CI):
+#   mosquitto_pub -h localhost -t "kaiser/god/esp/ESP_00000001/config" \
+#     -m '{"sensors":[{"gpio":4,"sensor_type":"ds18b20","sensor_name":"S1","active":true},{"gpio":15,"sensor_type":"dht22","sensor_name":"S2","active":true},{"gpio":32,"sensor_type":"ds18b20","sensor_name":"S3","active":true,"raw_mode":true},{"gpio":33,"sensor_type":"moisture","sensor_name":"S4","active":true,"raw_mode":true},{"gpio":34,"sensor_type":"ds18b20","sensor_name":"S5","active":true,"raw_mode":true},{"gpio":35,"sensor_type":"moisture","sensor_name":"S6","active":true,"raw_mode":true},{"gpio":36,"sensor_type":"ds18b20","sensor_name":"S7","active":true,"raw_mode":true},{"gpio":39,"sensor_type":"moisture","sensor_name":"S8","active":true,"raw_mode":true}],"actuators":[{"gpio":5,"actuator_type":"led","actuator_name":"A1","active":true},{"gpio":25,"actuator_type":"relay","actuator_name":"A2","active":true},{"gpio":26,"actuator_type":"relay","actuator_name":"A3","active":true},{"gpio":23,"actuator_type":"led","actuator_name":"A4","active":true},{"gpio":13,"actuator_type":"led","actuator_name":"A5","active":true},{"gpio":14,"actuator_type":"led","actuator_name":"A6","active":true}]}'
+#
+# GPIO mapping (from diagram.json):
+#   GPIO 4: DS18B20 (connected), GPIO 15: DHT22 (connected), GPIO 34: Potentiometer (connected)
+#   GPIO 5: LED green, GPIO 13: LED red, GPIO 14: LED blue (connected)
+#   GPIO 32,33,35,36,39: Not connected — sensors will fail (expected)
+#   GPIO 25,26,23: Not connected — actuators may fail (expected)
+
+name: Error Injection - Heap Pressure (14 Devices)
+version: 1
+steps:
+  - wait-serial: "Phase 5: Actuator System READY"
+  - wait-serial: "MQTT connected successfully"
+  - wait-serial: "REGISTRATION"
+  - wait-serial: "heartbeat"
+  # External heavy config injection happens here (sleep 25 in CI)
+  # 8 sensors + 6 actuators — system must process without crashing
+  - wait-serial: "ConfigResponse published"
+  # If system is still alive after 15s, the test passes (no crash/watchdog reset)
+  # A second ConfigResponse may appear for actuators
+  - wait-serial: "ConfigResponse published"

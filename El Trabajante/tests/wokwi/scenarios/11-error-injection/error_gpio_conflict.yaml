@@ -1,0 +1,21 @@
+# Error-Injection: GPIO Conflict
+# Configures two different sensors on the same GPIO 4 in a SINGLE config message.
+# The second sensor should fail with GPIO_CONFLICT (Error 1002).
+# IMPORTANT: Both sensors MUST be in ONE config message. Two separate messages
+# would replace the config instead of triggering a conflict.
+# Timeout: 90000ms
+#
+# MQTT-Injection (extern via CI):
+#   mosquitto_pub -h localhost -t "kaiser/god/esp/ESP_00000001/config" \
+#     -m '{"sensors":[{"gpio":4,"sensor_type":"ds18b20","sensor_name":"TempSensor1","active":true,"raw_mode":true},{"gpio":4,"sensor_type":"moisture","sensor_name":"MoistureSensor","active":true,"raw_mode":true}],"actuators":[]}'
+
+name: Error Injection - GPIO Conflict
+version: 1
+steps:
+  - wait-serial: "Phase 5: Actuator System READY"
+  - wait-serial: "MQTT connected successfully"
+  - wait-serial: "REGISTRATION"
+  - wait-serial: "heartbeat"
+  # External MQTT config injection happens here (sleep 25 in CI)
+  # Two sensors on GPIO 4 in one message → second sensor triggers GPIO_CONFLICT
+  - wait-serial: "ConfigResponse published"

@@ -1,0 +1,20 @@
+# Emergency Stop and Clear Test
+# Validates emergency stop mechanism and clear functionality
+# Requires MQTT injection for emergency commands
+# Timeout: 90000ms
+
+name: Emergency Stop and Clear Test
+version: 1
+steps:
+  # Wait for MQTT connection
+  - wait-serial: "MQTT connected successfully"
+
+  # Registration gate: opens on server confirmation or 10s timeout fallback
+  - wait-serial: "REGISTRATION"
+
+  # Wait for heartbeat (system operational)
+  - wait-serial: "heartbeat"
+
+  # After E-Stop injection on kaiser/broadcast/emergency
+  # or kaiser/{k}/esp/{e}/actuator/emergency
+  - wait-serial: "EMERGENCY"

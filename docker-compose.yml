@@ -1,0 +1,691 @@
+# AutomationOne - Docker Compose Development Stack
+# ==============================================
+# Startet alle Services für lokale Entwicklung:
+# - el-servador: FastAPI Backend
+# - el-frontend: Vue 3 Dashboard
+# - postgres: PostgreSQL Database
+# - mqtt-broker: Eclipse Mosquitto
+#
+# Usage:
+#   docker-compose up -d          # Start all services
+#   docker-compose logs -f        # Follow logs
+#   docker-compose down           # Stop all services
+#   docker-compose down -v        # Stop and remove volumes
+
+# Fix: Pin project name to avoid cross-directory container name conflicts
+# (e.g. when the repo exists in multiple folders on the same host).
+name: auto-one
+
+services:
+  # ============================================
+  # PostgreSQL Database
+  # ============================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: automationone-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      TZ: UTC
+    ports:
+      - "5432:5432"
+    volumes:
+      - automationone-postgres-data:/var/lib/postgresql/data
+      - ./docker/postgres/postgresql.conf:/etc/postgresql/postgresql.conf:ro
+    command: postgres -c config_file=/etc/postgresql/postgresql.conf
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - automationone-net
+    restart: unless-stopped
+
+  # ============================================
+  # Eclipse Mosquitto MQTT Broker
+  # ============================================
+  mqtt-broker:
+    image: eclipse-mosquitto:2
+    container_name: automationone-mqtt
+    environment:
+      TZ: UTC
+      MQTT_HC_USER: mqtt-healthcheck
+      MQTT_HC_PASS: "${MQTT_HC_PASSWORD}"
+    ports:
+      - "1883:1883"   # MQTT
+      - "9001:9001"   # WebSocket
+    volumes:
+      - ./docker/mosquitto/mosquitto.auth.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./docker/mosquitto/passwd:/mosquitto/config/passwd:ro
+      - ./docker/mosquitto/acl.conf:/mosquitto/config/acl.conf:ro
+      - automationone-mosquitto-data:/mosquitto/data
+      # Log-Mount deaktiviert: Mosquitto nutzt stdout-only seit v3.1
+      # Reaktivieren zusammen mit log_dest file in mosquitto.conf falls File-Logging benötigt wird
+      # - ./logs/mqtt:/mosquitto/log
+    # INC-2026-04-11 (PKG-19): more resilient after host sleep/wake.
+    # -W 5 (was 3) tolerates transient broker slowness on resume;
+    # retries 5 (was 3) avoids premature unhealthy marking that blocks
+    # el-servador dependency start; start_period 15 s covers cold starts.
+    # AUT-747: CMD-SHELL allows env-var expansion inside the container for credentials.
+    # $$MQTT_HC_USER / $$MQTT_HC_PASS: compose escapes $$ → $; shell expands from container env.
+    # '$$SYS/#': single quotes prevent shell expansion of $SYS.
+    healthcheck:
+      test: ["CMD-SHELL", "mosquitto_sub -t '$$SYS/#' -C 1 -i healthcheck -u $$MQTT_HC_USER -P $$MQTT_HC_PASS -W 5"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - automationone-net
+    restart: unless-stopped
+
+  # ============================================
+  # NTP Server (for ESP32 time synchronization)
+  # ============================================
+  ntp:
+    image: cturra/ntp:latest
+    container_name: automationone_ntp
+    restart: unless-stopped
+    ports:
+      - "123:123/udp"
+    environment:
+      - NTP_SERVERS=ptbtime1.ptb.de,ptbtime2.ptb.de,pool.ntp.org
+      - LOG_LEVEL=0
+      - TZ=UTC
+    cap_add:
+      - SYS_TIME
+    tmpfs:
+      - /etc/chrony:rw
+      - /run/chrony:rw
+    networks:
+      - automationone-net
+
+  # ============================================
+  # God-Kaiser Server (FastAPI Backend)
+  # ============================================
+  el-servador:
+    build:
+      context: ./El Servador
+      dockerfile: Dockerfile
+    container_name: automationone-server
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    environment:
+      # Database
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      DATABASE_AUTO_INIT: "true"
+      # Backup authentication (kept in sync with database credentials)
+      DB_BACKUP_PG_HOST: postgres
+      DB_BACKUP_PG_USER: ${POSTGRES_USER}
+      DB_BACKUP_PG_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_BACKUP_PG_DATABASE: ${POSTGRES_DB}
+      # MQTT
+      MQTT_BROKER_HOST: mqtt-broker
+      MQTT_BROKER_PORT: "1883"
+      MQTT_WEBSOCKET_PORT: "9001"
+      MQTT_USERNAME: "${MQTT_USERNAME}"
+      MQTT_PASSWORD: "${MQTT_PASSWORD}"
+      # Server
+      SERVER_HOST: "0.0.0.0"
+      SERVER_PORT: "8000"
+      SERVER_RELOAD: ${SERVER_RELOAD:-true}
+      # Security (CHANGE IN PRODUCTION!)
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      # Environment (steuerbar via .env — Pi-Prod: production + SERVER_RELOAD=false)
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      # Explizit: entspricht WORKDIR /app + Volume ./logs/server:/app/logs (Default waere logs/god_kaiser.log → /app/logs/god_kaiser.log)
+      LOG_FILE_PATH: /app/logs/god_kaiser.log
+      # CORS (allow frontend)
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-'["http://localhost:5173","http://localhost:3000"]'}
+      # AUT-442 / S1 (AUT-443) — Google Sheets export (opt-in, default disabled).
+      # Provide the SA-JSON via a bind-mount or docker secret at
+      # SHEETS_SA_CREDENTIALS_PATH and keep the file OUTSIDE the repo.
+      SHEETS_EXPORT_ENABLED: ${SHEETS_EXPORT_ENABLED:-false}
+      SHEETS_EXPORT_INTERVAL_MINUTES: ${SHEETS_EXPORT_INTERVAL_MINUTES:-5}
+      SHEETS_SA_CREDENTIALS_PATH: ${SHEETS_SA_CREDENTIALS_PATH:-}
+      SHEETS_SPREADSHEET_ID: ${SHEETS_SPREADSHEET_ID:-}
+      # AUT-572 Camera Snapshot Service (opt-in, default disabled)
+      CAMERA_ENABLED: ${CAMERA_ENABLED:-false}
+      CAMERA_SERVICE_URL: ${CAMERA_SERVICE_URL:-http://automationone-camera:8080}
+      CAMERA_SNAPSHOT_INTERVAL: ${CAMERA_SNAPSHOT_INTERVAL:-5}
+      TZ: UTC
+    ports:
+      - "0.0.0.0:8000:8000"
+    volumes:
+      # Live-reload: Mount source code
+      - ./El Servador/god_kaiser_server/src:/app/src:ro
+      - ./logs/server:/app/logs
+      # Persist database backups on host (Fix-T Block 2)
+      - ./backups:/app/backups
+      - /secrets:/secrets:ro
+      # AUT-443 — Service-Account JSON for Google Sheets export.
+      # To enable, uncomment the following line in a local override file
+      # (e.g. docker-compose.override.yml — NEVER commit it) and point it
+      # to the SA-JSON path on the host. Set SHEETS_SA_CREDENTIALS_PATH=
+      # /run/secrets/sheets_sa.json in your .env to match the target path.
+      # - /srv/automationone/secrets/sheets_sa.json:/run/secrets/sheets_sa.json:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mqtt-broker:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - automationone-net
+    restart: unless-stopped
+
+  # ============================================
+  # El Frontend (Vue 3 Dev Server)
+  # ============================================
+  el-frontend:
+    build:
+      context: ./El Frontend
+      dockerfile: Dockerfile
+      target: development  # Use dev server (Vite, port 5173) not nginx (port 80)
+    container_name: automationone-frontend
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+    environment:
+      # Browser auf anderem Host (z. B. Funkturm-WLAN): in .env VITE_* auf http://<Pi-eth0-IP>:8000 setzen
+      VITE_API_URL: ${VITE_API_URL:-http://localhost:8000}
+      VITE_WS_URL: ${VITE_WS_URL:-ws://localhost:8000}
+      VITE_API_TARGET: http://el-servador:8000
+      VITE_WS_TARGET: ws://el-servador:8000
+      VITE_LOG_LEVEL: ${VITE_LOG_LEVEL:-debug}
+      # Polling required for Docker Desktop on Windows (inotify events don't propagate)
+      CHOKIDAR_USEPOLLING: "true"
+      CHOKIDAR_INTERVAL: "300"
+      TZ: UTC
+    ports:
+      - "0.0.0.0:5173:5173"
+    volumes:
+      # Live-reload: Mount source code (exclude node_modules)
+      - ./El Frontend/src:/app/src:ro
+      - ./El Frontend/public:/app/public:ro
+      - ./El Frontend/index.html:/app/index.html:ro
+      - ./El Frontend/vite.config.ts:/app/vite.config.ts:ro
+      - ./El Frontend/tsconfig.json:/app/tsconfig.json:ro
+      - ./El Frontend/tailwind.config.js:/app/tailwind.config.js:ro
+      - ./El Frontend/postcss.config.js:/app/postcss.config.js:ro
+    depends_on:
+      el-servador:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://localhost:5173').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))\""]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - automationone-net
+    restart: unless-stopped
+
+  # ============================================
+  # Loki (Log Aggregation) - Profile: monitoring
+  # ============================================
+  loki:
+    image: grafana/loki:3.4
+    container_name: automationone-loki
+    profiles: ["monitoring"]
+    environment:
+      TZ: UTC
+    ports:
+      - "3100:3100"   # Dev: Loki API direkt erreichbar (Prod: nur intern)
+    volumes:
+      - ./docker/loki/loki-config.yml:/etc/loki/local-config.yaml:ro
+      - automationone-loki-data:/loki
+    command: -config.file=/etc/loki/local-config.yaml
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:3100/ready || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks:
+      - automationone-net
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+
+  # ============================================
+  # Grafana Alloy (Log Shipping) - Profile: monitoring
+  # Migrated from Promtail to native Alloy River config 2026-02-24
+  # Native config: docker/alloy/config.alloy (no --config.format=promtail)
+  # ============================================
+  alloy:
+    image: grafana/alloy:v1.13.1
+    container_name: automationone-alloy
+    profiles: ["monitoring"]
+    environment:
+      TZ: UTC
+    volumes:
+      - ./docker/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - automationone-alloy-data:/var/lib/alloy/data
+    command:
+      - run
+      - --server.http.listen-addr=0.0.0.0:12345
+      - --storage.path=/var/lib/alloy/data
+      - /etc/alloy/config.alloy
+    ports:
+      - "12345:12345"   # Alloy UI (Debugging + Graph-Ansicht)
+    depends_on:
+      loki:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/12345' || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    networks:
+      - automationone-net
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+
+  # ============================================
+  # Prometheus (Metrics Collection) - Profile: monitoring
+  # ============================================
+  prometheus:
+    image: prom/prometheus:v3.2.1
+    container_name: automationone-prometheus
+    profiles: ["monitoring"]
+    environment:
+      TZ: UTC
+    ports:
+      - "9090:9090"   # Dev: Prometheus UI direkt erreichbar (Prod: nur intern)
+    volumes:
+      - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - automationone-prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.retention.time=7d'
+      - '--web.enable-lifecycle'
+    depends_on:
+      el-servador:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:9090/-/healthy || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    networks:
+      - automationone-net
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+
+  # ============================================
+  # Grafana (Dashboards) - Profile: monitoring
+  # ============================================
+  grafana:
+    image: grafana/grafana:11.5.2
+    container_name: automationone-grafana
+    profiles: ["monitoring"]
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      # Allow iframe embedding for GrafanaPanelEmbed component
+      - GF_SECURITY_ALLOW_EMBEDDING=true
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+      - TZ=UTC
+      - GF_DATE_FORMATS_DEFAULT_TIMEZONE=UTC
+    volumes:
+      - ./docker/grafana/grafana.ini:/etc/grafana/grafana.ini:ro
+      - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro
+      - automationone-grafana-data:/var/lib/grafana
+    depends_on:
+      loki:
+        condition: service_healthy
+      prometheus:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:3000/api/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks:
+      - automationone-net
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+
+  # ============================================
+  # cAdvisor (Container Metrics) - Profile: monitoring
+  # ============================================
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    container_name: automationone-node-exporter
+    profiles: ["monitoring"]
+    restart: unless-stopped
+    pid: host
+    environment:
+      TZ: UTC
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro,rslave
+    command:
+      - "--path.procfs=/host/proc"
+      - "--path.sysfs=/host/sys"
+      - "--path.rootfs=/rootfs"
+      - "--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)"
+    expose:
+      - "9100"
+    networks:
+      - automationone-net
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    container_name: automationone-cadvisor
+    profiles: ["monitoring"]
+    environment:
+      TZ: UTC
+    ports:
+      - "8080:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      # Host-Machine-ID: verringert cAdvisor-Warnungen zu fehlender UUID/machine-id im Container
+      - /etc/machine-id:/etc/machine-id:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8080/healthz || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    networks:
+      - automationone-net
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+
+  # ============================================
+  # PostgreSQL Exporter (Prometheus Metrics) - Profile: monitoring
+  # ============================================
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.16.0
+    container_name: automationone-postgres-exporter
+    profiles: ["monitoring"]
+    volumes:
+      - ./docker/postgres-exporter/postgres_exporter.yml:/postgres_exporter.yml:ro
+    environment:
+      DATA_SOURCE_NAME: "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable"
+      TZ: UTC
+    expose:
+      - "9187"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:9187/metrics || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - automationone-net
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+
+  # ============================================
+  # Mosquitto Exporter (Prometheus Metrics) - Profile: monitoring
+  # ============================================
+  mosquitto-exporter:
+    # sapcc/mosquitto-exporter: nur linux/amd64 — Pi5 (arm64) braucht Multi-Arch-Image.
+    image: ghcr.io/d0ugal/mosquitto-exporter:latest
+    container_name: automationone-mosquitto-exporter
+    profiles: ["monitoring"]
+    environment:
+      MOSQUITTO_BROKER_ENDPOINT: tcp://mqtt-broker:1883
+      MOSQUITTO_USERNAME: "${MQTT_USERNAME}"
+      MOSQUITTO_PASSWORD: "${MQTT_PASSWORD}"
+      TZ: UTC
+    ports:
+      - "9234:9234"
+    depends_on:
+      mqtt-broker:
+        condition: service_healthy
+    # Image is a scratch Go binary - no shell, wget, or curl available
+    # Healthcheck disabled: no shell in container; health verified via Prometheus target (mqtt-broker: up)
+    healthcheck:
+      disable: true
+    networks:
+      - automationone-net
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+
+  # ============================================
+  # pgAdmin (Database Management) - Profile: devtools
+  # ============================================
+  pgadmin:
+    image: dpage/pgadmin4:9.12
+    container_name: automationone-pgadmin
+    profiles: ["devtools"]
+    ports:
+      - "5050:80"
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-admin@automationone.dev}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-admin}
+      TZ: UTC
+    volumes:
+      - ./docker/pgadmin/servers.json:/pgadmin4/servers.json:ro
+      - automationone-pgadmin-data:/var/lib/pgadmin
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:80/misc/ping || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks:
+      - automationone-net
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+
+  # ============================================
+  # Camera Snapshot Service — AUT-572 Welle 1 — Profile: camera
+  # Requires: IMX708 (Pi Camera Module 3 Wide) on CSI port.
+  # Enable: docker compose --profile camera up -d
+  # Flag:   CAMERA_ENABLED=true in .env (controls server-side proxy endpoints)
+  # ============================================
+  automationone-camera:
+    build:
+      context: ./docker/camera
+      dockerfile: Dockerfile
+    container_name: automationone-camera
+    profiles: ["camera"]
+    environment:
+      CAMERA_SNAPSHOT_INTERVAL: ${CAMERA_SNAPSHOT_INTERVAL:-5}
+      CAMERA_SERVICE_PORT: 8080
+      TZ: UTC
+    # Pi 5 RP1/PiSP camera devices — verified on BCM2712_D0 (imx708_wide).
+    # No --privileged needed: group_add video(44)+render(992) covers all device access.
+    devices:
+      - /dev/video0:/dev/video0
+      - /dev/video1:/dev/video1
+      - /dev/video2:/dev/video2
+      - /dev/video3:/dev/video3
+      - /dev/video4:/dev/video4
+      - /dev/video5:/dev/video5
+      - /dev/video6:/dev/video6
+      - /dev/video7:/dev/video7
+      - /dev/video19:/dev/video19
+      - /dev/video20:/dev/video20
+      - /dev/video21:/dev/video21
+      - /dev/video22:/dev/video22
+      - /dev/video23:/dev/video23
+      - /dev/video24:/dev/video24
+      - /dev/video25:/dev/video25
+      - /dev/video26:/dev/video26
+      - /dev/video27:/dev/video27
+      - /dev/video28:/dev/video28
+      - /dev/video29:/dev/video29
+      - /dev/video30:/dev/video30
+      - /dev/video31:/dev/video31
+      - /dev/video32:/dev/video32
+      - /dev/video33:/dev/video33
+      - /dev/video34:/dev/video34
+      - /dev/video35:/dev/video35
+      - /dev/media0:/dev/media0
+      - /dev/media1:/dev/media1
+      - /dev/media2:/dev/media2
+      - /dev/media3:/dev/media3
+      - /dev/v4l-subdev0:/dev/v4l-subdev0
+      - /dev/v4l-subdev1:/dev/v4l-subdev1
+      - /dev/v4l-subdev2:/dev/v4l-subdev2
+      - /dev/v4l-subdev3:/dev/v4l-subdev3
+      - /dev/dma_heap/linux,cma:/dev/dma_heap/linux,cma
+      - /dev/dma_heap/system:/dev/dma_heap/system
+    group_add:
+      - "44"   # video
+      - "992"  # render
+    volumes:
+      - /run/udev:/run/udev:ro
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8080/health', timeout=3)\" || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - automationone-net
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+
+  # ============================================
+  # ESP32 Serial Logger (Hardware Bridge) - Profile: hardware
+  # ============================================
+  esp32-serial-logger:
+    build:
+      context: ./docker/esp32-serial-logger
+      dockerfile: Dockerfile
+    container_name: automationone-esp32-serial
+    profiles: ["hardware"]
+    environment:
+      SERIAL_HOST: ${ESP32_SERIAL_HOST:-host.docker.internal}
+      SERIAL_PORT: ${ESP32_SERIAL_PORT:-3333}
+      DEVICE_ID: ${ESP32_DEVICE_ID:-esp32-xiao-01}
+      LOG_FORMAT: ${ESP32_LOG_FORMAT:-structured}
+      RECONNECT_DELAY: ${ESP32_RECONNECT_DELAY:-5}
+      TZ: UTC
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+    networks:
+      - automationone-net
+    restart: unless-stopped
+
+# ============================================
+# Volumes
+# ============================================
+# MIGRATION: Volume-Naming-Fix adds explicit name: attribute to prevent
+# Docker Compose v2 project-prefix (auto-one_automationone-*).
+# After recreate, volumes will be named automationone-* directly.
+# Migrate old data (check actual names with: docker volume ls | grep auto-one):
+#   docker run --rm -v auto-one_automationone-postgres-data:/from -v automationone-postgres-data:/to alpine cp -a /from/. /to/
+#   docker run --rm -v auto-one_automationone-mosquitto-data:/from -v automationone-mosquitto-data:/to alpine cp -a /from/. /to/
+#   docker run --rm -v auto-one_automationone-loki-data:/from -v automationone-loki-data:/to alpine cp -a /from/. /to/
+#   docker run --rm -v auto-one_automationone-prometheus-data:/from -v automationone-prometheus-data:/to alpine cp -a /from/. /to/
+#   docker run --rm -v auto-one_automationone-grafana-data:/from -v automationone-grafana-data:/to alpine cp -a /from/. /to/
+#   docker run --rm -v auto-one_automationone-alloy-data:/from -v automationone-alloy-data:/to alpine cp -a /from/. /to/
+#   docker run --rm -v auto-one_automationone-pgadmin-data:/from -v automationone-pgadmin-data:/to alpine cp -a /from/. /to/
+volumes:
+  automationone-postgres-data:
+    name: automationone-postgres-data
+  automationone-mosquitto-data:
+    name: automationone-mosquitto-data
+  automationone-loki-data:
+    name: automationone-loki-data
+  automationone-prometheus-data:
+    name: automationone-prometheus-data
+  automationone-grafana-data:
+    name: automationone-grafana-data
+  automationone-alloy-data:
+    name: automationone-alloy-data
+  automationone-pgadmin-data:
+    name: automationone-pgadmin-data
+
+# ============================================
+# Network
+# ============================================
+networks:
+  automationone-net:
+    driver: bridge
+    name: automationone-net
+  shared-infra-net:
+    external: true

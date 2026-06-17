@@ -1,0 +1,26 @@
+# NVS Namespace Open Test
+# Test-ID: NVS-NS-001
+# Validates namespace can be opened for read/write operations
+# Timeout: 90000ms
+#
+# Expected behavior:
+# - beginNamespace() succeeds for valid namespace names
+# - Log shows "Opened namespace: {name}"
+# - ConfigManager opens wifi_config, zone_config, etc.
+
+name: NVS Namespace Open
+version: 1
+steps:
+  # Wait for system initialization
+  - wait-serial: "ESP32 Sensor Network"
+  - wait-serial: "StorageManager: Initialized"
+
+  # ConfigManager opens wifi_config namespace during boot
+  # This validates beginNamespace() works correctly
+  - wait-serial: "Opened namespace: wifi_config"
+
+  # System continues boot sequence
+  - wait-serial: "Phase 1: Core Infrastructure READY"
+
+  # WiFi connection proves wifi_config was read successfully
+  - wait-serial: "WiFi connected successfully"

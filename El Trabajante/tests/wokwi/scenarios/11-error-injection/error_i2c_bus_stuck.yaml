@@ -1,0 +1,21 @@
+# Error-Injection: I2C Bus Stuck
+# Configures an I2C sensor (SHT31) at address 0x44 (68 decimal) on GPIO 21/22.
+# No I2C device exists in diagram.json, so the bus scan will fail.
+# Expected: I2C-related error in serial output (I2C_DEVICE_NOT_FOUND or I2C_BUS_ERROR).
+# Timeout: 90000ms
+#
+# MQTT-Injection (extern via CI):
+#   mosquitto_pub -h localhost -t "kaiser/god/esp/ESP_00000001/config" \
+#     -m '{"sensors":[{"gpio":21,"sensor_type":"temperature_sht31","sensor_name":"GhostI2C","active":true,"i2c_address":68}],"actuators":[]}'
+# NOTE: "temperature_sht31" is a valid sensor type in the firmware registry.
+
+name: Error Injection - I2C Bus Stuck
+version: 1
+steps:
+  - wait-serial: "Phase 5: Actuator System READY"
+  - wait-serial: "MQTT connected successfully"
+  - wait-serial: "REGISTRATION"
+  - wait-serial: "heartbeat"
+  # External MQTT config injection happens here (sleep 25 in CI)
+  # I2C sensor at address 68 on GPIO 21 — no physical device → I2C error
+  - wait-serial: "ConfigResponse published"

@@ -1,0 +1,184 @@
+/* ============================================================================
+   ANIMATIONS — AutomationOne Mission Control
+   All @keyframes live here. Referenced by tokens + tailwind + components.
+   ============================================================================ */
+
+/* === Shimmer / Water Reflection === */
+@keyframes shimmer {
+  0% { left: -100%; }
+  100% { left: 200%; }
+}
+
+/* === Skeleton Loading === */
+@keyframes skeleton-loading {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* === Pulse Dot (status indicators) === */
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+/* === Pulse Glow (live status with shadow) === */
+@keyframes pulse-glow {
+  0%, 100% { opacity: 1; box-shadow: 0 0 4px currentColor; }
+  50% { opacity: 0.6; box-shadow: 0 0 12px currentColor; }
+}
+
+/* === Glow Line (sidebar active indicator) === */
+@keyframes glow-line {
+  0%, 100% { opacity: 0.6; box-shadow: 0 0 4px currentColor; }
+  50% { opacity: 1; box-shadow: 0 0 10px currentColor; }
+}
+
+/* === Fade In === */
+@keyframes fade-in {
+  0% { opacity: 0; }
+  100% { opacity: 1; }
+}
+
+/* === Slide Up (staggered page load) === */
+@keyframes slide-up {
+  0% { opacity: 0; transform: translateY(8px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+
+/* === Slide Down === */
+@keyframes slide-down {
+  0% { opacity: 0; transform: translateY(-8px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+
+/* === Spin (loading spinners) === */
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* === Scale In (modals, popovers) === */
+@keyframes scale-in {
+  0% { opacity: 0; transform: scale(0.95); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
+/* === Blink Error (quality LED error state) === */
+@keyframes blink-error {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+/* === Breathe (quality LED excellent state) === */
+@keyframes breathe {
+  0%, 100% { opacity: 0.6; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.15); }
+}
+
+/* === Value Flash (sensor value change) === */
+@keyframes value-flash {
+  0% { background-color: rgba(96, 165, 250, 0.15); }
+  100% { background-color: transparent; }
+}
+
+/* === Iridescent Pulse (pending devices button) === */
+@keyframes iridescent-pulse {
+  0%, 100% {
+    box-shadow: 0 0 8px rgba(96, 165, 250, 0.2), 0 0 16px rgba(129, 140, 248, 0.1);
+  }
+  50% {
+    box-shadow: 0 0 12px rgba(96, 165, 250, 0.4), 0 0 24px rgba(129, 140, 248, 0.2);
+  }
+}
+
+/* === Iridescent Shift (hue rotation) === */
+@keyframes iridescent-shift {
+  0%, 100% { filter: hue-rotate(0deg); }
+  50% { filter: hue-rotate(30deg); }
+}
+
+/* === Rules Pulse (active rule execution) === */
+@keyframes rules-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(1.4); }
+}
+
+/* === Glow Sweep (drag-over border) === */
+@keyframes glow-sweep {
+  0% { background-position: 300% 0; }
+  100% { background-position: -300% 0; }
+}
+
+/* === Emergency Pulse === */
+@keyframes pulse-emergency {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+/* === Logo Breathe (auth pages — glow shadow oscillation) === */
+@keyframes logo-breathe {
+  0%, 100% {
+    box-shadow: 0 0 16px rgba(96, 165, 250, 0.15),
+                0 0 48px rgba(96, 165, 250, 0.05);
+  }
+  50% {
+    box-shadow: 0 0 24px rgba(96, 165, 250, 0.25),
+                0 0 64px rgba(96, 165, 250, 0.1);
+  }
+}
+
+/* === Logo Scanline (auth pages — vertical sweep) === */
+@keyframes scanline {
+  0%, 100% { transform: translateY(-100%); opacity: 0; }
+  10%      { opacity: 1; }
+  50%      { transform: translateY(100%); opacity: 1; }
+  60%      { opacity: 0; }
+}
+
+/* === Particle Drift (auth pages — ambient background) === */
+@keyframes particle-drift {
+  0%   { transform: translate(0, 0) scale(1); opacity: 0; }
+  10%  { opacity: var(--particle-opacity, 0.15); }
+  90%  { opacity: var(--particle-opacity, 0.15); }
+  100% { transform: translate(var(--dx, 40px), var(--dy, -60px)) scale(0.5); opacity: 0; }
+}
+
+/* === Login Success (card exit celebration) === */
+@keyframes login-success {
+  0%   { transform: scale(1); opacity: 1; filter: blur(0); }
+  40%  { transform: scale(1.02); opacity: 1; filter: blur(0); }
+  100% { transform: scale(0.96) translateY(-12px); opacity: 0; filter: blur(4px); }
+}
+
+/* === Requirement Check (password validation spring-bounce) === */
+@keyframes requirement-check {
+  0%   { transform: scale(1); }
+  50%  { transform: scale(1.08); }
+  100% { transform: scale(1); }
+}
+
+/* === Stagger Entrance (page-load orchestration) === */
+.stagger-enter {
+  opacity: 0;
+  transform: translateY(8px);
+}
+
+.stagger-enter-1 { animation: slide-up 0.35s cubic-bezier(0.16, 1, 0.3, 1) 0.05s forwards; }
+.stagger-enter-2 { animation: slide-up 0.35s cubic-bezier(0.16, 1, 0.3, 1) 0.10s forwards; }
+.stagger-enter-3 { animation: slide-up 0.35s cubic-bezier(0.16, 1, 0.3, 1) 0.15s forwards; }
+.stagger-enter-4 { animation: slide-up 0.35s cubic-bezier(0.16, 1, 0.3, 1) 0.20s forwards; }
+.stagger-enter-5 { animation: slide-up 0.35s cubic-bezier(0.16, 1, 0.3, 1) 0.25s forwards; }
+.stagger-enter-6 { animation: slide-up 0.35s cubic-bezier(0.16, 1, 0.3, 1) 0.30s forwards; }
+
+/* === Utility classes for animations === */
+.animate-pulse-slow {
+  animation: pulse-glow 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+.animate-breathe {
+  animation: breathe 3s ease-in-out infinite;
+}
+
+.animate-blink-error {
+  animation: blink-error 1.2s ease-in-out infinite;
+}

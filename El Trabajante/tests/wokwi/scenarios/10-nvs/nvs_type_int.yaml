@@ -1,0 +1,29 @@
+# NVS Int Type Tests
+# Test-ID: NVS-TYPE-004, NVS-TYPE-005
+# Validates int8_t and int32_t storage and retrieval from NVS
+# Timeout: 90000ms
+#
+# Signed integers are used for:
+# - Calibration offsets
+# - Temperature values (can be negative)
+# - Error codes (some are negative)
+#
+# Expected behavior:
+# - putInt() stores negative and positive values
+# - getInt() retrieves value correctly
+# - Full range: -2,147,483,648 to 2,147,483,647
+
+name: NVS Int Type Operations
+version: 1
+steps:
+  # System boots
+  - wait-serial: "ESP32 Sensor Network"
+  - wait-serial: "StorageManager: Initialized"
+  - wait-serial: "Phase 1: Core Infrastructure READY"
+
+  # System uses various integer types
+  - wait-serial: "WiFi connected successfully"
+  - wait-serial: "MQTT connected successfully"
+
+  # Stable operation proves integer handling works
+  - wait-serial: "heartbeat"

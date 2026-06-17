@@ -1,0 +1,44 @@
+{
+  "$id": "automationone://schemas/sensor/sht31",
+  "allOf": [{ "$ref": "automationone://schemas/base" }],
+  "properties": {
+    "i2c_address": {
+      "type": "string",
+      "title": "I2C-Adresse",
+      "enum": ["0x44", "0x45"],
+      "default": "0x44",
+      "readOnly": true,
+      "description": "Hardware-Adresse auf dem I2C-Bus"
+    },
+    "heater_enabled": {
+      "type": "boolean",
+      "title": "Heater aktiv",
+      "default": false,
+      "description": "Interner Heater für Kondensations-Schutz"
+    },
+    "accuracy_temperature": {
+      "type": "string",
+      "title": "Genauigkeit (Temperatur)",
+      "default": "±0.3°C",
+      "readOnly": true
+    },
+    "accuracy_humidity": {
+      "type": "string",
+      "title": "Genauigkeit (Luftfeuchte)",
+      "default": "±2% RH",
+      "readOnly": true
+    },
+    "calibration_offset_temp": {
+      "type": "number",
+      "title": "Kalibrierungs-Offset Temperatur",
+      "default": 0,
+      "description": "Manueller Offset in °C"
+    },
+    "calibration_offset_hum": {
+      "type": "number",
+      "title": "Kalibrierungs-Offset Feuchte",
+      "default": 0,
+      "description": "Manueller Offset in %RH"
+    }
+  }
+}

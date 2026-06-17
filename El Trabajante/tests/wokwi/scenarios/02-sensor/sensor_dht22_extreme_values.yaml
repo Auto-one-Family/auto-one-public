@@ -1,0 +1,49 @@
+# DHT22 Extreme Values Test
+# Validates DHT22 at boundary conditions for temperature and humidity
+# Tests: -10C, 80C (temp extremes), 0%, 100% (humidity extremes)
+# DHT22 connected to GPIO 15 in diagram.json
+# Timeout: 90000ms
+
+name: DHT22 Extreme Values Test
+version: 1
+steps:
+  # Boot and connect
+  - wait-serial: "MQTT connected successfully"
+
+  # Registration gate
+  - wait-serial: "REGISTRATION"
+
+  # Wait for first measurement cycle
+  - wait-serial: "Published"
+
+  # --- Extreme: Very cold temperature (-10C) ---
+  - set-control:
+      part-id: "dht22"
+      control: "temperature"
+      value: "-10"
+  - delay: 8000ms
+  - wait-serial: "Published"
+
+  # --- Extreme: Very hot temperature (80C) ---
+  - set-control:
+      part-id: "dht22"
+      control: "temperature"
+      value: "80"
+  - delay: 8000ms
+  - wait-serial: "Published"
+
+  # --- Extreme: Minimum humidity (0%) ---
+  - set-control:
+      part-id: "dht22"
+      control: "humidity"
+      value: "0"
+  - delay: 8000ms
+  - wait-serial: "Published"
+
+  # --- Extreme: Maximum humidity (100%) ---
+  - set-control:
+      part-id: "dht22"
+      control: "humidity"
+      value: "100"
+  - delay: 8000ms
+  - wait-serial: "Published"

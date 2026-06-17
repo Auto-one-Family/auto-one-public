@@ -1,0 +1,155 @@
+name: Frontend Tests
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  workflow_dispatch:  # Manual trigger
+  push:
+    branches: [main, master, develop]
+    paths:
+      - 'El Frontend/**'
+      - '.github/workflows/frontend-tests.yml'
+  pull_request:
+    branches: [main, master, develop]
+    paths:
+      - 'El Frontend/**'
+
+env:
+  NODE_VERSION: '20'
+
+jobs:
+  type-check:
+    name: TypeScript Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: 'El Frontend/package-lock.json'
+
+      - name: Install dependencies
+        working-directory: El Frontend
+        run: npm ci
+
+      - name: Run TypeScript check
+        working-directory: El Frontend
+        run: npm run type-check
+
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: type-check
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: 'El Frontend/package-lock.json'
+
+      - name: Install dependencies
+        working-directory: El Frontend
+        run: npm ci
+
+      - name: Create log directories
+        run: mkdir -p logs/frontend/vitest/coverage
+
+      - name: Run Unit & Integration Tests
+        working-directory: El Frontend
+        run: |
+          npm run test -- \
+            --reporter=default \
+            --reporter=junit \
+            --outputFile.junit=junit-results.xml
+
+      - name: Upload Test Results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: frontend-test-results
+          path: |
+            El Frontend/junit-results.xml
+            logs/frontend/vitest/coverage/
+          retention-days: 7
+
+  build:
+    name: Build Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: type-check
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: 'El Frontend/package-lock.json'
+
+      - name: Install dependencies
+        working-directory: El Frontend
+        run: npm ci
+
+      - name: Build production bundle
+        working-directory: El Frontend
+        run: npm run build
+
+      - name: Check bundle size
+        working-directory: El Frontend
+        run: |
+          # Report bundle size for monitoring
+          echo "## Bundle Size Report" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          du -sh dist/ 2>/dev/null || echo "dist/ not found"
+          du -sh dist/assets/*.js 2>/dev/null || echo "No JS assets found"
+          du -sh dist/assets/*.css 2>/dev/null || echo "No CSS assets found"
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+  test-summary:
+    name: Test Summary
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [unit-tests, build]
+    if: always()
+    permissions:
+      contents: read
+      checks: write
+      pull-requests: write
+
+    steps:
+      - name: Download test results
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-test-results
+          path: results
+
+      - name: List downloaded files
+        run: |
+          echo "Downloaded artifacts:"
+          find results -type f 2>/dev/null || echo "No files found"
+
+      - name: Publish Test Results
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        if: always()
+        with:
+          files: |
+            results/junit-results.xml
+          check_name: Frontend Test Results
+          comment_mode: always

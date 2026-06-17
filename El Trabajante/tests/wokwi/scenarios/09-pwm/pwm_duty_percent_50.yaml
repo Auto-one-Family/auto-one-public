@@ -1,0 +1,31 @@
+# PWM Duty Cycle 50% Test
+# Test-ID: PWM-DUTY-001
+# Validates that PWM controller correctly sets 50% duty cycle
+# Uses MQTT actuator command with value 0.5
+# Timeout: 120000ms
+
+name: PWM Duty Cycle 50 Percent
+version: 1
+steps:
+  # Wait for system ready
+  - wait-serial: "MQTT connected successfully"
+
+  # Wait for heartbeat
+  - wait-serial: "heartbeat"
+
+  # First configure a PWM actuator via MQTT injection
+  # Topic: kaiser/god/esp/{esp_id}/config
+  # Payload: {"actuators":[{"gpio":25,"actuator_type":"pwm","actuator_name":"TestPWM","active":true}]}
+
+  # Wait for actuator setup
+  - wait-serial: "PWMActuator initialized on GPIO 25"
+
+  # Send PWM command via MQTT injection
+  # Topic: kaiser/god/esp/{esp_id}/actuator/25/command
+  # Payload: {"command":"SET","value":0.5}
+
+  # Verify PWM value is set to 50%
+  - wait-serial: "50.0%"
+
+  # Verify actuator status update
+  - wait-serial: "PWMActuator channel"

@@ -1,0 +1,31 @@
+# NVS Key Existence Tests
+# Test-ID: NVS-KEY-004, NVS-KEY-005
+# Validates keyExists() function works correctly
+# Timeout: 90000ms
+#
+# keyExists() is used for:
+# - Checking if config has been set
+# - Conditional loading of optional settings
+# - Migration from old to new key names
+#
+# Expected behavior:
+# - keyExists("existing_key") returns true
+# - keyExists("missing_key") returns false
+# - keyExists() works in open namespace only
+
+name: NVS Key Existence Check
+version: 1
+steps:
+  # System boots
+  - wait-serial: "ESP32 Sensor Network"
+  - wait-serial: "StorageManager: Initialized"
+
+  # ConfigManager uses keyExists() or equivalent checks
+  # to determine what config is available
+
+  - wait-serial: "Phase 1: Core Infrastructure READY"
+  - wait-serial: "WiFi connected successfully"
+  - wait-serial: "MQTT connected successfully"
+
+  # Conditional logic based on key existence works
+  - wait-serial: "heartbeat"

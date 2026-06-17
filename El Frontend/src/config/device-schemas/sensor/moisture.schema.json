@@ -1,0 +1,33 @@
+{
+  "$id": "automationone://schemas/sensor/moisture",
+  "allOf": [{ "$ref": "automationone://schemas/base" }],
+  "properties": {
+    "sensor_variant": {
+      "type": "string",
+      "title": "Sensor-Variante",
+      "enum": ["capacitive", "resistive"],
+      "default": "capacitive",
+      "description": "Kapazitiv (langlebiger) oder resistiv"
+    },
+    "dry_value": {
+      "type": "number",
+      "title": "Trockenwert (ADC)",
+      "description": "ADC-Wert bei trockenem Substrat (Kalibrierung)"
+    },
+    "wet_value": {
+      "type": "number",
+      "title": "Nasswert (ADC)",
+      "description": "ADC-Wert bei nassem Substrat (Kalibrierung)"
+    },
+    "substrate_type": {
+      "type": "string",
+      "title": "Substrat-Typ",
+      "description": "Erde, Coco, Perlite, etc."
+    },
+    "depth_cm": {
+      "type": "number",
+      "title": "Einbautiefe (cm)",
+      "description": "Tiefe des Sensors im Substrat"
+    }
+  }
+}

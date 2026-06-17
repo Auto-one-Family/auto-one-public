@@ -1,0 +1,31 @@
+# I2C Bus Error Handling Test
+# Test-ID: I2C-ERR-003
+# Validates: Bus error (code 4/5) is detected and logged
+# Expected: Critical error tracked, operation fails gracefully
+# Timeout: 90000ms
+
+name: I2C Bus Error Handling (I2C-ERR-003)
+version: 1
+steps:
+  # I2C Bus Manager initializes
+  - wait-serial: "I2C Bus Manager initialized successfully"
+
+  # System operates normally without bus errors
+  - wait-serial: "Phase 4: Sensor System READY"
+
+# NOTE: I2C bus errors (Wire error codes):
+# 0 = Success
+# 1 = Data too long to fit in transmit buffer
+# 2 = NACK on transmit of address
+# 3 = NACK on transmit of data
+# 4 = Other error (typically bus stuck)
+# 5 = Timeout (ESP32 specific)
+#
+# Implementation (i2c_bus.cpp):
+#   if (error == 4 || error == 5) {
+#       errorTracker.trackError(ERROR_I2C_BUS_ERROR,
+#                               ERROR_SEVERITY_CRITICAL, ...);
+#   }
+#
+# Bus errors are critical and may require bus reset.
+# Current implementation does not have automatic bus reset.

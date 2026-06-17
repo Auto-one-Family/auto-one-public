@@ -1,0 +1,36 @@
+# NVS Integration: Sensor Config at Boot
+# Test-ID: NVS-INT-002
+# CRITICAL: Validates sensors are restored from NVS at boot
+# Timeout: 90000ms
+#
+# This is fundamental to system reliability!
+# After power cycle, sensors MUST be automatically configured
+# without requiring server intervention.
+#
+# Expected behavior:
+# 1. ConfigManager loads sensor_count from NVS
+# 2. For each sensor, loads gpio, type, name, etc.
+# 3. SensorManager creates sensor instances
+# 4. Sensors start measuring automatically
+
+name: NVS Sensor Config at Boot
+version: 1
+steps:
+  # System boots
+  - wait-serial: "ESP32 Sensor Network"
+  - wait-serial: "StorageManager: Initialized"
+
+  # Sensor config namespace is accessed
+  # Note: May not be explicitly logged if no sensors configured
+
+  - wait-serial: "Phase 1: Core Infrastructure READY"
+
+  # Sensor system initialization
+  - wait-serial: "Phase 4: Sensor System READY"
+
+  # System becomes operational
+  - wait-serial: "WiFi connected successfully"
+  - wait-serial: "MQTT connected successfully"
+
+  # Heartbeat includes sensor count in diagnostics
+  - wait-serial: "heartbeat"

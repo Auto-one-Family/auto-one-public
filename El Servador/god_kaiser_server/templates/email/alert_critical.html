@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Critical Alert — AutomationOne</title>
+</head>
+<body style="margin:0;padding:0;font-family:Arial,Helvetica,sans-serif;background:#1a1a2e;color:#e0e0e0;">
+    <table width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;margin:0 auto;background:#16213e;border-radius:8px;overflow:hidden;">
+        <!-- Header -->
+        <tr>
+            <td style="background:#dc2626;padding:20px 30px;">
+                <h1 style="margin:0;font-size:20px;color:#fff;">&#9888; CRITICAL ALERT</h1>
+                <p style="margin:4px 0 0;font-size:13px;color:#fecaca;">AutomationOne — Immediate Action Required</p>
+            </td>
+        </tr>
+        <!-- Body -->
+        <tr>
+            <td style="padding:24px 30px;">
+                <h2 style="margin:0 0 12px;font-size:18px;color:#f87171;">{{ title }}</h2>
+                <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:#d1d5db;">{{ body }}</p>
+
+                <!-- Details -->
+                <table width="100%" cellpadding="8" cellspacing="0" style="background:#0f172a;border-radius:6px;font-size:13px;margin-bottom:16px;">
+                    <tr>
+                        <td style="color:#9ca3af;width:120px;">Severity</td>
+                        <td style="color:#f87171;font-weight:bold;">{{ severity | upper }}</td>
+                    </tr>
+                    <tr>
+                        <td style="color:#9ca3af;">Source</td>
+                        <td style="color:#e0e0e0;">{{ source }}</td>
+                    </tr>
+                    <tr>
+                        <td style="color:#9ca3af;">Category</td>
+                        <td style="color:#e0e0e0;">{{ category }}</td>
+                    </tr>
+                    <tr>
+                        <td style="color:#9ca3af;">Time</td>
+                        <td style="color:#e0e0e0;">{{ timestamp }}</td>
+                    </tr>
+                    {% if esp_id %}
+                    <tr>
+                        <td style="color:#9ca3af;">ESP Device</td>
+                        <td style="color:#e0e0e0;">{{ esp_id }}</td>
+                    </tr>
+                    {% endif %}
+                    {% if sensor_type %}
+                    <tr>
+                        <td style="color:#9ca3af;">Sensor</td>
+                        <td style="color:#e0e0e0;">{{ sensor_type }}</td>
+                    </tr>
+                    {% endif %}
+                </table>
+            </td>
+        </tr>
+        <!-- Footer -->
+        <tr>
+            <td style="padding:16px 30px;background:#0f172a;font-size:11px;color:#6b7280;">
+                AutomationOne Notification System &mdash; This is an automated message.
+            </td>
+        </tr>
+    </table>
+</body>
+</html>

@@ -1,0 +1,30 @@
+{
+  "$id": "automationone://schemas/sensor/ec",
+  "allOf": [{ "$ref": "automationone://schemas/base" }],
+  "properties": {
+    "calibration_low": {
+      "type": "number",
+      "title": "Kalibrierung Niedrig (µS/cm)",
+      "description": "Messwert bei niedriger Kalibrierlösung"
+    },
+    "calibration_high": {
+      "type": "number",
+      "title": "Kalibrierung Hoch (µS/cm)",
+      "description": "Messwert bei hoher Kalibrierlösung"
+    },
+    "temperature_compensation": {
+      "type": "boolean",
+      "title": "Temperaturkompensation",
+      "default": true
+    },
+    "last_calibration": {
+      "type": "string",
+      "format": "date",
+      "title": "Letzte Kalibrierung"
+    },
+    "probe_type": {
+      "type": "string",
+      "title": "Sonden-Typ"
+    }
+  }
+}

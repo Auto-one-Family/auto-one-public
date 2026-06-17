@@ -1,0 +1,36 @@
+{
+  "$id": "automationone://schemas/sensor/ds18b20",
+  "allOf": [{ "$ref": "automationone://schemas/base" }],
+  "properties": {
+    "onewire_address": {
+      "type": "string",
+      "title": "OneWire-Adresse",
+      "readOnly": true,
+      "description": "64-bit ROM-Code des Sensors"
+    },
+    "resolution_bits": {
+      "type": "number",
+      "title": "Auflösung (Bits)",
+      "enum": [9, 10, 11, 12],
+      "default": 12,
+      "description": "9-12 Bit, höher = genauer aber langsamer"
+    },
+    "accuracy": {
+      "type": "string",
+      "title": "Genauigkeit",
+      "default": "±0.5°C",
+      "readOnly": true
+    },
+    "parasite_power": {
+      "type": "boolean",
+      "title": "Parasitäre Versorgung",
+      "default": false,
+      "description": "Sensor wird über Datenleitung versorgt"
+    },
+    "cable_length_m": {
+      "type": "number",
+      "title": "Kabellänge (m)",
+      "description": "Länge des Sensor-Kabels in Metern"
+    }
+  }
+}

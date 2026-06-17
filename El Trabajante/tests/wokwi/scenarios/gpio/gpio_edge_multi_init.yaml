@@ -1,0 +1,65 @@
+# GPIO-EDGE-004: Multiple Initialization Calls
+# =============================================
+# Validates that calling initializeAllPinsToSafeMode() multiple
+# times does not create duplicate pin entries or corrupt state.
+#
+# Test ID: GPIO-EDGE-004
+# Priority: LOW
+# Requirement: Second call to initializeAllPinsToSafeMode() clears and reinitializes
+#
+# Implementation Detail:
+#   pins_.clear(); is called at start of initializeAllPinsToSafeMode()
+#   This prevents duplicate entries on re-initialization
+#
+# Scenario:
+#   This could happen during:
+#   - Factory reset
+#   - Error recovery
+#   - Firmware bug
+#
+# MQTT-Injection (extern via CI):
+#   Step 1 - Configure sensor:
+#     mosquitto_pub -h localhost -t "kaiser/god/esp/ESP_00000001/config" \
+#       -m '{"sensors":[{"gpio":4,"sensor_type":"temp_ds18b20","sensor_name":"TestSensor","active":true}]}'
+#   Step 2 - Trigger emergency stop (after ~1s):
+#     mosquitto_pub -h localhost -t "kaiser/broadcast/emergency" \
+#       -m '{"command":"STOP","reason":"Test re-initialization"}'
+#
+# Firmware reference: gpio_manager.cpp lines 36-37 (pins_.clear())
+
+name: Multiple GPIO Initialization - No Duplicates
+version: 1
+steps:
+  # Wait for boot to complete
+  - wait-serial: "Phase 1: Core Infrastructure READY"
+
+  # First initialization happens during boot
+  # Verify correct pin count (20: 16 bidirectional + 4 input-only ADC1)
+  - wait-serial: "Available Pins: 20"
+
+  # Wait for MQTT connection
+  - wait-serial: "MQTT connected successfully"
+
+  # External MQTT injection: configure sensor on GPIO 4 (CI helper script)
+
+  # Verify allocation
+  - wait-serial: "Pin 4 allocated"
+
+  # Trigger factory reset (which calls initializeAllPinsToSafeMode again)
+  # Note: This would normally reboot, but we can test the re-init path
+  # by sending a system command that triggers safe-mode-all
+
+  # Emergency stop triggers enableSafeModeForAllPins
+  # which is similar to re-initialization
+  - delay: 1000ms
+
+  # External MQTT injection: trigger emergency stop (CI helper script)
+
+  # Verify safe mode activates
+  - wait-serial: "Emergency safe-mode activated"
+
+  # Verify all pins are in safe mode
+  - wait-serial: "All pins returned to safe mode"
+
+  # After recovery, verify system is still functional
+  # (no duplicate entries or corrupted state)

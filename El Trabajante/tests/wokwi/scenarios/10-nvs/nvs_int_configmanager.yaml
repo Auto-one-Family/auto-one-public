@@ -1,0 +1,38 @@
+# NVS Integration: ConfigManager Test
+# Test-ID: NVS-INT-001
+# Validates ConfigManager properly uses StorageManager
+# Timeout: 90000ms
+#
+# ConfigManager is the primary consumer of StorageManager:
+# - Loads all config at boot
+# - Saves config on MQTT commands
+# - Manages all namespaces
+#
+# Expected behavior:
+# - ConfigManager opens correct namespaces
+# - ConfigManager reads/writes with proper error handling
+# - Config changes are persisted immediately
+
+name: NVS ConfigManager Integration
+version: 1
+steps:
+  # System boots
+  - wait-serial: "ESP32 Sensor Network"
+  - wait-serial: "StorageManager: Initialized"
+
+  # ConfigManager loads WiFi config
+  - wait-serial: "Opened namespace: wifi_config"
+
+  # ConfigManager loads system config
+  # ConfigManager loads zone config
+
+  - wait-serial: "Phase 1: Core Infrastructure READY"
+
+  # WiFi connection proves wifi_config was loaded
+  - wait-serial: "WiFi connected successfully"
+
+  # MQTT connection proves zone/kaiser config was loaded
+  - wait-serial: "MQTT connected successfully"
+
+  # Heartbeat proves system is stable
+  - wait-serial: "heartbeat"

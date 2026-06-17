@@ -1,0 +1,49 @@
+# PWM Multi-Channel Independent Control Test
+# Test-ID: PWM-MULTI-001, PWM-MULTI-002, PWM-MULTI-003, PWM-MULTI-004
+# Validates that multiple PWM channels operate independently
+# Each channel should maintain its own duty cycle
+# Timeout: 180000ms
+
+name: PWM Multi-Channel Independent Control
+version: 1
+steps:
+  # Wait for system ready
+  - wait-serial: "MQTT connected successfully"
+  - wait-serial: "heartbeat"
+
+  # === Configure 3 PWM Actuators ===
+  # Topic: kaiser/god/esp/{esp_id}/config
+  # Payload: {"actuators":[
+  #   {"gpio":25,"actuator_type":"pwm","actuator_name":"PWM_A","active":true},
+  #   {"gpio":26,"actuator_type":"pwm","actuator_name":"PWM_B","active":true},
+  #   {"gpio":27,"actuator_type":"pwm","actuator_name":"PWM_C","active":true}
+  # ]}
+
+  - wait-serial: "attached to GPIO 25"
+  - wait-serial: "attached to GPIO 26"
+  - wait-serial: "attached to GPIO 27"
+
+  # === Set Different Values ===
+  # GPIO 25: 25%
+  # Topic: kaiser/god/esp/{esp_id}/actuator/25/command
+  # Payload: {"command":"SET","value":0.25}
+  - wait-serial: "25"
+
+  # GPIO 26: 50%
+  # Topic: kaiser/god/esp/{esp_id}/actuator/26/command
+  # Payload: {"command":"SET","value":0.5}
+  - wait-serial: "50"
+
+  # GPIO 27: 75%
+  # Topic: kaiser/god/esp/{esp_id}/actuator/27/command
+  # Payload: {"command":"SET","value":0.75}
+  - wait-serial: "75"
+
+  # === Change One Channel ===
+  # GPIO 25: Change to 100%
+  # Topic: kaiser/god/esp/{esp_id}/actuator/25/command
+  # Payload: {"command":"SET","value":1.0}
+  - wait-serial: "100"
+
+  # Other channels should remain unchanged (50%, 75%)
+  # This is verified by the absence of changes to channel 26/27

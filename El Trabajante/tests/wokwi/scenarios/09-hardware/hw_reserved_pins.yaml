@@ -1,0 +1,86 @@
+# HW-RES-001 to HW-RES-005: Reserved Pins Protection
+# ===================================================
+# Validates that RESERVED_GPIO_PINS are protected and cannot be used.
+#
+# Test IDs: HW-RES-001, HW-RES-002, HW-RES-003, HW-RES-004, HW-RES-005
+# Priority: CRITICAL (Safety)
+# Requirement:
+#   - Boot pin (GPIO 0) is reserved
+#   - UART pins (GPIO 1, 3) are reserved
+#   - Flash strapping pins (GPIO 2, 12, 13 on WROOM) are reserved
+#   - Sensor/Actuator config on reserved pins MUST fail
+#
+# Reserved Pins:
+#   ESP32-WROOM-32: 0 (Boot), 1 (TX), 2 (Strapping), 3 (RX), 12, 13 (Flash)
+#   XIAO ESP32-C3:  0 (Boot), 1 (TX), 3 (RX)
+#
+# Note: Flash pins GPIO 6-11 are not in RESERVED_GPIO_PINS but are
+# also not in SAFE_GPIO_PINS, so they are implicitly blocked.
+#
+# MQTT-Injection (extern via CI):
+#   Test 1 - Boot Pin GPIO 0:
+#     mosquitto_pub -h localhost -t "kaiser/god/esp/ESP_00000001/config" \
+#       -m '{"sensors":[{"gpio":0,"sensor_type":"digital_input","sensor_name":"BootPinSensor","active":true}]}'
+#   Test 2 - UART TX GPIO 1 (after ~500ms):
+#     mosquitto_pub -h localhost -t "kaiser/god/esp/ESP_00000001/config" \
+#       -m '{"actuators":[{"gpio":1,"actuator_type":"relay","actuator_name":"UARTRelay","active":true}]}'
+#   Test 3 - UART RX GPIO 3 (after ~500ms):
+#     mosquitto_pub -h localhost -t "kaiser/god/esp/ESP_00000001/config" \
+#       -m '{"sensors":[{"gpio":3,"sensor_type":"analog","sensor_name":"RXSensor","active":true}]}'
+#   Test 4 - Flash Strapping GPIO 12 (after ~500ms):
+#     mosquitto_pub -h localhost -t "kaiser/god/esp/ESP_00000001/config" \
+#       -m '{"actuators":[{"gpio":12,"actuator_type":"pump","actuator_name":"FlashPump","active":true}]}'
+#   Test 5 - Internal Flash SPI GPIO 6 (after ~500ms):
+#     mosquitto_pub -h localhost -t "kaiser/god/esp/ESP_00000001/config" \
+#       -m '{"sensors":[{"gpio":6,"sensor_type":"digital_input","sensor_name":"FlashSensor","active":true}]}'
+#
+# Firmware references:
+#   - esp32_dev.h lines 31-39: RESERVED_GPIO_PINS array
+#   - gpio_manager.cpp: Rejects reserved pins
+
+name: Reserved Pins Protection
+version: 1
+steps:
+  # Wait for boot to complete
+  - wait-serial: "Phase 1: Core Infrastructure READY"
+
+  # Wait for MQTT connection
+  - wait-serial: "MQTT connected successfully"
+
+  # TEST 1: External MQTT injection - boot pin GPIO 0 (CI helper script)
+
+  # Verify boot pin is rejected
+  - wait-serial: "reserved"
+
+  # Wait before next test
+  - delay: 500ms
+
+  # TEST 2: External MQTT injection - UART TX pin GPIO 1 (CI helper script)
+
+  # Verify UART pin is rejected
+  - wait-serial: "reserved"
+
+  # Wait before next test
+  - delay: 500ms
+
+  # TEST 3: External MQTT injection - UART RX pin GPIO 3 (CI helper script)
+
+  # Verify RX pin is rejected
+  - wait-serial: "reserved"
+
+  # Wait before next test
+  - delay: 500ms
+
+  # TEST 4: External MQTT injection - flash strapping pin GPIO 12 (CI helper script)
+
+  # Verify flash strapping pin is rejected
+  - wait-serial: "reserved"
+
+  # Wait before next test
+  - delay: 500ms
+
+  # TEST 5: External MQTT injection - internal flash SPI GPIO 6 (CI helper script)
+  # Note: Not in RESERVED_GPIO_PINS but also not in SAFE_GPIO_PINS
+
+  # Verify internal flash pin is rejected (not in safe pins)
+  - wait-serial: "not in safe pins"

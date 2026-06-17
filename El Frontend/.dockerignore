@@ -1,0 +1,13 @@
+node_modules/
+dist/
+.cache/
+.vite/
+coverage/
+.git/
+.vscode/
+*.log
+.env
+!.env.example
+Docs/
+*.md
+!README.md

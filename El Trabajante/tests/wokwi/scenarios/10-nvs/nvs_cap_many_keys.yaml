@@ -1,0 +1,34 @@
+# NVS Capacity: Many Keys Test
+# Test-ID: NVS-CAP-001
+# Validates NVS can handle many keys in one namespace
+# Timeout: 120000ms
+#
+# Stress test for sensor_config namespace which can have:
+# - sensor_count (1 key)
+# - Per sensor: gpio, type, name, subzone, active, raw_mode, mode, interval (8 keys)
+# - Max 20 sensors = 161 keys total
+#
+# Expected behavior:
+# - All keys stored successfully
+# - All keys retrieved correctly
+# - No NVS corruption
+
+name: NVS Many Keys Capacity
+version: 1
+steps:
+  # System boots
+  - wait-serial: "ESP32 Sensor Network"
+  - wait-serial: "StorageManager: Initialized"
+  - wait-serial: "MQTT connected successfully"
+
+  # Wait for system to be operational
+  - wait-serial: "heartbeat"
+
+  # MQTT injection point for multiple sensors:
+  # Topic: kaiser/god/esp/{esp_id}/config
+  # Payload with multiple sensors to stress-test NVS
+  #
+  # This test validates that the system can handle
+  # the full capacity of sensor configurations
+
+  # System remains stable under load

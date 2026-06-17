@@ -1,0 +1,49 @@
+# DHT22 Rapid Temperature Change Test
+# Validates firmware stability under rapid DHT22 temperature transitions
+# Pattern: 20C -> 40C -> 20C -> 40C (fast oscillation)
+# Tests: No crash, no stuck readings, pipeline continues
+# DHT22 connected to GPIO 15 in diagram.json
+# Timeout: 90000ms
+
+name: DHT22 Rapid Temperature Change
+version: 1
+steps:
+  # Boot and connect
+  - wait-serial: "MQTT connected successfully"
+
+  # Registration gate
+  - wait-serial: "REGISTRATION"
+
+  # Wait for first measurement cycle
+  - wait-serial: "Published"
+
+  # --- Rapid: Jump to 40C ---
+  - set-control:
+      part-id: "dht22"
+      control: "temperature"
+      value: "40"
+  - delay: 3000ms
+
+  # --- Rapid: Jump back to 20C ---
+  - set-control:
+      part-id: "dht22"
+      control: "temperature"
+      value: "20"
+  - delay: 3000ms
+
+  # --- Rapid: Jump to 40C again ---
+  - set-control:
+      part-id: "dht22"
+      control: "temperature"
+      value: "40"
+  - delay: 3000ms
+
+  # --- Rapid: Jump back to 20C ---
+  - set-control:
+      part-id: "dht22"
+      control: "temperature"
+      value: "20"
+  - delay: 3000ms
+
+  # Verify system survived rapid changes
+  - wait-serial: "Published"

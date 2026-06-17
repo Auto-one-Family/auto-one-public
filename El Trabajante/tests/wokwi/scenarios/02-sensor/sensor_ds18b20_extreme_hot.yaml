@@ -1,0 +1,42 @@
+# DS18B20 Extreme Hot Temperature Test
+# Validates sensor reading at upper temperature boundary
+# Values: 80C, 100C, 125C (max)
+# Note: 85C is DS18B20 power-on reset value - firmware has special handling
+# DS18B20 valid range: -55C to +125C
+# Timeout: 90000ms
+
+name: DS18B20 Extreme Hot Temperature Test
+version: 1
+steps:
+  # Boot and connect
+  - wait-serial: "MQTT connected successfully"
+
+  # Registration gate
+  - wait-serial: "REGISTRATION"
+
+  # Wait for first measurement cycle
+  - wait-serial: "Published"
+
+  # --- Extreme: Hot (80C) ---
+  - set-control:
+      part-id: "temp1"
+      control: "temperature"
+      value: "80"
+  - delay: 8000ms
+  - wait-serial: "Published"
+
+  # --- Extreme: Boiling (100C) ---
+  - set-control:
+      part-id: "temp1"
+      control: "temperature"
+      value: "100"
+  - delay: 8000ms
+  - wait-serial: "Published"
+
+  # --- Extreme: Maximum (125C) ---
+  - set-control:
+      part-id: "temp1"
+      control: "temperature"
+      value: "125"
+  - delay: 8000ms
+  - wait-serial: "Published"

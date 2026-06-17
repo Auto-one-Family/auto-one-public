@@ -1,0 +1,32 @@
+# NVS Capacity: Free Entries Test
+# Test-ID: NVS-CAP-004, NVS-CAP-005
+# Validates getFreeEntries() and getUsedEntries() work correctly
+# Timeout: 90000ms
+#
+# Capacity monitoring is used for:
+# - Pre-flight check before large writes
+# - Diagnostics and health monitoring
+# - Warning when NVS is nearly full
+#
+# Expected behavior:
+# - getFreeEntries() returns available space
+# - getUsedEntries() returns consumed space
+# - Warning at < 10 entries: "NVS NEARLY FULL"
+# - Error at 0 entries: "NVS FULL"
+
+name: NVS Capacity Monitoring
+version: 1
+steps:
+  # System boots
+  - wait-serial: "ESP32 Sensor Network"
+  - wait-serial: "StorageManager: Initialized"
+
+  # NVS quota check happens on writes
+  # System should not show "NVS NEARLY FULL" on normal boot
+
+  - wait-serial: "Phase 1: Core Infrastructure READY"
+  - wait-serial: "WiFi connected successfully"
+  - wait-serial: "MQTT connected successfully"
+
+  # Heartbeat with diagnostics may include NVS stats
+  - wait-serial: "heartbeat"

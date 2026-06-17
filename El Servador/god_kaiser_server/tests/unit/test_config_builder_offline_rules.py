@@ -1,0 +1,991 @@
+"""
+Unit Tests: ConfigPayloadBuilder._build_offline_rules / _extract_offline_rule
+
+Tests the offline hysteresis rule extraction added as part of SAFETY-P4.
+
+Scenarios covered:
+1. Local hysteresis rule (sensor + actuator on same ESP) → included
+2. Cross-ESP rule (sensor on ESP-A, actuator on ESP-B) → excluded
+3. ESP with no matching rules → offline_rules is empty list
+4. More than MAX_OFFLINE_RULES matching rules → truncated to 8
+5. Cooling-mode rule → thresholds mapped correctly
+6. Heating-mode rule → thresholds mapped correctly
+7. Hysteresis condition without valid threshold pair → excluded
+8. Logic-repo failure → graceful fallback to empty list
+"""
+
+import pytest
+import uuid
+from unittest.mock import AsyncMock, MagicMock, patch
+
+from src.services.config_builder import ConfigPayloadBuilder
+
+# ---------------------------------------------------------------------------
+# Helper factories
+# ---------------------------------------------------------------------------
+
+ESP_ID_A = "ESP_AABB11CC"
+ESP_ID_B = "ESP_DDEE22FF"
+
+
+def _make_esp(device_id: str = ESP_ID_A) -> MagicMock:
+    esp = MagicMock()
+    esp.device_id = device_id
+    esp.id = uuid.uuid4()
+    esp.zone_id = "zone_greenhouse"
+    esp.zone_name = "Greenhouse"
+    return esp
+
+
+def _make_rule(
+    rule_name: str,
+    trigger_conditions: object,
+    actions: list,
+    enabled: bool = True,
+) -> MagicMock:
+    rule = MagicMock()
+    rule.rule_name = rule_name
+    rule.trigger_conditions = trigger_conditions
+    rule.actions = actions
+    rule.enabled = enabled
+    rule.priority = 100
+    return rule
+
+
+def _heating_condition(esp_id: str, gpio: int = 4, sensor_type: str = "ds18b20") -> dict:
+    return {
+        "type": "hysteresis",
+        "esp_id": esp_id,
+        "gpio": gpio,
+        "sensor_type": sensor_type,
+        "activate_below": 18.0,
+        "deactivate_above": 22.0,
+    }
+
+
+def _cooling_condition(esp_id: str, gpio: int = 4, sensor_type: str = "sht31_temp") -> dict:
+    return {
+        "type": "hysteresis",
+        "esp_id": esp_id,
+        "gpio": gpio,
+        "sensor_type": sensor_type,
+        "activate_above": 28.0,
+        "deactivate_below": 24.0,
+    }
+
+
+def _actuator_action(esp_id: str, gpio: int = 18, duration_seconds: int = 0) -> dict:
+    return {
+        "type": "actuator_command",
+        "esp_id": esp_id,
+        "gpio": gpio,
+        "command": "ON",
+        "value": 1.0,
+        "duration_seconds": duration_seconds,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------------
+
+
+class TestExtractOfflineRuleUnit:
+    """Pure unit tests for _extract_offline_rule (no DB needed)."""
+
+    def _builder(self) -> ConfigPayloadBuilder:
+        return ConfigPayloadBuilder()
+
+    # ------------------------------------------------------------------
+    # 1. Local heating rule
+    # ------------------------------------------------------------------
+
+    def test_local_heating_rule_included(self):
+        """Heating rule with sensor + actuator on same ESP → returned."""
+        builder = self._builder()
+        rule = _make_rule(
+            rule_name="heat_rule",
+            trigger_conditions=_heating_condition(ESP_ID_A),
+            actions=[_actuator_action(ESP_ID_A, gpio=18)],
+        )
+
+        result = builder._extract_offline_rule(rule, ESP_ID_A)
+
+        assert len(result) == 1
+        r = result[0]
+        assert r["sensor_gpio"] == 4
+        assert r["actuator_gpio"] == 18
+        assert r["sensor_value_type"] == "ds18b20"
+        assert r["activate_below"] == 18.0
+        assert r["deactivate_above"] == 22.0
+        # Cooling fields must be zero (heating mode)
+        assert r["activate_above"] == 0.0
+        assert r["deactivate_below"] == 0.0
+        assert r["max_on_seconds"] == 0
+
+    # ------------------------------------------------------------------
+    # 2. Local cooling rule
+    # ------------------------------------------------------------------
+
+    def test_local_cooling_rule_included(self):
+        """Cooling rule with sensor + actuator on same ESP → returned."""
+        builder = self._builder()
+        rule = _make_rule(
+            rule_name="cool_rule",
+            trigger_conditions=_cooling_condition(ESP_ID_A),
+            actions=[_actuator_action(ESP_ID_A, gpio=22)],
+        )
+
+        result = builder._extract_offline_rule(rule, ESP_ID_A)
+
+        assert len(result) == 1
+        r = result[0]
+        assert r["sensor_gpio"] == 4
+        assert r["actuator_gpio"] == 22
+        assert r["sensor_value_type"] == "sht31_temp"
+        assert r["activate_above"] == 28.0
+        assert r["deactivate_below"] == 24.0
+        # Heating fields must be zero (cooling mode)
+        assert r["activate_below"] == 0.0
+        assert r["deactivate_above"] == 0.0
+        assert r["max_on_seconds"] == 0
+
+    # ------------------------------------------------------------------
+    # 3. Cross-ESP rule: sensor on ESP_A, actuator on ESP_B → excluded
+    # ------------------------------------------------------------------
+
+    def test_cross_esp_rule_excluded(self):
+        """Rule where actuator is on a different ESP → not included."""
+        builder = self._builder()
+        rule = _make_rule(
+            rule_name="cross_esp_rule",
+            trigger_conditions=_heating_condition(ESP_ID_A),
+            actions=[_actuator_action(ESP_ID_B, gpio=5)],  # different ESP!
+        )
+
+        result = builder._extract_offline_rule(rule, ESP_ID_A)
+
+        assert result == [], "Cross-ESP rules must not appear in offline_rules"
+
+    # ------------------------------------------------------------------
+    # 4. Hysteresis condition references wrong ESP → excluded
+    # ------------------------------------------------------------------
+
+    def test_sensor_on_wrong_esp_excluded(self):
+        """Hysteresis condition for ESP_B queried from perspective of ESP_A → None."""
+        builder = self._builder()
+        rule = _make_rule(
+            rule_name="wrong_esp_rule",
+            trigger_conditions=_heating_condition(ESP_ID_B),  # sensor on B
+            actions=[_actuator_action(ESP_ID_B, gpio=5)],
+        )
+
+        result = builder._extract_offline_rule(rule, ESP_ID_A)
+
+        assert result == []
+
+    # ------------------------------------------------------------------
+    # 5. Conditions stored as list (multi-condition rule)
+    # ------------------------------------------------------------------
+
+    def test_list_conditions_with_hysteresis_included(self):
+        """trigger_conditions as list containing a hysteresis entry → included."""
+        builder = self._builder()
+        rule = _make_rule(
+            rule_name="list_cond_rule",
+            trigger_conditions=[
+                {"type": "time_window", "start_hour": 6, "end_hour": 22},
+                _heating_condition(ESP_ID_A, gpio=7, sensor_type="ds18b20"),
+            ],
+            actions=[_actuator_action(ESP_ID_A, gpio=12)],
+        )
+
+        result = builder._extract_offline_rule(rule, ESP_ID_A)
+
+        assert len(result) == 1
+        r = result[0]
+        assert r["sensor_gpio"] == 7
+        assert r["actuator_gpio"] == 12
+
+    def test_time_window_only_rule_converted_to_offline_rule(self):
+        """Pure time_window + local actuator ON command becomes time-window offline rule."""
+        builder = self._builder()
+        rule = _make_rule(
+            rule_name="light_schedule_offline",
+            trigger_conditions={
+                "type": "time_window",
+                "start_hour": 6,
+                "start_minute": 0,
+                "end_hour": 18,
+                "end_minute": 0,
+                "timezone": "Europe/Berlin",
+            },
+            actions=[_actuator_action(ESP_ID_A, gpio=25, duration_seconds=7)],
+        )
+
+        result = builder._extract_offline_rule(rule, ESP_ID_A)
+
+        assert len(result) == 1
+        r = result[0]
+        assert r["actuator_gpio"] == 25
+        assert r["sensor_gpio"] == ConfigPayloadBuilder.TIME_WINDOW_ONLY_SENSOR_GPIO
+        assert r["sensor_value_type"] == ConfigPayloadBuilder.TIME_WINDOW_ONLY_SENSOR_TYPE_ON
+        assert r["time_filter"]["enabled"] is True
+        assert r["time_filter"]["start_hour"] == 6
+        assert r["time_filter"]["end_hour"] == 18
+        assert r["max_on_seconds"] == 7
+
+    def test_time_window_only_rule_uses_legacy_duration_alias(self):
+        """Legacy action field `duration` is mapped to max_on_seconds in offline rule."""
+        builder = self._builder()
+        rule = _make_rule(
+            rule_name="irrigation_schedule_legacy_duration",
+            trigger_conditions={
+                "type": "time_window",
+                "start_hour": 13,
+                "start_minute": 0,
+                "end_hour": 13,
+                "end_minute": 1,
+                "timezone": "Europe/Berlin",
+            },
+            actions=[
+                {
+                    "type": "actuator_command",
+                    "esp_id": ESP_ID_A,
+                    "gpio": 15,
+                    "command": "ON",
+                    "value": 1.0,
+                    "duration": 5,
+                }
+            ],
+        )
+
+        result = builder._extract_offline_rule(rule, ESP_ID_A)
+
+        assert len(result) == 1
+        r = result[0]
+        assert r["sensor_value_type"] == ConfigPayloadBuilder.TIME_WINDOW_ONLY_SENSOR_TYPE_ON
+        assert r["max_on_seconds"] == 5
+
+    def test_time_window_only_rule_without_on_action_is_skipped(self):
+        """time_window-only with OFF action is skipped to avoid ambiguous inverse behavior."""
+        builder = self._builder()
+        rule = _make_rule(
+            rule_name="night_off_only",
+            trigger_conditions={
+                "type": "time_window",
+                "start_hour": 22,
+                "start_minute": 0,
+                "end_hour": 6,
+                "end_minute": 0,
+                "timezone": "UTC",
+            },
+            actions=[
+                {
+                    "type": "actuator_command",
+                    "esp_id": ESP_ID_A,
+                    "gpio": 25,
+                    "command": "OFF",
+                    "value": 0.0,
+                    "duration_seconds": 0,
+                }
+            ],
+        )
+
+        result = builder._extract_offline_rule(rule, ESP_ID_A)
+
+        assert result == []
+
+    # ------------------------------------------------------------------
+    # 6. Hysteresis condition without valid threshold pair → excluded
+    # ------------------------------------------------------------------
+
+    def test_incomplete_thresholds_excluded(self):
+        """Hysteresis condition with only activate_below (no deactivate_above) → None."""
+        builder = self._builder()
+        incomplete_cond = {
+            "type": "hysteresis",
+            "esp_id": ESP_ID_A,
+            "gpio": 4,
+            "sensor_type": "ds18b20",
+            "activate_below": 18.0,
+            # deactivate_above intentionally missing
+        }
+        rule = _make_rule(
+            rule_name="incomplete_rule",
+            trigger_conditions=incomplete_cond,
+            actions=[_actuator_action(ESP_ID_A)],
+        )
+
+        result = builder._extract_offline_rule(rule, ESP_ID_A)
+
+        assert result == []
+
+    # ------------------------------------------------------------------
+    # 7. sensor_value_type field name (NOT sensor_type in output)
+    # ------------------------------------------------------------------
+
+    def test_output_field_name_is_sensor_value_type(self):
+        """Result dict must use 'sensor_value_type', not 'sensor_type'."""
+        builder = self._builder()
+        rule = _make_rule(
+            rule_name="field_name_rule",
+            trigger_conditions=_cooling_condition(ESP_ID_A, sensor_type="sht31_humidity"),
+            actions=[_actuator_action(ESP_ID_A)],
+        )
+
+        result = builder._extract_offline_rule(rule, ESP_ID_A)
+
+        assert len(result) == 1
+        r = result[0]
+        assert "sensor_value_type" in r, "Field must be named 'sensor_value_type'"
+        assert "sensor_type" not in r, "Field must NOT be named 'sensor_type'"
+        assert r["sensor_value_type"] == "sht31_humidity"
+
+    # ------------------------------------------------------------------
+    # 8. actions not a list → excluded
+    # ------------------------------------------------------------------
+
+    def test_actions_not_list_excluded(self):
+        """If actions field is not a list, rule is skipped gracefully."""
+        builder = self._builder()
+        rule = _make_rule(
+            rule_name="bad_actions_rule",
+            trigger_conditions=_heating_condition(ESP_ID_A),
+            actions=None,  # type: ignore[arg-type]
+        )
+
+        result = builder._extract_offline_rule(rule, ESP_ID_A)
+
+        assert result == []
+
+    # ------------------------------------------------------------------
+    # 9. Calibration-required sensor types → skipped (SAFETY-P4-GUARD)
+    # ------------------------------------------------------------------
+
+    def test_offline_rule_skips_ph_sensor(self):
+        """Rule with pH sensor → skipped (ADC raw value, no calibration on ESP)."""
+        builder = self._builder()
+        rule = _make_rule(
+            rule_name="ph_dosing_rule",
+            trigger_conditions=_heating_condition(ESP_ID_A, gpio=34, sensor_type="ph"),
+            actions=[_actuator_action(ESP_ID_A, gpio=25)],
+        )
+
+        result = builder._extract_offline_rule(rule, ESP_ID_A)
+
+        assert result == []
+
+    def test_offline_rule_skips_ec_sensor(self):
+        """Rule with EC sensor → skipped (ADC raw value, no calibration on ESP)."""
+        builder = self._builder()
+        rule = _make_rule(
+            rule_name="ec_dosing_rule",
+            trigger_conditions=_heating_condition(ESP_ID_A, gpio=35, sensor_type="ec"),
+            actions=[_actuator_action(ESP_ID_A, gpio=26)],
+        )
+
+        result = builder._extract_offline_rule(rule, ESP_ID_A)
+
+        assert result == []
+
+    def test_offline_rule_allows_sht31_sensor(self):
+        """Rule with sht31_humidity sensor → included (digital sensor, real physical values)."""
+        builder = self._builder()
+        rule = _make_rule(
+            rule_name="humidity_rule",
+            trigger_conditions=_cooling_condition(ESP_ID_A, gpio=21, sensor_type="sht31_humidity"),
+            actions=[_actuator_action(ESP_ID_A, gpio=27)],
+        )
+
+        result = builder._extract_offline_rule(rule, ESP_ID_A)
+
+        assert len(result) == 1
+        assert result[0]["sensor_value_type"] == "sht31_humidity"
+
+    def test_offline_rule_skips_soil_moisture_alias(self):
+        """Rule with soil_moisture alias → skipped (normalizes to moisture, calibration required)."""
+        builder = self._builder()
+        rule = _make_rule(
+            rule_name="irrigation_rule",
+            trigger_conditions=_heating_condition(ESP_ID_A, gpio=32, sensor_type="soil_moisture"),
+            actions=[_actuator_action(ESP_ID_A, gpio=28)],
+        )
+
+        result = builder._extract_offline_rule(rule, ESP_ID_A)
+
+        assert result == []
+
+    def test_offline_rule_skips_ph_sensor_alias(self):
+        """Rule with ph_sensor alias → skipped (normalizes to ph, calibration required)."""
+        builder = self._builder()
+        rule = _make_rule(
+            rule_name="ph_dosing_alias_rule",
+            trigger_conditions=_heating_condition(ESP_ID_A, gpio=33, sensor_type="ph_sensor"),
+            actions=[_actuator_action(ESP_ID_A, gpio=29)],
+        )
+
+        result = builder._extract_offline_rule(rule, ESP_ID_A)
+
+        assert result == []
+
+    def test_normalized_type_in_returned_dict(self):
+        """After normalization, sensor_value_type in result uses canonical form."""
+        builder = self._builder()
+        # "temperature_sht31" is an alias → normalizes to "sht31_temp"
+        rule = _make_rule(
+            rule_name="temp_alias_rule",
+            trigger_conditions=_heating_condition(
+                ESP_ID_A, gpio=4, sensor_type="temperature_sht31"
+            ),
+            actions=[_actuator_action(ESP_ID_A, gpio=18)],
+        )
+
+        result = builder._extract_offline_rule(rule, ESP_ID_A)
+
+        assert len(result) == 1
+        assert result[0]["sensor_value_type"] == "sht31_temp"
+
+    # ------------------------------------------------------------------
+    # AUT-664: Multi-actuator rule → one offline_rule entry per actuator
+    # ------------------------------------------------------------------
+
+    def test_multi_actuator_rule_produces_one_entry_per_actuator(self):
+        """Rule with 2 local actuator actions → 2 offline_rule entries (AUT-664 fix)."""
+        builder = self._builder()
+        rule = _make_rule(
+            rule_name="timmsregen",
+            trigger_conditions=_cooling_condition(
+                ESP_ID_A, gpio=5, sensor_type="sht31_humidity"
+            ),
+            actions=[
+                _actuator_action(ESP_ID_A, gpio=25, duration_seconds=8),
+                _actuator_action(ESP_ID_A, gpio=14, duration_seconds=8),
+            ],
+        )
+
+        result = builder._extract_offline_rule(rule, ESP_ID_A)
+
+        assert len(result) == 2
+        gpios = {r["actuator_gpio"] for r in result}
+        assert gpios == {25, 14}
+        for r in result:
+            assert r["sensor_gpio"] == 5
+            assert r["sensor_value_type"] == "sht31_humidity"
+            assert r["max_on_seconds"] == 8
+            assert r["activate_above"] == 28.0
+            assert r["deactivate_below"] == 24.0
+
+
+    # ------------------------------------------------------------------
+    # AUT-739: OR-compound DNF-flattening
+    # ------------------------------------------------------------------
+
+    def test_or_compound_two_hysteresis_conditions_flattened(self):
+        """OR compound with 2 hysteresis conditions → 2 offline rules (DNF, AUT-739)."""
+        builder = self._builder()
+        rule = _make_rule(
+            rule_name="moisture_or_rule",
+            trigger_conditions=[
+                {
+                    "type": "hysteresis",
+                    "esp_id": ESP_ID_A,
+                    "gpio": 33,
+                    "sensor_type": "sht31_humidity",
+                    "activate_below": 50.0,
+                    "deactivate_above": 60.0,
+                },
+                {
+                    "type": "hysteresis",
+                    "esp_id": ESP_ID_A,
+                    "gpio": 32,
+                    "sensor_type": "sht31_humidity",
+                    "activate_below": 30.0,
+                    "deactivate_above": 40.0,
+                },
+            ],
+            actions=[_actuator_action(ESP_ID_A, gpio=25)],
+        )
+        rule.logic_operator = "OR"
+
+        result = builder._extract_offline_rule(rule, ESP_ID_A)
+
+        assert len(result) == 2, "OR compound with 2 branches must produce 2 offline rules"
+        gpios = {r["sensor_gpio"] for r in result}
+        assert gpios == {33, 32}
+        for r in result:
+            assert r["actuator_gpio"] == 25
+            assert r["sensor_value_type"] == "sht31_humidity"
+            assert r["activate_below"] > 0.0
+            assert r["deactivate_above"] > 0.0
+            assert r["activate_above"] == 0.0   # heating mode — cooling fields zero
+            assert r["deactivate_below"] == 0.0
+
+    def test_or_compound_threshold_conditions_flattened(self):
+        """OR compound with sensor_threshold conditions → 2 offline rules with synthetic deadband."""
+        builder = self._builder()
+        rule = _make_rule(
+            rule_name="temp_or_threshold_rule",
+            trigger_conditions=[
+                {
+                    "type": "sensor_threshold",
+                    "esp_id": ESP_ID_A,
+                    "gpio": 4,
+                    "sensor_type": "ds18b20",
+                    "operator": "<",
+                    "value": 18.0,
+                },
+                {
+                    "type": "sensor_threshold",
+                    "esp_id": ESP_ID_A,
+                    "gpio": 7,
+                    "sensor_type": "ds18b20",
+                    "operator": "<",
+                    "value": 15.0,
+                },
+            ],
+            actions=[_actuator_action(ESP_ID_A, gpio=18)],
+        )
+        rule.logic_operator = "OR"
+
+        result = builder._extract_offline_rule(rule, ESP_ID_A)
+
+        assert len(result) == 2
+        sensor_gpios = {r["sensor_gpio"] for r in result}
+        assert sensor_gpios == {4, 7}
+        for r in result:
+            assert r["actuator_gpio"] == 18
+            assert r["activate_below"] > 0.0     # heating threshold set
+            assert r["deactivate_above"] > 0.0   # deadband added
+            assert r["activate_above"] == 0.0
+            assert r["deactivate_below"] == 0.0
+
+    def test_or_compound_calibration_required_branch_skipped(self):
+        """OR compound where one branch uses a calibration-required sensor → that branch skipped."""
+        builder = self._builder()
+        rule = _make_rule(
+            rule_name="ph_or_temp_rule",
+            trigger_conditions=[
+                {
+                    "type": "hysteresis",
+                    "esp_id": ESP_ID_A,
+                    "gpio": 34,
+                    "sensor_type": "ph",        # calibration-required → branch skipped
+                    "activate_below": 6.0,
+                    "deactivate_above": 7.0,
+                },
+                {
+                    "type": "hysteresis",
+                    "esp_id": ESP_ID_A,
+                    "gpio": 4,
+                    "sensor_type": "ds18b20",   # valid
+                    "activate_below": 18.0,
+                    "deactivate_above": 22.0,
+                },
+            ],
+            actions=[_actuator_action(ESP_ID_A, gpio=25)],
+        )
+        rule.logic_operator = "OR"
+
+        result = builder._extract_offline_rule(rule, ESP_ID_A)
+
+        assert len(result) == 1, "Only the valid branch should produce an offline rule"
+        assert result[0]["sensor_gpio"] == 4
+        assert result[0]["sensor_value_type"] == "ds18b20"
+
+    def test_or_compound_all_branches_invalid_returns_empty_with_skip_entry(self):
+        """OR compound where all branches are calibration-required → empty list + skip entry."""
+        builder = self._builder()
+        skip_collector: list = []
+        rule = _make_rule(
+            rule_name="ph_or_ec_rule",
+            trigger_conditions=[
+                {
+                    "type": "hysteresis",
+                    "esp_id": ESP_ID_A,
+                    "gpio": 34,
+                    "sensor_type": "ph",
+                    "activate_below": 6.0,
+                    "deactivate_above": 7.0,
+                },
+                {
+                    "type": "hysteresis",
+                    "esp_id": ESP_ID_A,
+                    "gpio": 35,
+                    "sensor_type": "ec",
+                    "activate_below": 1.0,
+                    "deactivate_above": 2.0,
+                },
+            ],
+            actions=[_actuator_action(ESP_ID_A, gpio=25)],
+        )
+        rule.logic_operator = "OR"
+
+        result = builder._extract_offline_rule(rule, ESP_ID_A, skip_collector=skip_collector)
+
+        assert result == []
+        assert len(skip_collector) == 1
+        assert skip_collector[0]["reason_code"] == ConfigPayloadBuilder.REASON_UNSUPPORTED_CONDITION
+
+    def test_and_compound_single_hysteresis_still_works(self):
+        """AND-compound with single hysteresis condition (and no OR) still produces one rule."""
+        builder = self._builder()
+        rule = _make_rule(
+            rule_name="and_single_rule",
+            trigger_conditions=_heating_condition(ESP_ID_A, gpio=4),
+            actions=[_actuator_action(ESP_ID_A, gpio=18)],
+        )
+        rule.logic_operator = "AND"
+
+        result = builder._extract_offline_rule(rule, ESP_ID_A)
+
+        assert len(result) == 1
+        assert result[0]["sensor_gpio"] == 4
+        assert result[0]["actuator_gpio"] == 18
+
+    def test_or_compound_multi_actuator_produces_n_times_m_rules(self):
+        """OR compound with 2 conditions × 2 actuators → 4 offline rules (N×M)."""
+        builder = self._builder()
+        rule = _make_rule(
+            rule_name="or_multi_act_rule",
+            trigger_conditions=[
+                _heating_condition(ESP_ID_A, gpio=33, sensor_type="sht31_humidity"),
+                _heating_condition(ESP_ID_A, gpio=32, sensor_type="sht31_humidity"),
+            ],
+            actions=[
+                _actuator_action(ESP_ID_A, gpio=25, duration_seconds=120),
+                _actuator_action(ESP_ID_A, gpio=26, duration_seconds=120),
+            ],
+        )
+        rule.logic_operator = "OR"
+
+        result = builder._extract_offline_rule(rule, ESP_ID_A)
+
+        assert len(result) == 4, "2 OR branches × 2 actuators = 4 offline rules"
+        actuator_gpios = [r["actuator_gpio"] for r in result]
+        assert actuator_gpios.count(25) == 2
+        assert actuator_gpios.count(26) == 2
+
+
+class TestBuildOfflineRulesAsync:
+    """Async integration-style tests for _build_offline_rules."""
+
+    def _builder(self) -> ConfigPayloadBuilder:
+        return ConfigPayloadBuilder()
+
+    # ------------------------------------------------------------------
+    # 9. No matching rules → offline_rules is empty list
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_no_matching_rules_returns_empty_list(self):
+        """ESP with only non-convertible rules → offline_rules == [].
+
+        Uses a pH sensor_threshold rule which is blocked by the P4-GUARD
+        (ADC raw value only on ESP32, no calibration data available).
+        """
+        builder = self._builder()
+        mock_logic_repo = AsyncMock()
+        # pH sensor is in CALIBRATION_REQUIRED_SENSOR_TYPES — P4-GUARD blocks it
+        non_hysteresis_rule = _make_rule(
+            rule_name="ph_threshold_rule",
+            trigger_conditions={
+                "type": "sensor_threshold",
+                "esp_id": ESP_ID_A,
+                "gpio": 34,
+                "sensor_type": "ph",
+                "operator": ">",
+                "value": 7.5,
+            },
+            actions=[_actuator_action(ESP_ID_A)],
+        )
+        mock_logic_repo.get_enabled_rules = AsyncMock(return_value=[non_hysteresis_rule])
+        builder.logic_repo = mock_logic_repo
+
+        esp = _make_esp(ESP_ID_A)
+        mock_db = MagicMock()
+
+        result = await builder._build_offline_rules(mock_db, esp)
+
+        assert result == []
+
+    # ------------------------------------------------------------------
+    # 10. One matching local rule → single entry
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_single_local_rule_included(self):
+        """One enabled local heating rule → exactly one entry in result."""
+        builder = self._builder()
+        mock_logic_repo = AsyncMock()
+        rule = _make_rule(
+            rule_name="local_heat",
+            trigger_conditions=_heating_condition(ESP_ID_A, gpio=4),
+            actions=[_actuator_action(ESP_ID_A, gpio=18)],
+        )
+        mock_logic_repo.get_enabled_rules = AsyncMock(return_value=[rule])
+        builder.logic_repo = mock_logic_repo
+
+        esp = _make_esp(ESP_ID_A)
+        mock_db = MagicMock()
+
+        result = await builder._build_offline_rules(mock_db, esp)
+
+        assert len(result) == 1
+        assert result[0]["sensor_gpio"] == 4
+        assert result[0]["actuator_gpio"] == 18
+
+    # ------------------------------------------------------------------
+    # 11. Cross-ESP rule mixed with local rule → only local included
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_cross_esp_rule_filtered_out(self):
+        """Cross-ESP rule is excluded; local rule is still included."""
+        builder = self._builder()
+        mock_logic_repo = AsyncMock()
+
+        local_rule = _make_rule(
+            rule_name="local_cool",
+            trigger_conditions=_cooling_condition(ESP_ID_A, gpio=4),
+            actions=[_actuator_action(ESP_ID_A, gpio=22)],
+        )
+        cross_rule = _make_rule(
+            rule_name="cross_rule",
+            trigger_conditions=_heating_condition(ESP_ID_A, gpio=7),
+            actions=[_actuator_action(ESP_ID_B, gpio=5)],  # actuator on different ESP
+        )
+        mock_logic_repo.get_enabled_rules = AsyncMock(return_value=[local_rule, cross_rule])
+        builder.logic_repo = mock_logic_repo
+
+        esp = _make_esp(ESP_ID_A)
+        mock_db = MagicMock()
+
+        result = await builder._build_offline_rules(mock_db, esp)
+
+        assert len(result) == 1
+        assert result[0]["actuator_gpio"] == 22
+
+    # ------------------------------------------------------------------
+    # 12. More than MAX_OFFLINE_RULES rules → truncated to MAX_OFFLINE_RULES
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_truncation_at_max_limit(self):
+        """10 matching rules → truncated to MAX_OFFLINE_RULES (8) with warning logged."""
+        builder = self._builder()
+        mock_logic_repo = AsyncMock()
+
+        rules = [
+            _make_rule(
+                rule_name=f"rule_{i}",
+                trigger_conditions=_heating_condition(ESP_ID_A, gpio=i + 10),
+                actions=[_actuator_action(ESP_ID_A, gpio=i + 20)],
+            )
+            for i in range(10)  # 10 rules > MAX_OFFLINE_RULES (8)
+        ]
+        mock_logic_repo.get_enabled_rules = AsyncMock(return_value=rules)
+        builder.logic_repo = mock_logic_repo
+
+        esp = _make_esp(ESP_ID_A)
+        mock_db = MagicMock()
+
+        with patch.object(builder.__class__._build_offline_rules, "__wrapped__", None, create=True):
+            result = await builder._build_offline_rules(mock_db, esp)
+
+        assert len(result) == ConfigPayloadBuilder.MAX_OFFLINE_RULES
+
+    # ------------------------------------------------------------------
+    # 13. Logic repo raises exception → graceful fallback to []
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_logic_repo_failure_returns_empty_list(self):
+        """If get_enabled_rules raises, _build_offline_rules returns [] without propagating."""
+        builder = self._builder()
+        mock_logic_repo = AsyncMock()
+        mock_logic_repo.get_enabled_rules = AsyncMock(side_effect=Exception("DB connection lost"))
+        builder.logic_repo = mock_logic_repo
+
+        esp = _make_esp(ESP_ID_A)
+        mock_db = MagicMock()
+
+        result = await builder._build_offline_rules(mock_db, esp)
+
+        assert result == [], "Should return empty list on DB failure, not propagate exception"
+
+
+class TestValidateOfflineRulesConsistency:
+    """AUT-59: Tests for _validate_offline_rules_consistency."""
+
+    def _builder(self) -> ConfigPayloadBuilder:
+        return ConfigPayloadBuilder()
+
+    def test_consistent_rules_pass_through(self):
+        """Rules whose GPIOs exist in the config frame are kept."""
+        builder = self._builder()
+        sensor_payloads = [{"gpio": 4, "sensor_type": "ds18b20"}]
+        actuator_payloads = [{"gpio": 18, "actuator_type": "relay"}]
+        offline_rules = [
+            {
+                "actuator_gpio": 18,
+                "sensor_gpio": 4,
+                "sensor_value_type": "ds18b20",
+                "activate_below": 18.0,
+                "deactivate_above": 22.0,
+                "activate_above": 0.0,
+                "deactivate_below": 0.0,
+            }
+        ]
+
+        result = builder._validate_offline_rules_consistency(
+            offline_rules, sensor_payloads, actuator_payloads, ESP_ID_A
+        )
+
+        assert len(result) == 1
+        assert result[0]["actuator_gpio"] == 18
+
+    def test_missing_actuator_gpio_strips_rule(self):
+        """Rule referencing actuator_gpio absent from actuator payloads is removed."""
+        builder = self._builder()
+        sensor_payloads = [{"gpio": 4, "sensor_type": "ds18b20"}]
+        actuator_payloads = [{"gpio": 22, "actuator_type": "relay"}]
+        offline_rules = [
+            {
+                "actuator_gpio": 18,
+                "sensor_gpio": 4,
+                "sensor_value_type": "ds18b20",
+                "activate_below": 18.0,
+                "deactivate_above": 22.0,
+                "activate_above": 0.0,
+                "deactivate_below": 0.0,
+            }
+        ]
+
+        result = builder._validate_offline_rules_consistency(
+            offline_rules, sensor_payloads, actuator_payloads, ESP_ID_A
+        )
+
+        assert len(result) == 0
+
+    def test_missing_sensor_gpio_strips_rule(self):
+        """Rule referencing sensor_gpio absent from sensor payloads is removed."""
+        builder = self._builder()
+        sensor_payloads = [{"gpio": 7, "sensor_type": "sht31_temp"}]
+        actuator_payloads = [{"gpio": 18, "actuator_type": "relay"}]
+        offline_rules = [
+            {
+                "actuator_gpio": 18,
+                "sensor_gpio": 4,
+                "sensor_value_type": "ds18b20",
+                "activate_below": 18.0,
+                "deactivate_above": 22.0,
+                "activate_above": 0.0,
+                "deactivate_below": 0.0,
+            }
+        ]
+
+        result = builder._validate_offline_rules_consistency(
+            offline_rules, sensor_payloads, actuator_payloads, ESP_ID_A
+        )
+
+        assert len(result) == 0
+
+    def test_empty_actuators_strips_all_rules(self):
+        """No actuators in config frame → all offline_rules stripped."""
+        builder = self._builder()
+        sensor_payloads = [{"gpio": 4, "sensor_type": "ds18b20"}]
+        actuator_payloads = []
+        offline_rules = [
+            {
+                "actuator_gpio": 18,
+                "sensor_gpio": 4,
+                "sensor_value_type": "ds18b20",
+                "activate_below": 18.0,
+                "deactivate_above": 22.0,
+                "activate_above": 0.0,
+                "deactivate_below": 0.0,
+            }
+        ]
+
+        result = builder._validate_offline_rules_consistency(
+            offline_rules, sensor_payloads, actuator_payloads, ESP_ID_A
+        )
+
+        assert len(result) == 0
+
+    def test_empty_offline_rules_returns_empty(self):
+        """No offline_rules → empty list returned directly."""
+        builder = self._builder()
+
+        result = builder._validate_offline_rules_consistency(
+            [], [{"gpio": 4}], [{"gpio": 18}], ESP_ID_A
+        )
+
+        assert result == []
+
+    def test_mixed_consistent_and_inconsistent(self):
+        """Only inconsistent rules are stripped, consistent ones kept."""
+        builder = self._builder()
+        sensor_payloads = [{"gpio": 4, "sensor_type": "ds18b20"}]
+        actuator_payloads = [{"gpio": 18, "actuator_type": "relay"}]
+        offline_rules = [
+            {
+                "actuator_gpio": 18,
+                "sensor_gpio": 4,
+                "sensor_value_type": "ds18b20",
+                "activate_below": 18.0,
+                "deactivate_above": 22.0,
+                "activate_above": 0.0,
+                "deactivate_below": 0.0,
+            },
+            {
+                "actuator_gpio": 99,
+                "sensor_gpio": 4,
+                "sensor_value_type": "ds18b20",
+                "activate_below": 20.0,
+                "deactivate_above": 25.0,
+                "activate_above": 0.0,
+                "deactivate_below": 0.0,
+            },
+        ]
+
+        result = builder._validate_offline_rules_consistency(
+            offline_rules, sensor_payloads, actuator_payloads, ESP_ID_A
+        )
+
+        assert len(result) == 1
+        assert result[0]["actuator_gpio"] == 18
+
+    def test_time_window_only_rule_ignores_sensor_gpio_membership(self):
+        """time-window-only rule with synthetic sensor_gpio=255 must not be stripped."""
+        builder = self._builder()
+        sensor_payloads = [{"gpio": 4, "sensor_type": "sht31_temp"}]
+        actuator_payloads = [{"gpio": 25, "actuator_type": "relay"}]
+        offline_rules = [
+            {
+                "actuator_gpio": 25,
+                "sensor_gpio": ConfigPayloadBuilder.TIME_WINDOW_ONLY_SENSOR_GPIO,
+                "sensor_value_type": ConfigPayloadBuilder.TIME_WINDOW_ONLY_SENSOR_TYPE_ON,
+                "activate_below": 0.0,
+                "deactivate_above": 0.0,
+                "activate_above": 1.0,
+                "deactivate_below": 0.0,
+                "time_filter": {
+                    "enabled": True,
+                    "start_hour": 6,
+                    "start_minute": 0,
+                    "end_hour": 18,
+                    "end_minute": 0,
+                    "days_of_week_mask": 0x7F,
+                    "timezone": "Europe/Berlin",
+                },
+            }
+        ]
+
+        result = builder._validate_offline_rules_consistency(
+            offline_rules, sensor_payloads, actuator_payloads, ESP_ID_A
+        )
+
+        assert len(result) == 1
+        assert result[0]["sensor_gpio"] == ConfigPayloadBuilder.TIME_WINDOW_ONLY_SENSOR_GPIO

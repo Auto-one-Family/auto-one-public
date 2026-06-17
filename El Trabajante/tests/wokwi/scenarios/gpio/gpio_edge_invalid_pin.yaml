@@ -1,0 +1,62 @@
+# GPIO-EDGE-005: Invalid Pin Number Handling
+# ===========================================
+# Validates that getPinInfo() and other methods handle
+# invalid/out-of-range GPIO numbers gracefully.
+#
+# Test ID: GPIO-EDGE-005
+# Priority: LOW
+# Requirement: getPinInfo(255) returns empty/invalid GPIOPinInfo
+#
+# Invalid Pin Scenarios:
+#   - GPIO 255 (way out of range)
+#   - GPIO 40+ (ESP32 max is 39)
+#   - GPIO in reserved range but not safe
+#
+# GPIOPinInfo for invalid pin:
+#   - pin: 255 (invalid marker)
+#   - owner[0]: '\0' (empty)
+#   - component_name[0]: '\0' (empty)
+#
+# MQTT-Injection (extern via CI):
+#   Test 1 - GPIO 255 (out of range):
+#     mosquitto_pub -h localhost -t "kaiser/god/esp/ESP_00000001/config" \
+#       -m '{"sensors":[{"gpio":255,"sensor_type":"analog","sensor_name":"InvalidGPIO","active":true}]}'
+#   Test 2 - GPIO 50 (beyond ESP32 range, after ~500ms):
+#     mosquitto_pub -h localhost -t "kaiser/god/esp/ESP_00000001/config" \
+#       -m '{"sensors":[{"gpio":50,"sensor_type":"analog","sensor_name":"OutOfRangeGPIO","active":true}]}'
+#   Test 3 - GPIO 6 (Flash pin, after ~500ms):
+#     mosquitto_pub -h localhost -t "kaiser/god/esp/ESP_00000001/config" \
+#       -m '{"sensors":[{"gpio":6,"sensor_type":"analog","sensor_name":"FlashGPIO","active":true}]}'
+#
+# Firmware reference: gpio_manager.cpp lines 304-312 (getPinInfo empty return)
+
+name: Invalid GPIO Pin Number Handling
+version: 1
+steps:
+  # Wait for boot to complete
+  - wait-serial: "Phase 1: Core Infrastructure READY"
+
+  # Wait for MQTT connection
+  - wait-serial: "MQTT connected successfully"
+
+  # External MQTT injection: Test 1 - sensor on GPIO 255 (CI helper script)
+
+  # Verify pin is rejected (not in safe pins list)
+  - wait-serial: "not in safe pins"
+
+  # Wait before next test
+  - delay: 500ms
+
+  # External MQTT injection: Test 2 - sensor on GPIO 50 (CI helper script)
+
+  # Verify pin is rejected
+  - wait-serial: "not in safe pins"
+
+  # Wait before next test
+  - delay: 500ms
+
+  # External MQTT injection: Test 3 - sensor on GPIO 6 (Flash) (CI helper script)
+
+  # Verify Flash pin is rejected (reserved OR not in safe list)
+  # GPIO 6-11 are internal flash pins, completely blocked
+  - wait-serial: "reserved"

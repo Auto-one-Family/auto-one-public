@@ -1,0 +1,26 @@
+# I2C Device Present Check Test
+# Test-ID: I2C-SCAN-004
+# Validates: isDevicePresent() returns true for connected device
+# Expected: Device at 0x44 is detected as present
+# Timeout: 90000ms
+# Diagram: diagrams/diagram_i2c.json (with SHT31 at 0x44)
+
+name: I2C Device Present Check (I2C-SCAN-004)
+version: 1
+steps:
+  # I2C Bus Manager initializes
+  - wait-serial: "I2C Bus Manager initialized successfully"
+
+  # When SHT31 sensor driver initializes, it checks device presence
+  # The sensor factory calls isDevicePresent() before creating driver
+
+  # Phase 4: Sensor System initializes
+  - wait-serial: "Phase 4: Sensor System"
+
+  # Sensor driver should successfully initialize (device present)
+  # No "device not found" error for 0x44
+  - wait-serial: "Phase 4: Sensor System READY"
+
+# NOTE: Explicit isDevicePresent() test requires:
+# 1. I2C sensor in diagram_i2c.json
+# 2. Sensor config that triggers I2C driver creation

@@ -1,0 +1,21 @@
+# Broadcast Emergency Stop Test
+# Validates broadcast emergency stop mechanism
+# Requires MQTT injection to kaiser/broadcast/emergency
+# Timeout: 90000ms
+
+name: Broadcast Emergency Stop Test
+version: 1
+steps:
+  # Wait for MQTT connection
+  - wait-serial: "MQTT connected successfully"
+
+  # Registration gate: opens on server confirmation or 10s timeout fallback
+  - wait-serial: "REGISTRATION"
+
+  # Wait for heartbeat (system operational)
+  - wait-serial: "heartbeat"
+
+  # After broadcast emergency injection:
+  # Topic: kaiser/broadcast/emergency
+  # Payload: {"auth_token":"master_token"}
+  - wait-serial: "BROADCAST EMERGENCY-STOP RECEIVED"

@@ -1,0 +1,53 @@
+# DHT22 Combined Temperature + Humidity Change Test
+# Validates simultaneous temperature and humidity changes via set-control
+# Tests: Both controls change at the same time, firmware handles correctly
+# DHT22 connected to GPIO 15 in diagram.json
+# Timeout: 90000ms
+
+name: DHT22 Combined Change Test
+version: 1
+steps:
+  # Boot and connect
+  - wait-serial: "MQTT connected successfully"
+
+  # Registration gate
+  - wait-serial: "REGISTRATION"
+
+  # Wait for first measurement cycle
+  - wait-serial: "Published"
+
+  # --- Combined: Warm + Humid (35C, 80%) ---
+  - set-control:
+      part-id: "dht22"
+      control: "temperature"
+      value: "35"
+  - set-control:
+      part-id: "dht22"
+      control: "humidity"
+      value: "80"
+  - delay: 8000ms
+  - wait-serial: "Published"
+
+  # --- Combined: Cold + Dry (5C, 20%) ---
+  - set-control:
+      part-id: "dht22"
+      control: "temperature"
+      value: "5"
+  - set-control:
+      part-id: "dht22"
+      control: "humidity"
+      value: "20"
+  - delay: 8000ms
+  - wait-serial: "Published"
+
+  # --- Combined: Hot + Very Humid (45C, 95%) ---
+  - set-control:
+      part-id: "dht22"
+      control: "temperature"
+      value: "45"
+  - set-control:
+      part-id: "dht22"
+      control: "humidity"
+      value: "95"
+  - delay: 8000ms
+  - wait-serial: "Published"

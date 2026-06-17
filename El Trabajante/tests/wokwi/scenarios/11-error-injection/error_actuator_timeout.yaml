@@ -1,0 +1,25 @@
+# Error-Injection: Actuator Timeout
+# Configures an actuator on GPIO 5 (LED green in diagram.json), sends ON command.
+# The actuator's default max_runtime_ms (3600s) means timeout won't happen quickly,
+# but this validates the actuator command path through MQTT.
+# Expected: Actuator activation confirmed via serial output.
+# Timeout: 90000ms
+#
+# MQTT-Injection (extern via CI, 2 messages):
+#   mosquitto_pub -h localhost -t "kaiser/god/esp/ESP_00000001/config" \
+#     -m '{"sensors":[],"actuators":[{"gpio":5,"actuator_type":"led","actuator_name":"TestLED","active":true}]}'
+#   sleep 3
+#   mosquitto_pub -h localhost -t "kaiser/god/esp/ESP_00000001/actuator/5/command" \
+#     -m '{"command":"ON","value":1.0}'
+
+name: Error Injection - Actuator Timeout
+version: 1
+steps:
+  - wait-serial: "Phase 5: Actuator System READY"
+  - wait-serial: "MQTT connected successfully"
+  - wait-serial: "REGISTRATION"
+  - wait-serial: "heartbeat"
+  # External MQTT config injection happens here (sleep 25 in CI)
+  - wait-serial: "ConfigResponse published"
+  # External actuator ON command injected via mosquitto_pub
+  - wait-serial: "Actuator"
