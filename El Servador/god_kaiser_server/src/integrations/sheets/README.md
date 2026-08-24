@@ -112,7 +112,7 @@ das Paket fehlt, gibt es einen klaren `SheetsAuthError` mit Code
 ## Verifikation
 
 ```bash
-cd "/home/robin/autoone/El Servador/god_kaiser_server"
+cd "El Servador/god_kaiser_server"
 poetry run pytest tests/unit/integrations/test_sheets_auth.py -v
 poetry run ruff check src/integrations/sheets/ src/core/config.py
 ```
