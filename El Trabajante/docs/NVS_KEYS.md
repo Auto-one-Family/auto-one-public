@@ -43,7 +43,6 @@ cp El\ Trabajante/secrets/nvs_secrets.dev-local.csv.example El\ Trabajante/secre
 # Werte eintragen, dann:
 python El\ Trabajante/scripts/esp/flash_nvs.py --env dev-local --port COM3
 ```
-Pi-elbherb: Skript gibt manuelles `esptool`-Befehlsblock-Print statt autonomem Flash (STRICT-Risikostufe).
 
 #### Zone Configuration (Namespace: `zone_config`)
 

@@ -23,8 +23,8 @@ Die eigentliche Export-Pipeline (Scheduler, Tab-Rotation, Cursor) ist
 
 ## Provisionierung (Operator-Runbook)
 
-1. **Google Cloud Project** im `11grower`-Workspace anlegen oder
-   wiederverwenden (`gcloud projects create autoone-sheets` o. ae.).
+1. **Google Cloud Project** anlegen oder wiederverwenden
+   (`gcloud projects create autoone-sheets` o. ae.).
 2. **Sheets API + Drive API aktivieren** (UI: APIs & Services → Library).
 3. **Service-Account erstellen**:
    - Name: `autoone-sheets-exporter`
@@ -36,7 +36,7 @@ Die eigentliche Export-Pipeline (Scheduler, Tab-Rotation, Cursor) ist
    sudo install -m 0600 -o root -g root sheets_sa.json /secrets/sheets_sa.json
    ```
 
-5. **Spreadsheet im 11grower-Workspace** anlegen (Owner: Robin) und teilen:
+5. **Spreadsheet** anlegen und teilen:
    - `christoph@…` als **Editor**
    - `autoone-sheets-exporter@<projekt>.iam.gserviceaccount.com` als
      **Editor** (Mail steht im JSON-Feld `client_email`).
