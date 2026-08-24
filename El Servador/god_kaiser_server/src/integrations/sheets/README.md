@@ -1,6 +1,6 @@
 # Google Sheets Integration — Auth Bootstrap (S1)
 
-Stand: 2026-05-23 — Linear AUT-443 (Parent AUT-442).
+Stand: 2026-05-23.
 
 Dieses Modul kapselt das **Service-Account-basierte Auth-Setup** fuer den
 geplanten Sheets-Export. Es liefert ausschliesslich:
@@ -12,7 +12,7 @@ geplanten Sheets-Export. Es liefert ausschliesslich:
 Die eigentliche Export-Pipeline (Scheduler, Tab-Rotation, Cursor) ist
 **explizit nicht Teil von S1** und folgt in den Sub-Issues S2-S5.
 
-## Architektur-Entscheidungen (von Robin/TM fixiert)
+## Architektur-Entscheidungen
 
 | Frage | Entscheidung |
 |-------|-------------|
@@ -36,8 +36,7 @@ Die eigentliche Export-Pipeline (Scheduler, Tab-Rotation, Cursor) ist
    sudo install -m 0600 -o root -g root sheets_sa.json /secrets/sheets_sa.json
    ```
 
-5. **Spreadsheet** anlegen und teilen:
-   - `christoph@…` als **Editor**
+5. **Spreadsheet** anlegen und mit dem Service-Account teilen:
    - `autoone-sheets-exporter@<projekt>.iam.gserviceaccount.com` als
      **Editor** (Mail steht im JSON-Feld `client_email`).
 6. **Spreadsheet-ID** aus der URL extrahieren (Teil zwischen `/d/` und `/edit`).
