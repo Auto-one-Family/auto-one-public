@@ -1,0 +1,13 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "AutomationOne",
+      "Group": "Servers",
+      "Host": "postgres",
+      "Port": 5432,
+      "MaintenanceDB": "god_kaiser_db",
+      "Username": "god_kaiser",
+      "SSLMode": "prefer"
+    }
+  }
+}

@@ -1,0 +1,428 @@
+// =========================================================================
+// AutomationOne — Native Alloy Configuration
+// =========================================================================
+// Collects Docker container logs and ships them to Loki.
+// Migrated from Promtail YAML format (docker/promtail/config.yml.archive)
+// to native Alloy River format on 2026-02-24.
+//
+// Pipeline Overview:
+//   1. discovery.docker    — Find all auto-one Docker containers
+//   2. discovery.relabel   — Extract compose_service, container labels
+//   3. loki.source.docker  — Read container logs
+//   4. loki.process        — Per-service pipeline stages
+//   5. loki.write          — Push to Loki
+//
+// Label Strategy:
+//   Labels (indexed, for stream selection):
+//     - compose_service, container, stream, compose_project: from Docker SD
+//     - level: extracted by parser (all services, 5 values = low cardinality)
+//   Structured Metadata (stored, queryable via | filter):
+//     - logger:     el-servador (Python module path, e.g. "src.mqtt.handlers.sensor_handler")
+//     - request_id: el-servador (request correlation UUID)
+//     - component:  el-frontend, esp32-serial-logger (Vue/ESP component name)
+//     - device:     esp32-serial-logger (ESP32 device ID)
+//     - error_code: esp32-serial-logger (error taxonomy code, e.g. "3001")
+//   NOT indexed (remain in log text, queryable via |= filter):
+//     - function, line, module: from server logs
+//     - correlation_id: future (see auftrag-correlation-ids.md)
+// =========================================================================
+
+// ---------------------------------------------------------------------------
+// 1. Docker Container Discovery
+// ---------------------------------------------------------------------------
+discovery.docker "containers" {
+  host             = "unix:///var/run/docker.sock"
+  refresh_interval = "5s"
+
+  filter {
+    name   = "label"
+    values = ["com.docker.compose.project=auto-one"]
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 2. Label Extraction from Docker Metadata
+// ---------------------------------------------------------------------------
+discovery.relabel "containers" {
+  targets = discovery.docker.containers.targets
+
+  // Container name (strip leading /)
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+  }
+
+  // Log stream (stdout/stderr)
+  rule {
+    source_labels = ["__meta_docker_container_log_stream"]
+    target_label  = "stream"
+  }
+
+  // Compose service name — set as both 'service' and 'compose_service'
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "service"
+  }
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "compose_service"
+  }
+
+  // Compose project name
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
+    target_label  = "compose_project"
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 3. Docker Log Source
+// ---------------------------------------------------------------------------
+loki.source.docker "containers" {
+  host       = "unix:///var/run/docker.sock"
+  targets    = discovery.relabel.containers.output
+  forward_to = [loki.process.pipeline.receiver]
+}
+
+// ---------------------------------------------------------------------------
+// 4. Log Processing Pipeline
+// ---------------------------------------------------------------------------
+loki.process "pipeline" {
+  // Global: Parse Docker json-file log driver wrapper
+  // Docker wraps each log line in JSON: {"log":"...", "stream":"...", "time":"..."}
+  stage.docker {}
+
+  // ==========================================================================
+  // el-servador — Health drop, multiline, regex parser, structured metadata
+  // ==========================================================================
+  // Server outputs text-format logs to stdout:
+  //   Structured: "2026-02-09 23:10:47 - src.module.name - INFO - [-] - message"
+  //   Uvicorn:    "INFO:     172.18.0.3:59152 - "GET /path HTTP/1.1" 200 OK"
+  stage.match {
+    selector = "{compose_service=\"el-servador\"}"
+
+    // Drop health-check and metrics endpoint access logs (high frequency noise)
+    // Prometheus scrapes /health/metrics every 15s, Docker healthcheck /health/live every 30s
+    stage.drop {
+      expression          = ".*GET /api/v1/health/.* HTTP/.*"
+      drop_counter_reason = "health_check_noise"
+    }
+    stage.drop {
+      expression          = ".*Request completed: GET /api/v1/health/.*"
+      drop_counter_reason = "health_check_noise"
+    }
+
+    // Multiline aggregation for Python tracebacks
+    // New log entry starts with timestamp or log level prefix (uvicorn)
+    // Non-matching lines (traceback frames) are appended to previous entry
+    stage.multiline {
+      firstline     = "^\\d{4}-\\d{2}-\\d{2}|^(?:INFO|WARNING|ERROR|DEBUG|CRITICAL):"
+      max_wait_time = "3s"
+      max_lines     = 50
+    }
+
+    // Regex parser for structured server text-logs
+    // Format: "YYYY-MM-DD HH:MM:SS - logger.name - LEVEL - [request_id] - message"
+    // Uvicorn access logs won't match this regex — no fields extracted (acceptable)
+    stage.regex {
+      expression = "^\\d{4}-\\d{2}-\\d{2}\\s\\d{2}:\\d{2}:\\d{2}\\s-\\s(?P<logger>\\S+)\\s-\\s(?P<level>\\w+)\\s-\\s\\[(?P<request_id>[^\\]]*)\\]\\s-\\s(?P<message>.*)"
+    }
+
+    // Promote level to label (low cardinality: DEBUG/INFO/WARNING/ERROR/CRITICAL)
+    stage.labels {
+      values = {
+        "level" = "",
+      }
+    }
+
+    // Store logger and request_id as structured metadata
+    // logger: Python module path (medium cardinality, ~50 values)
+    // request_id: UUID per request (high cardinality)
+    stage.structured_metadata {
+      values = {
+        "logger"     = "",
+        "request_id" = "",
+      }
+    }
+  }
+
+  // ==========================================================================
+  // el-frontend — JSON parsing for Vue 3 dashboard logs
+  // ==========================================================================
+  // Frontend outputs JSON-structured logs via custom logger utility:
+  //   {"level": "info", "component": "SensorCard", "message": "...", "timestamp": "..."}
+  stage.match {
+    selector = "{compose_service=\"el-frontend\"}"
+
+    stage.json {
+      expressions = {
+        "level"     = "",
+        "component" = "",
+      }
+    }
+
+    // Normalize frontend lowercase levels (info, error, warn, debug)
+    // to uppercase for consistent cross-service queries
+    stage.template {
+      source   = "level"
+      template = "{{ if eq .level \"error\" }}ERROR{{ else if eq .level \"warn\" }}WARNING{{ else if eq .level \"warning\" }}WARNING{{ else if eq .level \"info\" }}INFO{{ else if eq .level \"debug\" }}DEBUG{{ else }}{{ .level }}{{ end }}"
+    }
+
+    // Promote level to label
+    stage.labels {
+      values = {
+        "level" = "",
+      }
+    }
+
+    // Store component as structured metadata
+    stage.structured_metadata {
+      values = {
+        "component" = "",
+      }
+    }
+  }
+
+  // ==========================================================================
+  // esp32-serial-logger — Parse ESP32 serial output (JSON + plain text)
+  // ==========================================================================
+  // Two possible formats:
+  //   1. JSON (from TCP serial bridge):
+  //      {"level": "info", "device_id": "esp32-xiao-01", "component": "mqtt", ...}
+  //   2. Plain text (from direct serial monitor / pio device monitor):
+  //      [12345] [INFO    ] [MQTT    ] Connected to broker [E:3001]
+  // JSON parsing runs first; regex fallback catches plain text lines.
+  stage.match {
+    selector = "{compose_service=\"esp32-serial-logger\"}"
+
+    // Attempt 1: JSON parsing (serial-logger may output structured JSON)
+    stage.json {
+      expressions = {
+        "level"      = "",
+        "device"     = "device_id",
+        "component"  = "",
+        "error_code" = "",
+      }
+    }
+
+    // Attempt 2: Regex fallback for ESP32 plain text serial output
+    // Format: [millis] [LEVEL   ] [TAG     ] message [E:code]
+    stage.regex {
+      expression = "\\[\\s*\\d+\\]\\s*\\[(?P<level>\\w+)\\s*\\]\\s*\\[(?P<component>\\w+)\\s*\\]\\s*(?P<message>.+?)(?:\\s*\\[E:(?P<error_code>\\d+)\\])?"
+    }
+
+    // Normalize ESP32 levels to standard level values
+    stage.template {
+      source   = "level"
+      template = "{{ if eq .level \"CRITICAL\" }}CRITICAL{{ else if eq .level \"WARNING\" }}WARNING{{ else if eq .level \"ERROR\" }}ERROR{{ else if eq .level \"INFO\" }}INFO{{ else if eq .level \"DEBUG\" }}DEBUG{{ else }}{{ .level }}{{ end }}"
+    }
+
+    // Promote level to label
+    stage.labels {
+      values = {
+        "level" = "",
+      }
+    }
+
+    // Store device, component, error_code as structured metadata
+    stage.structured_metadata {
+      values = {
+        "device"     = "",
+        "component"  = "",
+        "error_code" = "",
+      }
+    }
+  }
+
+  // ==========================================================================
+  // mqtt-broker — Drop healthcheck noise, extract level
+  // ==========================================================================
+  // Mosquitto logs Docker healthcheck connection/disconnection every 30s (~4320 lines/day)
+  stage.match {
+    selector = "{compose_service=\"mqtt-broker\"}"
+
+    // Drop Docker healthcheck connect/disconnect noise
+    stage.drop {
+      expression          = ".*healthcheck.*"
+      drop_counter_reason = "mqtt_healthcheck_noise"
+    }
+    stage.drop {
+      expression          = ".*New connection from 127\\.0\\.0\\.1.*"
+      drop_counter_reason = "mqtt_healthcheck_noise"
+    }
+    stage.drop {
+      expression          = ".*Client <unknown> disconnected.*"
+      drop_counter_reason = "mqtt_healthcheck_noise"
+    }
+    stage.drop {
+      expression          = ".*New client connected as healthcheck.*"
+      drop_counter_reason = "mqtt_healthcheck_noise"
+    }
+    stage.drop {
+      expression          = ".*Client healthcheck disconnected.*"
+      drop_counter_reason = "mqtt_healthcheck_noise"
+    }
+
+    // Extract level from Mosquitto log lines.
+    // Match only "Error:" / "Warning:" with colon suffix to avoid matching
+    // the word "error" embedded in normal disconnect messages like
+    // "disconnected: No error information."
+    stage.regex {
+      expression = "(?i)(?P<mqtt_level>Error|Warning):"
+    }
+
+    // Normalize to uppercase; default INFO for non-error/warning lines.
+    // source=mqtt_level: reads the regex capture, writes result back into mqtt_level.
+    stage.template {
+      source   = "mqtt_level"
+      template = "{{ if eq .mqtt_level \"error\" }}ERROR{{ else if eq .mqtt_level \"Error\" }}ERROR{{ else if eq .mqtt_level \"warning\" }}WARNING{{ else if eq .mqtt_level \"Warning\" }}WARNING{{ else }}INFO{{ end }}"
+    }
+
+    // Rename mqtt_level -> level for the label stage
+    stage.labels {
+      values = {
+        "level" = "mqtt_level",
+      }
+    }
+  }
+
+  // ==========================================================================
+  // mqtt-logger — MQTT traffic log, set INFO level, extract topic as metadata
+  // ==========================================================================
+  // mosquitto_sub -F "%I %t %p" produces lines like:
+  //   2026-06-04T10:00:00.000 kaiser/god/esp/ESP_XYZ/sensor/4/data {"value":25.3}
+  stage.match {
+    selector = "{compose_service=\"mqtt-logger\"}"
+
+    // Extract topic (second whitespace-delimited token)
+    stage.regex {
+      expression = "^\\S+\\s+(?P<mqtt_topic>\\S+)"
+    }
+
+    // All traffic log entries are informational — set static level=INFO
+    stage.template {
+      source   = "level"
+      template = "INFO"
+    }
+
+    stage.labels {
+      values = {
+        "level" = "",
+      }
+    }
+
+    // Store topic as structured metadata for filtering by topic in Loki
+    stage.structured_metadata {
+      values = {
+        "mqtt_topic" = "",
+      }
+    }
+  }
+
+  // ==========================================================================
+  // loki — Extract level, drop query-stats noise
+  // ==========================================================================
+  // Grafana polls Loki every 10s with error-monitoring queries (|~ "error|...").
+  // Loki logs these API calls as level=info with the full query text embedded.
+  // Alloy sends them back to Loki, where embedded keywords "error|exception"
+  // match the error filter — self-referencing feedback loop (~380 false positives).
+  stage.match {
+    selector = "{compose_service=\"loki\"}"
+
+    stage.logfmt {
+      mapping = {
+        "level" = "",
+      }
+    }
+
+    // Normalize Loki's native lowercase levels (info, error, warn, debug)
+    // to uppercase (INFO, ERROR, WARNING, DEBUG) for consistent cross-service queries
+    stage.template {
+      source   = "level"
+      template = "{{ if eq .level \"error\" }}ERROR{{ else if eq .level \"warn\" }}WARNING{{ else if eq .level \"info\" }}INFO{{ else if eq .level \"debug\" }}DEBUG{{ else }}{{ .level }}{{ end }}"
+    }
+
+    stage.labels {
+      values = {
+        "level" = "",
+      }
+    }
+
+    // Drop info-level query execution stats (metrics.go, engine.go, roundtrip.go)
+    // Covers both stream queries (query="{...") and metric queries
+    // (query="sum(count_over_time({..."))  from Grafana alert evaluations.
+    // Error-level query logs (malformed queries etc.) are preserved.
+    stage.drop {
+      expression          = ".*level=info.*caller=metrics\\.go.*"
+      drop_counter_reason = "loki_query_stats_noise"
+    }
+    stage.drop {
+      expression          = ".*level=info.*caller=engine\\.go.*"
+      drop_counter_reason = "loki_query_stats_noise"
+    }
+    stage.drop {
+      expression          = ".*level=info.*caller=roundtrip\\.go.*"
+      drop_counter_reason = "loki_query_stats_noise"
+    }
+  }
+
+  // ==========================================================================
+  // postgres — Level extraction, checkpoint noise drop, slow query metadata
+  // ==========================================================================
+  // PostgreSQL logs to stderr (logging_collector=off), captured by Docker.
+  // Log format: "%t [%p] %u@%d LOG/WARNING/ERROR/FATAL/PANIC:  statement"
+  stage.match {
+    selector = "{compose_service=\"postgres\"}"
+
+    // Extract PostgreSQL log level (LOG, WARNING, ERROR, FATAL, PANIC)
+    stage.regex {
+      expression = "(?P<pg_level>LOG|WARNING|ERROR|FATAL|PANIC)"
+    }
+
+    // Map PostgreSQL levels to standard levels
+    // LOG -> INFO, FATAL/PANIC -> CRITICAL
+    stage.template {
+      source   = "level"
+      template = "{{ if eq .pg_level \"FATAL\" }}CRITICAL{{ else if eq .pg_level \"PANIC\" }}CRITICAL{{ else if eq .pg_level \"LOG\" }}INFO{{ else }}{{ .pg_level }}{{ end }}"
+    }
+
+    stage.labels {
+      values = {
+        "level" = "",
+      }
+    }
+
+    // Drop checkpoint noise
+    stage.drop {
+      expression          = ".*checkpoint starting.*"
+      drop_counter_reason = "postgres_checkpoint_noise"
+    }
+    stage.drop {
+      expression          = ".*checkpoint complete.*"
+      drop_counter_reason = "postgres_checkpoint_noise"
+    }
+
+    // Extract slow query duration as structured metadata
+    stage.regex {
+      expression = "duration: (?P<query_duration_ms>[\\d.]+) ms"
+    }
+    stage.structured_metadata {
+      values = {
+        "query_duration_ms" = "",
+      }
+    }
+  }
+
+  // Forward all processed logs to Loki
+  forward_to = [loki.write.loki.receiver]
+}
+
+// ---------------------------------------------------------------------------
+// 5. Loki Writer
+// ---------------------------------------------------------------------------
+loki.write "loki" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}

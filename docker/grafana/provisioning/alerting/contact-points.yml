@@ -1,0 +1,20 @@
+# Grafana Contact Points Provisioning - AutomationOne
+# Phase 4A.3: Grafana Webhook Integration
+#
+# Sends alerts to the God-Kaiser Server notification webhook.
+# Server endpoint: POST /api/v1/webhooks/grafana-alerts
+# disableResolveMessage: false → server receives "resolved" status for auto-close
+
+apiVersion: 1
+
+contactPoints:
+  - orgId: 1
+    name: automationone-webhook
+    receivers:
+      - uid: ao-webhook-receiver
+        type: webhook
+        settings:
+          url: "http://el-servador:8000/api/v1/webhooks/grafana-alerts"
+          httpMethod: POST
+          maxAlerts: 10
+        disableResolveMessage: false

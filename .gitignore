@@ -48,3 +48,7 @@ Thumbs.db
 # IDE
 .vscode/settings.json
 .idea/
+
+# Local-only compose override (remaps README ports; do not ship)
+docker-compose.override.yml
+

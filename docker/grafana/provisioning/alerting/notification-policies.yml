@@ -1,0 +1,20 @@
+# Grafana Notification Policies Provisioning - AutomationOne
+# Phase 4A.3: Grafana Webhook Integration
+#
+# Routes all Grafana alerts through the AutomationOne webhook.
+# group_by: [grafana_folder, alertname] — groups alerts logically
+# group_wait: 30s — buffer before first notification of a new group
+# group_interval: 5m — minimum interval between group notifications
+# repeat_interval: 4h — resend interval for still-firing alerts
+
+apiVersion: 1
+
+policies:
+  - orgId: 1
+    receiver: automationone-webhook
+    group_by:
+      - grafana_folder
+      - alertname
+    group_wait: 30s
+    group_interval: 5m
+    repeat_interval: 4h

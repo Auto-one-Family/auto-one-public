@@ -1,0 +1,358 @@
+# Grafana Alerting Provisioning - AutomationOne Loki Alerts
+# SUPPLEMENTS the 32 Prometheus-based alerts in alert-rules.yml
+#
+# 6 Loki-based rules detecting log PATTERNS that metrics cannot:
+#   Error Storm:         Repeated errors indicating an error loop
+#   ESP Disconnect Wave: Multiple ESPs going offline simultaneously
+#   Backup Auth Failure: pg_dump/backup authentication failures
+#   App DB Errors:       Application database connectivity issues in logs
+#   ESP Boot Loop:       ESP32 repeatedly rebooting
+#   Critical Error Burst: Multiple CRITICAL-level events
+#   (Frontend Down deaktiviert: Vite-Dev-Server liefert keine Dauer-Logs → False Positives)
+#
+# Pipeline per rule: A (LogQL query) -> B (Reduce to last) -> C (Threshold)
+# Evaluation interval: 1m (multiple of 10s, Grafana scheduler requirement)
+# Loki datasource UID: loki (verified against datasources.yml)
+
+apiVersion: 1
+
+groups:
+  # ============================================
+  # Loki Log-Pattern Alerts (1m evaluation)
+  # ============================================
+  - orgId: 1
+    name: automationone-loki-alerts
+    folder: AutomationOne Alerts
+    interval: 1m
+    rules:
+      # Rule 1: Error Storm
+      # Detects repeated errors that may indicate an error loop or cascading failure
+      - uid: ao-loki-error-storm
+        title: "Loki: Error Storm Detected"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: loki
+            model:
+              expr: "sum(count_over_time({compose_service=\"el-servador\"} |~ \"(level=\\\"ERROR\\\"|Traceback|Exception|HTTP/1[.]1\\\" 5[0-9]{2})\" [5m]))"
+              intervalMs: 60000
+              maxDataPoints: 60
+              refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: reduce
+              expression: "A"
+              reducer: last
+              refId: B
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: threshold
+              expression: "B"
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [10]
+              refId: C
+        noDataState: OK
+        execErrState: Alerting
+        for: 2m
+        annotations:
+          summary: "Error Storm — More than 10 errors in 5 minutes"
+          description: "El Servador has logged >10 error entries (ERROR-level, exceptions, or HTTP 5xx) in 5 minutes. Possible error loop or cascading failure."
+        labels:
+          severity: warning
+          component: server
+          source: loki
+
+      # Rule 2: ESP Disconnect Wave
+      # Detects multiple ESP32 disconnections in a short timeframe (network or broker issue)
+      - uid: ao-loki-esp-disconnect-wave
+        title: "Loki: ESP Disconnect Wave"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 120
+              to: 0
+            datasourceUid: loki
+            model:
+              expr: "sum(count_over_time({compose_service=\"mqtt-broker\"} |~ \"(?i)disconnect\" [2m]))"
+              intervalMs: 60000
+              maxDataPoints: 60
+              refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: reduce
+              expression: "A"
+              reducer: last
+              refId: B
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: threshold
+              expression: "B"
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [3]
+              refId: C
+        noDataState: OK
+        execErrState: Alerting
+        for: 2m
+        annotations:
+          summary: "ESP Disconnect Wave — 3+ disconnects in 2 minutes"
+          description: "MQTT broker logged 3+ disconnect events in 2 minutes. Possible network or broker issue affecting multiple ESPs."
+        labels:
+          severity: warning
+          component: mqtt
+          source: loki
+
+      # Rule 3: Backup Auth Failure
+      # Detects pg_dump auth failures independently from application DB errors.
+      - uid: ao-loki-backup-auth-failure
+        title: "Loki: Backup Auth Failure"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: loki
+            model:
+              expr: "sum(count_over_time({compose_service=\"el-servador\"} |~ \"(?i)(backup_auth_failure|scheduled database backup failed|pg_dump.*failed|password authentication failed)\" [5m]))"
+              intervalMs: 60000
+              maxDataPoints: 60
+              refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: reduce
+              expression: "A"
+              reducer: last
+              refId: B
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: threshold
+              expression: "B"
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+              refId: C
+        noDataState: OK
+        execErrState: Alerting
+        for: 1m
+        annotations:
+          summary: "Backup auth failure detected in server logs"
+          description: "Scheduled backup failed with authentication/pg_dump error. Check DB_BACKUP credentials or PGPASSFILE secret."
+        labels:
+          severity: warning
+          component: infra
+          source: loki
+
+      # Rule 4: Application DB Connection Errors
+      # Detects application DB failures and excludes backup-specific errors.
+      - uid: ao-loki-db-connection-errors
+        title: "Loki: Application DB Connection Errors"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: loki
+            model:
+              expr: "sum(count_over_time({compose_service=\"el-servador\"} |~ \"(?i)(connection refused|deadlock|database.*error)\" !~ \"(?i)(backup_auth_failure|backup|pg_dump)\" [5m]))"
+              intervalMs: 60000
+              maxDataPoints: 60
+              refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: reduce
+              expression: "A"
+              reducer: last
+              refId: B
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: threshold
+              expression: "B"
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [2]
+              refId: C
+        noDataState: OK
+        execErrState: Alerting
+        for: 2m
+        annotations:
+          summary: "Application DB connection errors (>2 in 5min)"
+          description: "El Servador logged repeated application database connection errors in 5 minutes. Backup-specific auth failures are excluded."
+        labels:
+          severity: critical
+          component: database
+          source: loki
+
+      # Rule 5: ESP Boot Loop
+      # Detects an ESP32 repeatedly rebooting (3+ times in 10 minutes)
+      - uid: ao-loki-esp-boot-loop
+        title: "Loki: ESP Boot Loop Detected"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: loki
+            model:
+              expr: "sum(count_over_time({compose_service=\"esp32-serial-logger\"} |~ \"(?i)(boot|reboot|restart|reset)\" [10m]))"
+              intervalMs: 60000
+              maxDataPoints: 60
+              refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: reduce
+              expression: "A"
+              reducer: last
+              refId: B
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: threshold
+              expression: "B"
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [3]
+              refId: C
+        noDataState: OK
+        execErrState: Alerting
+        for: 2m
+        annotations:
+          summary: "ESP Boot Loop — 3+ boot events in 10 minutes"
+          description: "ESP32 serial logger detected 3+ boot/restart events in 10 minutes. Possible boot loop, watchdog reset, or power issue."
+        labels:
+          severity: warning
+          component: esp32
+          source: loki
+
+      # Rule 6: Critical Error Burst
+      # Detects multiple CRITICAL-level log entries indicating severe system issues.
+      # Excludes postgres: Alloy maps PostgreSQL FATAL (auth failures, connection resets)
+      # to level=CRITICAL, but those are covered by dedicated Prometheus alerts
+      # (database-down, db-connections-high). Including postgres causes false positives.
+      - uid: ao-loki-critical-burst
+        title: "Loki: Critical Error Burst"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: loki
+            model:
+              expr: "sum(count_over_time({compose_service=~\".+\", compose_service!=\"postgres\"} | level=\"CRITICAL\" [5m]))"
+              intervalMs: 60000
+              maxDataPoints: 60
+              refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: reduce
+              expression: "A"
+              reducer: last
+              refId: B
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: threshold
+              expression: "B"
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [3]
+              refId: C
+        noDataState: OK
+        execErrState: Alerting
+        for: 3m
+        annotations:
+          summary: "Critical error burst — 4+ CRITICAL entries in 5 minutes"
+          description: "4+ CRITICAL-level log entries detected in the last 5 minutes across 3 consecutive evaluations. Single transient startup errors are tolerated."
+        labels:
+          severity: critical
+          component: system
+          source: loki
+
+      # Rule 7: Frontend Down — DEAKTIVIERT (False Positives)
+      # Der Vite-Dev-Server (el-frontend) schreibt nur beim Start eine Zeile ("VITE ready"),
+      # danach keine kontinuierlichen Logs. Daher liefert count_over_time(...[5m]) fast immer 0
+      # und der Alert wuerde staendig feuern. Status stattdessen pruefen: docker compose ps el-frontend
+      # bzw. Docker-Healthcheck (interval 30s). Reaktivierbar wenn Frontend auf nginx umgestellt
+      # wird (Access-Logs) oder periodisches Heartbeat-Logging eingebaut wird.
+      # - uid: ao-loki-frontend-down
+      #   title: "Loki: Frontend Down"
+      #   condition: C
+      #   data:
+      #     - refId: A
+      #       relativeTimeRange:
+      #         from: 300
+      #         to: 0
+      #       datasourceUid: loki
+      #       model:
+      #         expr: "sum(count_over_time({compose_service=\"el-frontend\"} [5m]))"
+      #         refId: A
+      #     - refId: B
+      #       ...
+      #   noDataState: Alerting
+      #   for: 5m
+      #   annotations:
+      #     summary: "Frontend-Container nicht erreichbar — keine Logs seit 5 Minuten"
+      #   labels:
+      #     severity: warning
+      #     component: frontend
+      #     source: loki

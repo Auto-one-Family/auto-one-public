@@ -1,0 +1,1911 @@
+# Grafana Alerting Provisioning - AutomationOne
+# Phase 2+4A: Expanded Alerting
+#
+# 37 Rules across 8 groups:
+#   Critical (10s): server-down, mqtt-disconnected, database-down, loki-down, alloy-down, prometheus-down
+#   Warning (1m):   high-memory, esp-devices-offline, high-mqtt-error-rate
+#   Infrastructure (1m): db-query-slow, db-connections-high, cadvisor-down,
+#                        container-restart-loop (changes on start_time), database-size-high, loki-ingestion-failure
+#   Sensor/ESP (1m): sensor-temp/ph/humidity/ec-range, sensor-stale, heartbeat-gap,
+#                    esp-boot-loop, esp-error-cascade, esp-safe-mode
+#   Application (1m): ws-disconnects, mqtt-message-backlog, api-errors-high,
+#                     logic-engine-errors, actuator-timeout, safety-triggered
+#   MQTT Broker (30s): mqtt-broker-no-clients, mqtt-broker-messages-stored
+#                      (requires mosquitto-exporter healthy, port 9234, job=mqtt-broker)
+#   Notification Pipeline (1m): notification-rate-high, email-failure-rate,
+#                               webhook-reception-stopped, high-suppression-ratio, digest-backlog
+#
+# Pipeline per rule: A (PromQL query) -> B (Reduce to last value) -> C (Threshold)
+# All datasource UIDs verified against datasources.yml (2026-02-09)
+# Evaluation intervals must be multiples of 10s (Grafana scheduler interval)
+# Note: cAdvisor on Docker Desktop exports no "name" label — container alerts use
+#       id-path matching or alternative metrics (pg_database_size_bytes)
+# Last updated: 2026-02-25 (Alert Quality Fix — Blocks B+C)
+
+apiVersion: 1
+
+groups:
+  # ============================================
+  # Critical Alerts (10s evaluation)
+  # ============================================
+  - orgId: 1
+    name: automationone-critical
+    folder: AutomationOne Alerts
+    interval: 10s
+    rules:
+      # Rule 1: Server Down
+      # Fires when Prometheus cannot scrape el-servador metrics endpoint
+      - uid: ao-server-down
+        title: "Server Down"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 60
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: "up{job=\"el-servador\"}"
+              intervalMs: 15000
+              maxDataPoints: 43200
+              refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: reduce
+              expression: "A"
+              reducer: last
+              refId: B
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: threshold
+              expression: "B"
+              conditions:
+                - evaluator:
+                    type: lt
+                    params: [1]
+              refId: C
+        noDataState: Alerting
+        execErrState: Alerting
+        for: 1m
+        annotations:
+          summary: "God-Kaiser Server ist nicht erreichbar"
+          description: "Prometheus kann /api/v1/health/metrics nicht scrapen seit >1m"
+        labels:
+          severity: critical
+          component: server
+
+      # Rule 2: MQTT Disconnected
+      # Fires when god_kaiser_mqtt_connected gauge drops to 0
+      - uid: ao-mqtt-disconnected
+        title: "MQTT Disconnected"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 60
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: "god_kaiser_mqtt_connected"
+              intervalMs: 15000
+              maxDataPoints: 43200
+              refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: reduce
+              expression: "A"
+              reducer: last
+              refId: B
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: threshold
+              expression: "B"
+              conditions:
+                - evaluator:
+                    type: lt
+                    params: [1]
+              refId: C
+        noDataState: Alerting
+        execErrState: Alerting
+        for: 1m
+        annotations:
+          summary: "MQTT-Broker Verbindung verloren"
+          description: "god_kaiser_mqtt_connected == 0 seit >1m. Kein ESP32-Datenempfang moeglich."
+        labels:
+          severity: critical
+          component: mqtt
+
+      # Rule 3: Database Down
+      # Fires when postgres-exporter reports pg_up == 0
+      - uid: ao-database-down
+        title: "Database Down"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 60
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: "pg_up"
+              intervalMs: 15000
+              maxDataPoints: 43200
+              refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: reduce
+              expression: "A"
+              reducer: last
+              refId: B
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: threshold
+              expression: "B"
+              conditions:
+                - evaluator:
+                    type: lt
+                    params: [1]
+              refId: C
+        noDataState: Alerting
+        execErrState: Alerting
+        for: 1m
+        annotations:
+          summary: "PostgreSQL nicht erreichbar"
+          description: "postgres-exporter meldet pg_up == 0 seit >1m"
+        labels:
+          severity: critical
+          component: database
+
+      # Rule 6: Loki Down
+      # Fires when Prometheus cannot scrape Loki metrics endpoint
+      - uid: ao-loki-down
+        title: "Loki Down"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 60
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: "up{job=\"loki\"}"
+              intervalMs: 15000
+              maxDataPoints: 43200
+              refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: reduce
+              expression: "A"
+              reducer: last
+              refId: B
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: threshold
+              expression: "B"
+              conditions:
+                - evaluator:
+                    type: lt
+                    params: [1]
+              refId: C
+        noDataState: Alerting
+        execErrState: Alerting
+        for: 2m
+        annotations:
+          summary: "Loki Log-Aggregation nicht erreichbar"
+          description: "Prometheus kann Loki :3100/metrics nicht scrapen seit >2m. Log-Ingestion gestoppt."
+        labels:
+          severity: critical
+          component: monitoring
+
+      # Rule 7: Alloy Down
+      # Fires when Prometheus cannot scrape Alloy metrics endpoint
+      - uid: ao-alloy-down
+        title: "Alloy Down"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 60
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: "up{job=\"alloy\"}"
+              intervalMs: 15000
+              maxDataPoints: 43200
+              refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: reduce
+              expression: "A"
+              reducer: last
+              refId: B
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: threshold
+              expression: "B"
+              conditions:
+                - evaluator:
+                    type: lt
+                    params: [1]
+              refId: C
+        noDataState: Alerting
+        execErrState: Alerting
+        for: 2m
+        annotations:
+          summary: "Alloy Log-Shipping nicht erreichbar"
+          description: "Prometheus kann Alloy :12345/metrics nicht scrapen seit >2m. Container-Logs werden nicht nach Loki geschickt."
+        labels:
+          severity: critical
+          component: monitoring
+
+      # Rule 6: Prometheus Down (self-monitoring)
+      # Fires when Prometheus cannot scrape itself — if Prometheus is down,
+      # Grafana gets NoData for ALL Prometheus-based alerts. noDataState: Alerting
+      # ensures this fires even when Prometheus is completely unreachable.
+      - uid: ao-prometheus-down
+        title: "Prometheus Down"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 60
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: "up{job=\"prometheus\"}"
+              intervalMs: 15000
+              maxDataPoints: 43200
+              refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: reduce
+              expression: "A"
+              reducer: last
+              refId: B
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: threshold
+              expression: "B"
+              conditions:
+                - evaluator:
+                    type: lt
+                    params: [1]
+              refId: C
+        noDataState: Alerting
+        execErrState: Alerting
+        for: 2m
+        annotations:
+          summary: "Prometheus nicht erreichbar"
+          description: "Prometheus Self-Scrape fehlgeschlagen seit >2m. Wenn Prometheus down ist, funktionieren KEINE Prometheus-basierten Alerts mehr."
+        labels:
+          severity: critical
+          component: monitoring
+
+  # ============================================
+  # Warning Alerts (1m evaluation)
+  # ============================================
+  - orgId: 1
+    name: automationone-warnings
+    folder: AutomationOne Alerts
+    interval: 1m
+    rules:
+      # Rule 4: High Memory Usage
+      # Fires when server memory exceeds 85% for >5m
+      # Server health reports "degraded" at 90%
+      - uid: ao-high-memory
+        title: "High Memory Usage"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: "god_kaiser_memory_percent"
+              intervalMs: 15000
+              maxDataPoints: 43200
+              refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: reduce
+              expression: "A"
+              reducer: last
+              refId: B
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: threshold
+              expression: "B"
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [85]
+              refId: C
+        noDataState: OK
+        execErrState: Alerting
+        for: 5m
+        annotations:
+          summary: "Server Memory ueber 85%"
+          description: "god_kaiser_memory_percent > 85 seit >5m. Bei 90% wird Health-Status 'degraded'."
+        labels:
+          severity: warning
+          component: server
+
+      # Rule 5: ESP Devices Offline
+      # Fires when >50% of registered ESP devices are offline for >3m
+      # Guards: clamp_min prevents division-by-zero, esp_online > 0 ensures real devices exist
+      # Development note: 100 mock ESPs with ~32% offline will NOT trigger this rule
+      - uid: ao-esp-offline
+        title: "ESP Devices Offline"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 180
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: "(god_kaiser_esp_offline / clamp_min(god_kaiser_esp_total, 1)) > 0.5 and god_kaiser_esp_online > 0"
+              intervalMs: 15000
+              maxDataPoints: 43200
+              refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: reduce
+              expression: "A"
+              reducer: last
+              refId: B
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: threshold
+              expression: "B"
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0.5]
+              refId: C
+        noDataState: OK
+        execErrState: Alerting
+        for: 3m
+        annotations:
+          summary: "ESP32-Geraete offline"
+          description: "Mehr als 50% der registrierten ESP32-Geraete sind seit >3m offline. Guard: Mindestens ein Geraet muss online sein (verhindert False-Positives bei reinen Mock-Daten). Pruefen: Netzwerk, MQTT-Broker, ESP-Firmware."
+        labels:
+          severity: warning
+          component: esp32
+
+      # Rule 8: High MQTT Error Rate
+      # Fires when MQTT receive/publish errors exceed 10 in the last 5 minutes
+      - uid: ao-high-mqtt-error-rate
+        title: "High MQTT Error Rate"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: "increase(god_kaiser_mqtt_errors_total[5m])"
+              intervalMs: 15000
+              maxDataPoints: 43200
+              refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: reduce
+              expression: "A"
+              reducer: last
+              refId: B
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: threshold
+              expression: "B"
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [10]
+              refId: C
+        noDataState: OK
+        execErrState: Alerting
+        for: 2m
+        annotations:
+          summary: "Erhoehte MQTT-Fehlerrate"
+          description: "Mehr als 10 MQTT-Fehler (receive/publish) in den letzten 5 Minuten. Pruefen: Broker-Verbindung, Payload-Validierung, Handler-Exceptions."
+        labels:
+          severity: warning
+          component: mqtt
+
+  # ============================================
+  # Infrastructure Alerts (1m evaluation)
+  # Phase 0: Alerts with existing metrics
+  # ============================================
+  - orgId: 1
+    name: automationone-infrastructure
+    folder: AutomationOne Alerts
+    interval: 1m
+    rules:
+      # Rule 9: DB Query Slow
+      # Fires when P95 DB query duration exceeds 1 second
+      - uid: ao-db-query-slow
+        title: "DB Query Slow"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: "histogram_quantile(0.95, rate(god_kaiser_db_query_duration_seconds_bucket[5m]))"
+              intervalMs: 15000
+              maxDataPoints: 43200
+              refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: reduce
+              expression: "A"
+              reducer: last
+              refId: B
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: threshold
+              expression: "B"
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [1]
+              refId: C
+        noDataState: OK
+        execErrState: Alerting
+        for: 5m
+        annotations:
+          summary: "Datenbank-Queries langsam"
+          description: "P95 DB Query Duration > 1s seit >5m. Pruefen: Query-Optimierung, Indexe, Connection-Pool."
+        labels:
+          severity: warning
+          component: database
+
+      # Rule 10: DB Connections High
+      # Fires when PostgreSQL active connections exceed 80
+      - uid: ao-db-connections-high
+        title: "DB Connections High"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 180
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: "pg_stat_database_numbackends{datname=\"god_kaiser_db\"}"
+              intervalMs: 15000
+              maxDataPoints: 43200
+              refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: reduce
+              expression: "A"
+              reducer: last
+              refId: B
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: threshold
+              expression: "B"
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [80]
+              refId: C
+        noDataState: OK
+        execErrState: Alerting
+        for: 3m
+        annotations:
+          summary: "PostgreSQL Verbindungen hoch"
+          description: "Mehr als 80 aktive DB-Verbindungen seit >3m. Pruefen: Connection-Pool, offene Transaktionen, Connection-Leaks."
+        labels:
+          severity: warning
+          component: database
+
+      # Rule 11: cAdvisor Down
+      # Fires when Prometheus cannot scrape cAdvisor metrics
+      - uid: ao-cadvisor-down
+        title: "cAdvisor Down"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 60
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: "up{job=\"cadvisor\"}"
+              intervalMs: 15000
+              maxDataPoints: 43200
+              refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: reduce
+              expression: "A"
+              reducer: last
+              refId: B
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: threshold
+              expression: "B"
+              conditions:
+                - evaluator:
+                    type: lt
+                    params: [1]
+              refId: C
+        noDataState: Alerting
+        execErrState: Alerting
+        for: 2m
+        annotations:
+          summary: "cAdvisor Container-Monitoring nicht erreichbar"
+          description: "Prometheus kann cAdvisor :8080/metrics nicht scrapen seit >2m. Container-Metriken nicht verfuegbar."
+        labels:
+          severity: critical
+          component: monitoring
+
+      # Rule 30: Container Restart Loop
+      # Fires when any Docker container restarts more than 2 times in 30 minutes
+      # Uses changes() on container_start_time_seconds — works with cAdvisor on Docker Desktop
+      # (Docker Desktop cAdvisor exports no "name" label; uses id=~/docker/ path filter)
+      # container_restart_count does NOT exist in cAdvisor — this is the correct alternative
+      - uid: ao-container-restart-loop
+        title: "Container Restart Loop"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 1800
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: "changes(container_start_time_seconds{id=~\"/docker/[0-9a-f]+\"}[30m])"
+              intervalMs: 15000
+              maxDataPoints: 43200
+              refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: reduce
+              expression: "A"
+              reducer: last
+              refId: B
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: threshold
+              expression: "B"
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [2]
+              refId: C
+        noDataState: OK
+        execErrState: Alerting
+        for: 1m
+        annotations:
+          summary: "Container-Restart-Loop erkannt"
+          description: "Ein Docker-Container wurde >2x in 30 Minuten neu gestartet. Moeglicherweise Crash-Loop oder OOM-Kill. Container-Logs pruefen: docker compose logs --tail 50"
+        labels:
+          severity: warning
+          component: infrastructure
+
+      # Rule 31: Database Size High
+      # Fires when the god_kaiser_db database exceeds 500MB
+      # Replaces container_fs_usage_bytes alert — cAdvisor on Docker Desktop exports no
+      # "name" label, making per-container FS filtering impossible.
+      # pg_database_size_bytes is exported by postgres-exporter with datname label.
+      # 500MB threshold is generous for dev; adjust for production.
+      - uid: ao-container-disk-usage
+        title: "Database Size High"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: "pg_database_size_bytes{datname=\"god_kaiser_db\"}"
+              intervalMs: 15000
+              maxDataPoints: 43200
+              refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: reduce
+              expression: "A"
+              reducer: last
+              refId: B
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: threshold
+              expression: "B"
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [524288000]
+              refId: C
+        noDataState: OK
+        execErrState: Alerting
+        for: 5m
+        annotations:
+          summary: "PostgreSQL-Datenbank god_kaiser_db ueberschreitet 500MB"
+          description: "Die Datenbank god_kaiser_db ist >500MB gross. sensor_data-Tabelle pruefen, ggf. alte Daten bereinigen: DELETE FROM sensor_data WHERE timestamp < NOW() - INTERVAL '30 days'"
+        labels:
+          severity: warning
+          component: database
+
+      # Rule 32: Loki Ingestion Failure
+      # Fires when Loki WAL disk full failures increase
+      # Detects Loki ingestion backlog before logs are lost
+      - uid: ao-loki-ingestion-failure
+        title: "Loki Ingestion Failure"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: "increase(loki_ingester_wal_disk_full_failures_total[5m])"
+              intervalMs: 15000
+              maxDataPoints: 43200
+              refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: reduce
+              expression: "A"
+              reducer: last
+              refId: B
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: threshold
+              expression: "B"
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+              refId: C
+        noDataState: OK
+        execErrState: Alerting
+        for: 2m
+        annotations:
+          summary: "Loki Ingestion-Fehler — WAL Disk voll"
+          description: "Loki WAL (Write-Ahead-Log) Disk-Full-Failures in den letzten 5 Minuten. Log-Ingestion ist beeintraechtigt. Disk-Space oder Loki-Retention pruefen."
+        labels:
+          severity: warning
+          component: monitoring
+
+  # ============================================
+  # Sensor Alerts (30s evaluation)
+  # Phase 0 Phase C: Alerts requiring new metrics from metrics.py
+  # ============================================
+  - orgId: 1
+    name: automationone-sensor-alerts
+    folder: AutomationOne Alerts
+    interval: 30s
+    rules:
+      # Rule 12: Temperature Out of Range
+      - uid: ao-sensor-temp-range
+        title: "Temp Out of Range"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 120
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: "avg_over_time(god_kaiser_sensor_value{sensor_type=\"temperature\"}[2m]) > 85 or avg_over_time(god_kaiser_sensor_value{sensor_type=\"temperature\"}[2m]) < -40"
+              intervalMs: 15000
+              maxDataPoints: 43200
+              refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: reduce
+              expression: "A"
+              reducer: last
+              refId: B
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: threshold
+              expression: "B"
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0.5]
+              refId: C
+        noDataState: OK
+        execErrState: Alerting
+        for: 2m
+        annotations:
+          summary: "Temperaturwert ausserhalb Messbereich"
+          description: "DS18B20 Messbereich: -40 bis 85°C. Sensor pruefen, Verkabelung kontrollieren."
+        labels:
+          severity: warning
+          component: sensor
+
+      # Rule 13: pH Out of Range
+      - uid: ao-sensor-ph-range
+        title: "pH Out of Range"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 120
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: "avg_over_time(god_kaiser_sensor_value{sensor_type=\"ph\"}[2m]) > 14 or avg_over_time(god_kaiser_sensor_value{sensor_type=\"ph\"}[2m]) < 0"
+              intervalMs: 15000
+              maxDataPoints: 43200
+              refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: reduce
+              expression: "A"
+              reducer: last
+              refId: B
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: threshold
+              expression: "B"
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0.5]
+              refId: C
+        noDataState: OK
+        execErrState: Alerting
+        for: 1m
+        annotations:
+          summary: "pH-Wert ausserhalb physikalischer Grenzen"
+          description: "pH-Skala: 0.0 bis 14.0. Sensor kalibrieren oder Sonde pruefen."
+        labels:
+          severity: critical
+          component: sensor
+
+      # Rule 14: Humidity Out of Range
+      - uid: ao-sensor-humidity-range
+        title: "Humidity Out of Range"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 120
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: "avg_over_time(god_kaiser_sensor_value{sensor_type=\"humidity\"}[2m]) > 100 or avg_over_time(god_kaiser_sensor_value{sensor_type=\"humidity\"}[2m]) < 0"
+              intervalMs: 15000
+              maxDataPoints: 43200
+              refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: reduce
+              expression: "A"
+              reducer: last
+              refId: B
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: threshold
+              expression: "B"
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0.5]
+              refId: C
+        noDataState: OK
+        execErrState: Alerting
+        for: 2m
+        annotations:
+          summary: "Luftfeuchtigkeit ausserhalb Grenzen"
+          description: "Physikalische Grenze: 0-100%. Sensor pruefen."
+        labels:
+          severity: warning
+          component: sensor
+
+      # Rule 15: EC Out of Range
+      - uid: ao-sensor-ec-range
+        title: "EC Out of Range"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 120
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: "avg_over_time(god_kaiser_sensor_value{sensor_type=\"ec\"}[2m]) > 10000"
+              intervalMs: 15000
+              maxDataPoints: 43200
+              refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: reduce
+              expression: "A"
+              reducer: last
+              refId: B
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: threshold
+              expression: "B"
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0.5]
+              refId: C
+        noDataState: OK
+        execErrState: Alerting
+        for: 2m
+        annotations:
+          summary: "EC-Wert ausserhalb Messbereich"
+          description: "EC > 10000 uS/cm. Sensor pruefen, Kalibrierung kontrollieren."
+        labels:
+          severity: warning
+          component: sensor
+
+      # Rule 16: Sensor Data Stale
+      - uid: ao-sensor-stale
+        title: "Sensor Data Stale"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: "time() - god_kaiser_sensor_last_update > 300"
+              intervalMs: 15000
+              maxDataPoints: 43200
+              refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: reduce
+              expression: "A"
+              reducer: last
+              refId: B
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: threshold
+              expression: "B"
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0.5]
+              refId: C
+        noDataState: OK
+        execErrState: Alerting
+        for: 5m
+        annotations:
+          summary: "Sensordaten veraltet"
+          description: "Kein Sensor-Update seit >5 Minuten. ESP32-Verbindung, MQTT-Handler oder Sensor pruefen."
+        labels:
+          severity: warning
+          component: sensor
+
+  # ============================================
+  # Device Alerts (30s evaluation)
+  # ============================================
+  - orgId: 1
+    name: automationone-device-alerts
+    folder: AutomationOne Alerts
+    interval: 30s
+    rules:
+      # Rule 17: Heartbeat Gap
+      - uid: ao-heartbeat-gap
+        title: "Heartbeat Gap"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: "time() - god_kaiser_esp_last_heartbeat > 120"
+              intervalMs: 15000
+              maxDataPoints: 43200
+              refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: reduce
+              expression: "A"
+              reducer: last
+              refId: B
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: threshold
+              expression: "B"
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0.5]
+              refId: C
+        noDataState: OK
+        execErrState: Alerting
+        for: 2m
+        annotations:
+          summary: "ESP32 Heartbeat-Luecke"
+          description: "Kein Heartbeat seit >2 Minuten. ESP32-Verbindung, WiFi, MQTT pruefen."
+        labels:
+          severity: warning
+          component: esp32
+
+      # Rule 18: ESP Boot Loop
+      - uid: ao-esp-boot-loop
+        title: "ESP Boot Loop"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: "increase(god_kaiser_esp_boot_count[10m]) > 3"
+              intervalMs: 15000
+              maxDataPoints: 43200
+              refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: reduce
+              expression: "A"
+              reducer: last
+              refId: B
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: threshold
+              expression: "B"
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0.5]
+              refId: C
+        noDataState: OK
+        execErrState: Alerting
+        for: 1m
+        annotations:
+          summary: "ESP32 Boot-Loop erkannt"
+          description: "Mehr als 3 Neustarts in 10 Minuten. Firmware, Watchdog, Stromversorgung pruefen."
+        labels:
+          severity: critical
+          component: esp32
+
+      # Rule 19: Error Cascade
+      - uid: ao-esp-error-cascade
+        title: "Error Cascade"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 120
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: "increase(god_kaiser_esp_errors_total[60s]) > 3"
+              intervalMs: 15000
+              maxDataPoints: 43200
+              refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: reduce
+              expression: "A"
+              reducer: last
+              refId: B
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: threshold
+              expression: "B"
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0.5]
+              refId: C
+        noDataState: OK
+        execErrState: Alerting
+        for: 1m
+        annotations:
+          summary: "ESP32 Error-Kaskade"
+          description: "Mehr als 3 Fehler in 60 Sekunden. Systemisches Problem moeglich: Hardware, MQTT, Firmware."
+        labels:
+          severity: critical
+          component: esp32
+
+      # Rule 20: ESP in Safe Mode
+      - uid: ao-esp-safe-mode
+        title: "ESP in Safe Mode"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 120
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: "god_kaiser_esp_safe_mode > 0"
+              intervalMs: 15000
+              maxDataPoints: 43200
+              refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: reduce
+              expression: "A"
+              reducer: last
+              refId: B
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: threshold
+              expression: "B"
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0.5]
+              refId: C
+        noDataState: OK
+        execErrState: Alerting
+        for: 2m
+        annotations:
+          summary: "ESP32 im Safe-Mode"
+          description: "Ein ESP32-Geraet ist in den Safe-Mode gewechselt. Fehlerursache analysieren, ggf. Reset."
+        labels:
+          severity: warning
+          component: esp32
+
+  # ============================================
+  # Application Alerts (30s evaluation)
+  # ============================================
+  - orgId: 1
+    name: automationone-application-alerts
+    folder: AutomationOne Alerts
+    interval: 30s
+    rules:
+      # Rule 21: WebSocket Disconnects
+      - uid: ao-ws-disconnects
+        title: "WebSocket Disconnects"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: "increase(god_kaiser_ws_disconnects_total[5m]) > 5"
+              intervalMs: 15000
+              maxDataPoints: 43200
+              refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: reduce
+              expression: "A"
+              reducer: last
+              refId: B
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: threshold
+              expression: "B"
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0.5]
+              refId: C
+        noDataState: OK
+        execErrState: Alerting
+        for: 2m
+        annotations:
+          summary: "Haeufige WebSocket-Verbindungsabbrueche"
+          description: "Mehr als 5 WebSocket-Disconnects in 5 Minuten. Netzwerk, Server-Last, Frontend pruefen."
+        labels:
+          severity: warning
+          component: application
+
+      # Rule 22: MQTT Message Backlog
+      - uid: ao-mqtt-message-backlog
+        title: "MQTT Backlog"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 180
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: "god_kaiser_mqtt_queued_messages > 1000"
+              intervalMs: 15000
+              maxDataPoints: 43200
+              refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: reduce
+              expression: "A"
+              reducer: last
+              refId: B
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: threshold
+              expression: "B"
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0.5]
+              refId: C
+        noDataState: OK
+        execErrState: Alerting
+        for: 3m
+        annotations:
+          summary: "MQTT-Nachrichten-Rueckstau"
+          description: "Mehr als 1000 Nachrichten in der Queue. Broker-Verbindung, Nachrichtenrate pruefen."
+        labels:
+          severity: warning
+          component: mqtt
+
+      # Rule 23: API Error Rate High
+      - uid: ao-api-errors-high
+        title: "API Error Rate High"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: "rate(god_kaiser_http_errors_total[5m]) > 0.1"
+              intervalMs: 15000
+              maxDataPoints: 43200
+              refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: reduce
+              expression: "A"
+              reducer: last
+              refId: B
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: threshold
+              expression: "B"
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0.5]
+              refId: C
+        noDataState: OK
+        execErrState: Alerting
+        for: 3m
+        annotations:
+          summary: "Erhoehte API-Fehlerrate"
+          description: "HTTP 4xx/5xx Rate > 0.1/s seit >3 Minuten. API-Endpunkte, Validierung, DB pruefen."
+        labels:
+          severity: warning
+          component: application
+
+      # Rule 24: Logic Engine Errors
+      - uid: ao-logic-engine-errors
+        title: "Logic Engine Errors"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: "increase(god_kaiser_logic_errors_total[5m]) > 0"
+              intervalMs: 15000
+              maxDataPoints: 43200
+              refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: reduce
+              expression: "A"
+              reducer: last
+              refId: B
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: threshold
+              expression: "B"
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0.5]
+              refId: C
+        noDataState: OK
+        execErrState: Alerting
+        for: 2m
+        annotations:
+          summary: "Logic-Engine Fehler"
+          description: "Fehler bei der Auswertung von Automatisierungsregeln. Regelkonfiguration, Sensordaten pruefen."
+        labels:
+          severity: warning
+          component: application
+
+      # Rule 25: Actuator Timeout
+      - uid: ao-actuator-timeout
+        title: "Actuator Timeout"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: "increase(god_kaiser_actuator_timeouts_total[5m]) > 0"
+              intervalMs: 15000
+              maxDataPoints: 43200
+              refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: reduce
+              expression: "A"
+              reducer: last
+              refId: B
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: threshold
+              expression: "B"
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0.5]
+              refId: C
+        noDataState: OK
+        execErrState: Alerting
+        for: 2m
+        annotations:
+          summary: "Actuator-Timeout"
+          description: "Actuator hat nicht innerhalb der erwarteten Zeit reagiert. ESP32-Verbindung, GPIO pruefen."
+        labels:
+          severity: warning
+          component: actuator
+
+      # Rule 26: Safety System Triggered
+      - uid: ao-safety-triggered
+        title: "Safety System Triggered"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: "increase(god_kaiser_safety_triggers_total[5m]) > 0"
+              intervalMs: 15000
+              maxDataPoints: 43200
+              refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: reduce
+              expression: "A"
+              reducer: last
+              refId: B
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: threshold
+              expression: "B"
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0.5]
+              refId: C
+        noDataState: OK
+        execErrState: Alerting
+        for: 0s
+        annotations:
+          summary: "Safety-System aktiviert"
+          description: "Emergency-Stop, Rate-Limiter oder Conflict-Manager hat eingegriffen. Sofortige Pruefung erforderlich."
+        labels:
+          severity: critical
+          component: safety
+
+  # ============================================
+  # MQTT Broker Alerts (broker_* metrics from mosquitto-exporter)
+  # Requires: mosquitto-exporter healthy (port 9234, job=mqtt-broker)
+  # ============================================
+  - orgId: 1
+    name: automationone-mqtt-broker-alerts
+    folder: AutomationOne Alerts
+    interval: 30s
+    rules:
+      # Rule 27: MQTT Broker No Clients
+      # Fires when broker has 0 connected clients for >2m
+      # Indicates all ESPs and server have lost MQTT connectivity
+      - uid: ao-mqtt-broker-no-clients
+        title: "MQTT Broker No Clients"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 180
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: "broker_clients_connected{job=\"mqtt-broker\"}"
+              intervalMs: 15000
+              maxDataPoints: 43200
+              refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: reduce
+              expression: "A"
+              reducer: last
+              refId: B
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: threshold
+              expression: "B"
+              conditions:
+                - evaluator:
+                    type: lt
+                    params: [1]
+              refId: C
+        noDataState: Alerting
+        execErrState: Alerting
+        for: 2m
+        annotations:
+          summary: "MQTT-Broker hat keine verbundenen Clients"
+          description: "broker_clients_connected == 0 seit >2m. Kein ESP32 oder Server verbunden. MQTT-Broker, Netzwerk pruefen."
+        labels:
+          severity: critical
+          component: mqtt
+
+      # Rule 28: MQTT Broker Messages Stored High
+      # Fires when broker has >5000 retained/stored messages
+      # Indicates persistent backlog or misconfigured retained messages
+      - uid: ao-mqtt-broker-messages-stored
+        title: "MQTT Broker Messages Stored High"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: "broker_messages_stored{job=\"mqtt-broker\"}"
+              intervalMs: 15000
+              maxDataPoints: 43200
+              refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: reduce
+              expression: "A"
+              reducer: last
+              refId: B
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: threshold
+              expression: "B"
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [5000]
+              refId: C
+        noDataState: OK
+        execErrState: Alerting
+        for: 5m
+        annotations:
+          summary: "MQTT-Broker hat >5000 gespeicherte Nachrichten"
+          description: "broker_messages_stored > 5000 seit >5m. Moeglicherweise Retained-Messages-Backlog oder Subscriber-Ausfaelle. Broker-State pruefen."
+        labels:
+          severity: warning
+          component: mqtt
+
+  # ============================================
+  # Notification Pipeline Alerts (Phase 4A)
+  # ============================================
+  - orgId: 1
+    name: automationone-notification-pipeline
+    folder: AutomationOne Alerts
+    interval: 1m
+    rules:
+      # Rule 33: Notification Rate Too High
+      # Fires when notification creation rate exceeds 10/5m (ISA-18.2 alarm flood)
+      - uid: ao-notification-rate-high
+        title: "Notification Rate Too High"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: "rate(god_kaiser_notifications_total[5m])"
+              intervalMs: 15000
+              maxDataPoints: 43200
+              refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: reduce
+              expression: "A"
+              reducer: last
+              refId: B
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: threshold
+              expression: "B"
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [10]
+              refId: C
+        noDataState: OK
+        execErrState: Alerting
+        for: 5m
+        annotations:
+          summary: "Notification Rate >10/5min (ISA-18.2 Alarm Flood)"
+          description: "Notification creation rate exceeds 10 per 5 minutes. Possible alarm flood — check sensor thresholds and suppression rules."
+        labels:
+          severity: warning
+          component: notifications
+
+      # Rule 34: Email Failure Rate
+      # Fires when email delivery failure rate exceeds 50% in 15m
+      - uid: ao-email-failure-rate
+        title: "Email Failure Rate High"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 900
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: 'rate(god_kaiser_email_sent_total{status="failure"}[15m])'
+              intervalMs: 15000
+              maxDataPoints: 43200
+              refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: reduce
+              expression: "A"
+              reducer: last
+              refId: B
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: threshold
+              expression: "B"
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0.5]
+              refId: C
+        noDataState: OK
+        execErrState: Alerting
+        for: 5m
+        annotations:
+          summary: "Email delivery failure rate >50% in 15m"
+          description: "Email delivery is failing frequently. Check Resend API key, SMTP credentials, and network connectivity."
+        labels:
+          severity: critical
+          component: notifications
+
+      # Rule 35: Webhook Reception Stopped
+      # Fires when no Grafana webhooks received for 1 hour
+      - uid: ao-webhook-reception-stopped
+        title: "Webhook Reception Stopped"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 3600
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: "increase(god_kaiser_webhook_received_total[1h])"
+              intervalMs: 15000
+              maxDataPoints: 43200
+              refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: reduce
+              expression: "A"
+              reducer: last
+              refId: B
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: threshold
+              expression: "B"
+              conditions:
+                - evaluator:
+                    type: lt
+                    params: [1]
+              refId: C
+        noDataState: Alerting
+        execErrState: Alerting
+        for: 15m
+        annotations:
+          summary: "No Grafana webhooks received for >1 hour"
+          description: "Grafana webhook reception has stopped. Check Grafana alerting contact point configuration and server connectivity."
+        labels:
+          severity: warning
+          component: notifications
+
+      # Rule 36: High Suppression Ratio
+      # Fires when >80% of notifications are suppressed
+      - uid: ao-high-suppression-ratio
+        title: "High Suppression Ratio"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 3600
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: "sum(increase(god_kaiser_notifications_suppressed_total[1h])) / (sum(increase(god_kaiser_notifications_total[1h])) + sum(increase(god_kaiser_notifications_suppressed_total[1h])) + 0.001)"
+              intervalMs: 15000
+              maxDataPoints: 43200
+              refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: reduce
+              expression: "A"
+              reducer: last
+              refId: B
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: threshold
+              expression: "B"
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0.8]
+              refId: C
+        noDataState: OK
+        execErrState: Alerting
+        for: 30m
+        annotations:
+          summary: "Suppression ratio >80% in last hour"
+          description: "More than 80% of notifications are being suppressed. Review suppression rules — some may be overly broad."
+        labels:
+          severity: info
+          component: notifications
+
+      # Rule 37: Digest Backlog
+      # Fires when no digests processed for >2 hours (stale scheduler)
+      - uid: ao-digest-backlog
+        title: "Digest Processing Stale"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 7200
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: "increase(god_kaiser_digest_processed_total[2h])"
+              intervalMs: 15000
+              maxDataPoints: 43200
+              refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: reduce
+              expression: "A"
+              reducer: last
+              refId: B
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              type: threshold
+              expression: "B"
+              conditions:
+                - evaluator:
+                    type: lt
+                    params: [1]
+              refId: C
+        noDataState: OK
+        execErrState: Alerting
+        for: 30m
+        annotations:
+          summary: "No digest emails processed for >2 hours"
+          description: "Digest scheduler may be stale. Check CentralScheduler status and digest service health."
+        labels:
+          severity: warning
+          component: notifications
+
+# Remove legacy Promtail rule (migrated to Alloy 2026-02-24)
+deleteRules:
+  - orgId: 1
+    uid: ao-promtail-down

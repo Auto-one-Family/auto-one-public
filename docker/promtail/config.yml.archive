@@ -1,0 +1,194 @@
+# Promtail-format Configuration for AutomationOne (read by Grafana Alloy)
+# =========================================================================
+# Collects Docker container logs and ships them to Loki.
+# Uses Docker service discovery to automatically find containers.
+# NOTE: This file is in Promtail YAML format but read by Grafana Alloy
+# via --config.format=promtail (automatic internal conversion).
+# Promtail EOL: 2026-03-02. Migrated to Alloy: 2026-02-24.
+#
+# Pipeline Overview:
+#   1. docker: {}          - Parse Docker json-file log driver format
+#   2. el-servador match   - Health drop → Multiline → Regex parser → Labels
+#   3. el-frontend match   - JSON parser → Labels (structured logger output)
+#   4. esp32-serial-logger - JSON parser → Labels (TCP serial bridge)
+#   5. mqtt-broker match   - Drop healthcheck noise
+#   6. loki match          - Extract level, drop self-referencing queries
+#
+# Label Strategy:
+#   - compose_service, container, stream, compose_project: from Docker SD (all services)
+#   - level:     extracted by parser (el-servador: regex, el-frontend: json, esp32: json)
+#   - logger:    extracted by regex (el-servador only, e.g. "src.mqtt.handlers.sensor_handler")
+#   - component: extracted by json  (el-frontend, esp32-serial-logger)
+#
+# NOT as labels (high cardinality):
+#   - request_id, function, line: remain in log text, queryable via |= filter
+
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /promtail-positions/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  - job_name: docker
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 5s
+        filters:
+          - name: label
+            values: ["com.docker.compose.project=auto-one"]
+    relabel_configs:
+      - source_labels: ['__meta_docker_container_name']
+        regex: '/(.*)'
+        target_label: 'container'
+      - source_labels: ['__meta_docker_container_log_stream']
+        target_label: 'stream'
+      - source_labels: ['__meta_docker_container_label_com_docker_compose_service']
+        target_label: 'service'
+      - source_labels: ['__meta_docker_container_label_com_docker_compose_service']
+        target_label: 'compose_service'
+      - source_labels: ['__meta_docker_container_label_com_docker_compose_project']
+        target_label: 'compose_project'
+    pipeline_stages:
+      # Stage 1: Parse Docker json-file log driver wrapper
+      # Docker wraps each log line in JSON: {"log":"...", "stream":"...", "time":"..."}
+      # This stage unwraps it to get the actual log content.
+      - docker: {}
+
+      # Stage 2: el-servador - Health drop, multiline, and structured parsing
+      # Server outputs text-format logs to stdout (Docker captures these):
+      #   Structured: "2026-02-09 23:10:47 - src.module.name - INFO - [-] - message"
+      #   Uvicorn:    "INFO:     172.18.0.3:59152 - "GET /path HTTP/1.1" 200 OK"
+      - match:
+          selector: '{compose_service="el-servador"}'
+          stages:
+            # 2a: Drop health-check and metrics endpoint access logs (high frequency noise)
+            # Prometheus scrapes /health/metrics every 15s, Docker healthcheck hits /health/live every 30s
+            # Two drop patterns needed because server logs requests in two formats:
+            #   1. Uvicorn access: 'INFO:     ... "GET /api/v1/health/metrics HTTP/1.1" 200'
+            #   2. Structured middleware: '... - Request completed: GET /api/v1/health/metrics status=200'
+            - drop:
+                source: ""
+                expression: ".*GET /api/v1/health/.* HTTP/.*"
+            - drop:
+                source: ""
+                expression: ".*Request completed: GET /api/v1/health/.*"
+
+            # 2b: Multiline aggregation for Python tracebacks
+            # A new log entry starts with a timestamp (structured) or log level prefix (uvicorn).
+            # Lines NOT matching firstline (e.g. traceback frames, exception details)
+            # are appended to the previous entry, keeping tracebacks as single Loki entries.
+            # Example traceback that gets aggregated:
+            #   2026-02-09 12:00:00 - src.module - ERROR - [-] - Unhandled exception:
+            #   Traceback (most recent call last):
+            #     File "/app/src/module.py", line 42, in handle
+            #       result = await self.process(data)
+            #   ValueError: Invalid data
+            - multiline:
+                firstline: '^\d{4}-\d{2}-\d{2}|^(?:INFO|WARNING|ERROR|DEBUG|CRITICAL):'
+                max_wait_time: 3s
+                max_lines: 50
+
+            # 2c: Regex parser for structured server text-logs
+            # Extracts: level (INFO/WARNING/ERROR/DEBUG), logger (Python module path)
+            # Format: "YYYY-MM-DD HH:MM:SS - logger.name - LEVEL - [request_id] - message"
+            # Uvicorn access logs won't match this regex → no labels extracted (acceptable)
+            - regex:
+                expression: '^\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2}\s-\s(?P<logger>\S+)\s-\s(?P<level>\w+)\s-\s\[(?P<request_id>[^\]]*)\]\s-\s(?P<message>.*)'
+
+            # 2d: Promote extracted fields to Loki labels for efficient querying
+            # Only level and logger become labels (low cardinality).
+            # request_id stays in log text (high cardinality) → query with |= "request-uuid"
+            - labels:
+                level:
+                logger:
+
+      # Stage 3: el-frontend - JSON parsing for Vue 3 dashboard logs
+      # Frontend outputs JSON-structured logs via custom logger utility.
+      # Extracts level (info/warn/error/debug) and component (Vue component name).
+      - match:
+          selector: '{compose_service="el-frontend"}'
+          stages:
+            - json:
+                expressions:
+                  level: level
+                  component: component
+            - labels:
+                level:
+                component:
+
+      # Stage 4: esp32-serial-logger - Parse ESP32 serial output (JSON-structured)
+      # Logger outputs structured JSON from TCP-based serial bridge (ser2net/socat).
+      # Parses 4 ESP32 log formats: Custom Logger, Boot Banner, MQTT Debug JSON, ESP-IDF SDK.
+      # Extracts: level (info/warning/error/debug), device_id (esp32-xiao-01), component (mqtt/sensor/logger).
+      - match:
+          selector: '{compose_service="esp32-serial-logger"}'
+          stages:
+            # 4a: Parse JSON output from serial_logger.py
+            - json:
+                expressions:
+                  level: level
+                  device: device_id
+                  component: component
+                  format: format
+
+            # 4b: Promote extracted fields to Loki labels for efficient querying
+            # device, level, component become labels (low cardinality).
+            # format stays in log text (queryable via |= filter).
+            - labels:
+                level:
+                device:
+                component:
+
+      # Stage 5: mqtt-broker - Drop healthcheck noise and extract level
+      # Mosquitto logs Docker healthcheck connection/disconnection events every 30s.
+      # These are pure noise (~4320 lines/day). Drop them and extract basic level.
+      - match:
+          selector: '{compose_service="mqtt-broker"}'
+          stages:
+            # 5a: Drop Docker healthcheck connect/disconnect noise
+            # Covers both specific IP patterns and generic healthcheck client names
+            - drop:
+                source: ""
+                expression: '.*healthcheck.*'
+            - drop:
+                source: ""
+                expression: '.*New connection from 127\.0\.0\.1.*'
+            - drop:
+                source: ""
+                expression: '.*Client <unknown> disconnected.*'
+            # 5b: Extract level from Mosquitto log lines
+            # Lines containing "error" → level=error, everything else → level=info
+            - regex:
+                expression: '(?i)(?P<level>error)'
+            - labels:
+                level:
+
+      # Stage 6: Loki - Extract level and drop query-stats noise
+      # Grafana polls Loki every 10s with error-monitoring queries (|~ "error|...").
+      # Loki logs these API calls as level=info with the full query text embedded.
+      # Promtail sends them back to Loki, where embedded keywords "error|exception"
+      # match the error filter → self-referencing feedback loop (~380 false positives).
+      # Same noise-drop pattern as el-servador health-check drops (Stage 2a).
+      # Only info-level query-stats are dropped; error-level logs are preserved.
+      - match:
+          selector: '{compose_service="loki"}'
+          stages:
+            # 5a: Parse Loki logfmt to extract level for label-based querying
+            # Loki outputs logfmt: level=info ts=... caller=... msg=... query=...
+            - logfmt:
+                mapping:
+                  level:
+            - labels:
+                level:
+            # 5b: Drop info-level lines containing LogQL query parameters
+            # Pattern: level=info ... query="{...}" (query execution stats)
+            # These contain embedded LogQL strings like |~ "error" that self-reference.
+            # Error-level query logs (malformed queries etc.) are preserved.
+            - drop:
+                source: ""
+                expression: '.*level=info.*query="\{.*'
