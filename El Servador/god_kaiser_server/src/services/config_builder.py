@@ -950,8 +950,7 @@ class ConfigPayloadBuilder:
                     skip_collector.append(
                         {
                             "rule_id": str(getattr(rule, "id", "") or ""),
-                            "rule_name": getattr(rule, "rule_name", "<unknown>")
-                            or "<unknown>",
+                            "rule_name": getattr(rule, "rule_name", "<unknown>") or "<unknown>",
                             "actuator_gpio": None,
                             "reason_code": self.REASON_UNSUPPORTED_CONDITION,
                             "reason_detail": f"extraction error: {exc}",
@@ -1154,7 +1153,9 @@ class ConfigPayloadBuilder:
                 normalized_type: str = normalize_sensor_type(raw_sensor_type)
 
                 _cal_key = f"{cond.get('gpio', -1)}:{normalized_type}"
-                if normalized_type in self.CALIBRATION_REQUIRED_SENSOR_TYPES and _cal_key not in (calibrated_sensors or set()):
+                if normalized_type in self.CALIBRATION_REQUIRED_SENSOR_TYPES and _cal_key not in (
+                    calibrated_sensors or set()
+                ):
                     logger.info(
                         "[CONFIG] Rule '%s' OR-branch[%d]: sensor_type '%s' requires calibration (not calibrated), branch skipped",
                         rule_name,
@@ -1272,9 +1273,13 @@ class ConfigPayloadBuilder:
                     "sensor_gpio": sensor_gpio,
                     "sensor_value_type": sensor_value_type,
                     "activate_below": float(activate_below) if activate_below is not None else 0.0,
-                    "deactivate_above": float(deactivate_above) if deactivate_above is not None else 0.0,
+                    "deactivate_above": (
+                        float(deactivate_above) if deactivate_above is not None else 0.0
+                    ),
                     "activate_above": float(activate_above) if activate_above is not None else 0.0,
-                    "deactivate_below": float(deactivate_below) if deactivate_below is not None else 0.0,
+                    "deactivate_below": (
+                        float(deactivate_below) if deactivate_below is not None else 0.0
+                    ),
                     "current_state_active": current_state_active,
                     "max_on_seconds": _entry["duration"],
                 }
@@ -1442,7 +1447,9 @@ class ConfigPayloadBuilder:
                     _target_state = True
                 else:
                     _target_state = None
-            actuator_entries.append({"gpio": _gpio, "duration": _duration, "target_state": _target_state})
+            actuator_entries.append(
+                {"gpio": _gpio, "duration": _duration, "target_state": _target_state}
+            )
 
         if not actuator_entries:
             seen_esp_ids = [
@@ -1451,8 +1458,7 @@ class ConfigPayloadBuilder:
                 if isinstance(a, dict) and a.get("type") in ("actuator_command", "actuator")
             ]
             detail = (
-                f"no actuator action targets ESP '{esp_id}'"
-                f"; seen_esp_ids={seen_esp_ids}"
+                f"no actuator action targets ESP '{esp_id}'" f"; seen_esp_ids={seen_esp_ids}"
                 if seen_esp_ids
                 else f"no actuator action targets ESP '{esp_id}' (no matching action type or empty)"
             )
@@ -1584,7 +1590,9 @@ class ConfigPayloadBuilder:
                 raw_sensor_type: str = threshold_cond.get("sensor_type") or ""
                 normalized_type: str = normalize_sensor_type(raw_sensor_type)
                 _cal_key = f"{threshold_cond.get('gpio', -1)}:{normalized_type}"
-                if normalized_type in self.CALIBRATION_REQUIRED_SENSOR_TYPES and _cal_key not in (calibrated_sensors or set()):
+                if normalized_type in self.CALIBRATION_REQUIRED_SENSOR_TYPES and _cal_key not in (
+                    calibrated_sensors or set()
+                ):
                     logger.info(
                         "[CONFIG] Rule '%s': sensor_type '%s' (normalized: '%s') requires "
                         "calibration (not calibrated) — offline threshold rule skipped.",
@@ -1828,9 +1836,13 @@ class ConfigPayloadBuilder:
                 "sensor_gpio": sensor_gpio,
                 "sensor_value_type": sensor_value_type,
                 "activate_below": float(activate_below) if activate_below is not None else 0.0,
-                "deactivate_above": float(deactivate_above) if deactivate_above is not None else 0.0,
+                "deactivate_above": (
+                    float(deactivate_above) if deactivate_above is not None else 0.0
+                ),
                 "activate_above": float(activate_above) if activate_above is not None else 0.0,
-                "deactivate_below": float(deactivate_below) if deactivate_below is not None else 0.0,
+                "deactivate_below": (
+                    float(deactivate_below) if deactivate_below is not None else 0.0
+                ),
                 "current_state_active": current_state_active,
                 # Carry per-action runtime cap so firmware enforces "ON for N seconds"
                 # during MQTT disconnect / OFFLINE_ACTIVE.

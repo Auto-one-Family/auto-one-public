@@ -212,7 +212,9 @@ def test_load_credentials_happy_path_with_google_auth(tmp_path: Path) -> None:
     assert getattr(creds, "service_account_email", "").endswith("iam.gserviceaccount.com")
 
 
-def test_load_credentials_missing_google_auth(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_load_credentials_missing_google_auth(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     sa = tmp_path / "sa.json"
     sa.write_text(json.dumps(_sa_payload()), encoding="utf-8")
     settings = _settings(enabled=True, sa_path=str(sa))

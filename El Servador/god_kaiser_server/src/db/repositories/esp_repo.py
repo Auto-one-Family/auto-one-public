@@ -69,9 +69,7 @@ class ESPRepository(BaseRepository[ESPDevice]):
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
 
-    async def get_all_with_components(
-        self, *, include_deleted: bool = False
-    ) -> list[ESPDevice]:
+    async def get_all_with_components(self, *, include_deleted: bool = False) -> list[ESPDevice]:
         """Return all devices with sensors + actuators eager-loaded.
 
         AUT-224 A2: replaces an inline ``select(ESPDevice).options(selectinload(...))``

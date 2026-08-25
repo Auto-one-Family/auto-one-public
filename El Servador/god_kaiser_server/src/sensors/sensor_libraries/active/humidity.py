@@ -503,13 +503,9 @@ class BME280HumidityProcessor(BaseSensorProcessor):
 
         warnings = []
         if raw_value < self.LOW_THRESHOLD:
-            warnings.append(
-                f"Very low humidity ({raw_value}% RH). Check sensor connection."
-            )
+            warnings.append(f"Very low humidity ({raw_value}% RH). Check sensor connection.")
         if raw_value > self.CONDENSATION_THRESHOLD:
-            warnings.append(
-                f"Very high humidity ({raw_value}% RH). Possible condensation."
-            )
+            warnings.append(f"Very high humidity ({raw_value}% RH). Possible condensation.")
         if raw_value < self.HUMIDITY_TYPICAL_MIN or raw_value > self.HUMIDITY_TYPICAL_MAX:
             warnings.append(
                 f"Humidity {raw_value}% RH outside typical accuracy range "

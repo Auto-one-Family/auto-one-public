@@ -70,9 +70,7 @@ class TankCreate(BaseModel):
     @classmethod
     def validate_operation_mode(cls, v: str) -> str:
         if v not in _OPERATION_MODE_SET:
-            raise ValueError(
-                f"operation_mode must be one of {sorted(_OPERATION_MODE_SET)}"
-            )
+            raise ValueError(f"operation_mode must be one of {sorted(_OPERATION_MODE_SET)}")
         return v
 
 
@@ -100,9 +98,7 @@ class TankUpdate(BaseModel):
         if v is None:
             return v
         if v not in _OPERATION_MODE_SET:
-            raise ValueError(
-                f"operation_mode must be one of {sorted(_OPERATION_MODE_SET)}"
-            )
+            raise ValueError(f"operation_mode must be one of {sorted(_OPERATION_MODE_SET)}")
         return v
 
 
@@ -147,9 +143,7 @@ class TankSubzoneAssignmentInfo(BaseModel):
     tank_id: str = Field(..., description="UUID of the tank")
     subzone_config_id: str = Field(..., description="UUID of the subzone_config")
     assigned_at: str = Field(..., description="ISO-8601 timestamp (UTC)")
-    assigned_by: Optional[int] = Field(
-        None, description="User ID of the assigning operator"
-    )
+    assigned_by: Optional[int] = Field(None, description="User ID of the assigning operator")
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -390,9 +384,7 @@ class NutrientBatchCreate(BaseModel):
     @classmethod
     def validate_acquisition_method(cls, v: str) -> str:
         if v not in _ACQUISITION_METHOD_SET:
-            raise ValueError(
-                f"acquisition_method must be one of {sorted(_ACQUISITION_METHOD_SET)}"
-            )
+            raise ValueError(f"acquisition_method must be one of {sorted(_ACQUISITION_METHOD_SET)}")
         return v
 
     @field_validator("qualifier")
@@ -407,22 +399,14 @@ class NutrientBatchCreate(BaseModel):
         _validate_components(self.components)
 
         if not self.ec_was_measured and self.ec_measured_after is not None:
-            raise ValueError(
-                "ec_measured_after must be omitted when ec_was_measured=false"
-            )
+            raise ValueError("ec_measured_after must be omitted when ec_was_measured=false")
         if self.ec_was_measured and self.ec_measured_after is None:
-            raise ValueError(
-                "ec_measured_after is required when ec_was_measured=true"
-            )
+            raise ValueError("ec_measured_after is required when ec_was_measured=true")
 
         if not self.ph_was_measured and self.ph_measured_after is not None:
-            raise ValueError(
-                "ph_measured_after must be omitted when ph_was_measured=false"
-            )
+            raise ValueError("ph_measured_after must be omitted when ph_was_measured=false")
         if self.ph_was_measured and self.ph_measured_after is None:
-            raise ValueError(
-                "ph_measured_after is required when ph_was_measured=true"
-            )
+            raise ValueError("ph_measured_after is required when ph_was_measured=true")
 
         return self
 
@@ -437,9 +421,7 @@ class NutrientBatchResponse(BaseModel):
     created_at: datetime = Field(..., description="Server insert timestamp (UTC)")
     recipe_label: Optional[str] = Field(None, description="Optional recipe label")
     volume_l: float = Field(..., description="Volume in liters")
-    components: List[Dict[str, Any]] = Field(
-        default_factory=list, description="Component list"
-    )
+    components: List[Dict[str, Any]] = Field(default_factory=list, description="Component list")
     ec_measured_after: Optional[float] = Field(None, description="EC after entry")
     ec_was_measured: bool = Field(..., description="Whether EC was measured")
     ph_measured_after: Optional[float] = Field(None, description="pH after entry")
@@ -456,8 +438,7 @@ class NutrientBatchResponse(BaseModel):
     prior_ec_ms_cm: Optional[float] = Field(
         None,
         description=(
-            "AUT-1346: Last known EC before this entry (ledger convention). "
-            "NULL when unknown."
+            "AUT-1346: Last known EC before this entry (ledger convention). " "NULL when unknown."
         ),
     )
     warnings: List[str] = Field(
@@ -645,9 +626,7 @@ def _validate_components(components: List[Dict[str, Any]]) -> None:
         if kind == "product":
             has_ml = "dose_ml_per_l" in raw and raw["dose_ml_per_l"] is not None
             has_g = "dose_g_per_l" in raw and raw["dose_g_per_l"] is not None
-            has_abs = (
-                "dose_ml_absolute" in raw and raw["dose_ml_absolute"] is not None
-            )
+            has_abs = "dose_ml_absolute" in raw and raw["dose_ml_absolute"] is not None
             # AUT-1352: logic doses may carry dose_ml_absolute alone when V_alt
             # (hence dose_ml_per_l) is unknown — absolute ml is primary truth (Q2).
             if has_ml and has_g:
@@ -675,13 +654,9 @@ def _validate_components(components: List[Dict[str, Any]]) -> None:
             if has_abs:
                 abs_dose = raw["dose_ml_absolute"]
                 if not isinstance(abs_dose, (int, float)) or isinstance(abs_dose, bool):
-                    raise ValueError(
-                        f"components[{idx}].dose_ml_absolute must be a number"
-                    )
+                    raise ValueError(f"components[{idx}].dose_ml_absolute must be a number")
                 if float(abs_dose) < 0:
-                    raise ValueError(
-                        f"components[{idx}].dose_ml_absolute must be ≥ 0"
-                    )
+                    raise ValueError(f"components[{idx}].dose_ml_absolute must be ≥ 0")
 
         elif kind == "salt":
             if "dose_ml_per_l" in raw or "dose_g_per_l" in raw:
@@ -690,21 +665,15 @@ def _validate_components(components: List[Dict[str, Any]]) -> None:
                 )
             conc = raw.get("conc_g_per_l")
             if not isinstance(conc, (int, float)) or isinstance(conc, bool):
-                raise ValueError(
-                    f"components[{idx}].conc_g_per_l is required and must be a number"
-                )
+                raise ValueError(f"components[{idx}].conc_g_per_l is required and must be a number")
             if float(conc) < 0:
                 raise ValueError(f"components[{idx}].conc_g_per_l must be ≥ 0")
             elements = raw.get("elements")
             if elements is not None and not isinstance(elements, dict):
-                raise ValueError(
-                    f"components[{idx}].elements must be an object when provided"
-                )
+                raise ValueError(f"components[{idx}].elements must be an object when provided")
 
         else:
-            raise ValueError(
-                f"components[{idx}].kind must be 'product' or 'salt', got {kind!r}"
-            )
+            raise ValueError(f"components[{idx}].kind must be 'product' or 'salt', got {kind!r}")
 
         # Optional EC contribution (both forms) — entered value only.
         if "ec_contribution_ms_cm" in raw:
@@ -714,6 +683,4 @@ def _validate_components(components: List[Dict[str, Any]]) -> None:
                     f"components[{idx}].ec_contribution_ms_cm must be a number when provided"
                 )
             if float(ec_contrib) < 0:
-                raise ValueError(
-                    f"components[{idx}].ec_contribution_ms_cm must be ≥ 0"
-                )
+                raise ValueError(f"components[{idx}].ec_contribution_ms_cm must be ≥ 0")

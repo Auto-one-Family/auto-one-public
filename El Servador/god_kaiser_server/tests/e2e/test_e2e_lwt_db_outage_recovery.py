@@ -95,4 +95,6 @@ class TestLWTHeartbeatRecovery:
                 break
             await asyncio.sleep(0.6)
 
-        assert final_status == "online", "Device should converge back to online after recovery heartbeat"
+        assert (
+            final_status == "online"
+        ), "Device should converge back to online after recovery heartbeat"

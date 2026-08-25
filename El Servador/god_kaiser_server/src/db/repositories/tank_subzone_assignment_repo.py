@@ -24,15 +24,11 @@ class TankSubzoneAssignmentRepository(BaseRepository[TankSubzoneAssignment]):
 
     async def get_by_tank(self, tank_id: uuid.UUID) -> List[TankSubzoneAssignment]:
         """Return all assignments for a given tank."""
-        stmt = select(TankSubzoneAssignment).where(
-            TankSubzoneAssignment.tank_id == tank_id
-        )
+        stmt = select(TankSubzoneAssignment).where(TankSubzoneAssignment.tank_id == tank_id)
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
 
-    async def get_by_subzone(
-        self, subzone_config_id: uuid.UUID
-    ) -> List[TankSubzoneAssignment]:
+    async def get_by_subzone(self, subzone_config_id: uuid.UUID) -> List[TankSubzoneAssignment]:
         """Return all assignments for a given subzone config."""
         stmt = select(TankSubzoneAssignment).where(
             TankSubzoneAssignment.subzone_config_id == subzone_config_id

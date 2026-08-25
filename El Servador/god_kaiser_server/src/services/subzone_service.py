@@ -152,14 +152,17 @@ class SubzoneService:
 
         # 3. If an explicit parent_zone_id was supplied and the ESP already has a zone,
         #    they must match (error code 2502 preserved for existing zone-mismatch case).
-        if parent_zone_id is not None and device.zone_id is not None and parent_zone_id != device.zone_id:
+        if (
+            parent_zone_id is not None
+            and device.zone_id is not None
+            and parent_zone_id != device.zone_id
+        ):
             logger.warning(
                 f"Subzone assignment: parent_zone_id '{parent_zone_id}' "
                 f"doesn't match ESP zone_id '{device.zone_id}'"
             )
             raise ValueError(
-                f"parent_zone_id '{parent_zone_id}' must match "
-                f"ESP's zone_id '{device.zone_id}'"
+                f"parent_zone_id '{parent_zone_id}' must match " f"ESP's zone_id '{device.zone_id}'"
             )
 
         # 4. No zone determined (ESP unzoned, no explicit parent_zone_id): DB-only pre-config.
@@ -767,9 +770,7 @@ class SubzoneService:
             existing.safe_mode_active = safe_mode_active
             # AUT-1241: None means "leave unchanged" on update (assign callers often omit it)
             if position_label is not None:
-                existing.position_label = (
-                    position_label.strip() if position_label.strip() else None
-                )
+                existing.position_label = position_label.strip() if position_label.strip() else None
 
             # Remove these GPIOs from OTHER subzones of this ESP
             gpios_to_remove = set(assigned_gpios)

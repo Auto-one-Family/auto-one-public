@@ -442,9 +442,7 @@ async def test_list_and_get_tank(
         assert get_resp.status_code == 200
         assert get_resp.json()["id"] == tank_id
 
-        missing_resp = await client.get(
-            f"/api/v1/tanks/{uuid.uuid4()}", headers=operator_headers
-        )
+        missing_resp = await client.get(f"/api/v1/tanks/{uuid.uuid4()}", headers=operator_headers)
         assert missing_resp.status_code == 404
 
 
@@ -549,12 +547,8 @@ async def test_reassign_device_replaces_previous_tank(
             headers=operator_headers,
         )
 
-        devices_a = await client.get(
-            f"/api/v1/tanks/{tank_a_id}/devices", headers=operator_headers
-        )
-        devices_b = await client.get(
-            f"/api/v1/tanks/{tank_b_id}/devices", headers=operator_headers
-        )
+        devices_a = await client.get(f"/api/v1/tanks/{tank_a_id}/devices", headers=operator_headers)
+        devices_b = await client.get(f"/api/v1/tanks/{tank_b_id}/devices", headers=operator_headers)
         assert devices_a.json()["count"] == 0
         assert devices_b.json()["count"] == 1
 
@@ -625,9 +619,7 @@ async def test_get_tank_targets_without_segment_returns_null_values(
         )
         tank_id = tank_resp.json()["id"]
 
-        resp = await client.get(
-            f"/api/v1/tanks/{tank_id}/targets", headers=operator_headers
-        )
+        resp = await client.get(f"/api/v1/tanks/{tank_id}/targets", headers=operator_headers)
         assert resp.status_code == 200, resp.text
         body = resp.json()
         assert body["tank_id"] == tank_id
@@ -676,9 +668,7 @@ async def test_get_tank_targets_with_covering_segment_returns_values(
         )
         tank_id = tank_resp.json()["id"]
 
-        resp = await client.get(
-            f"/api/v1/tanks/{tank_id}/targets", headers=operator_headers
-        )
+        resp = await client.get(f"/api/v1/tanks/{tank_id}/targets", headers=operator_headers)
         assert resp.status_code == 200, resp.text
         targets_by_measure = {t["measure"]: t for t in resp.json()["targets"]}
         assert targets_by_measure["target_ec"]["value"] == 1.6
@@ -692,9 +682,7 @@ async def test_get_tank_targets_with_covering_segment_returns_values(
 async def test_get_tank_targets_unknown_tank_404(operator_headers: dict) -> None:
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        resp = await client.get(
-            f"/api/v1/tanks/{uuid.uuid4()}/targets", headers=operator_headers
-        )
+        resp = await client.get(f"/api/v1/tanks/{uuid.uuid4()}/targets", headers=operator_headers)
         assert resp.status_code == 404
 
 
@@ -734,9 +722,7 @@ async def test_patch_domain_luft_clears_tank_id_without_tank_in_body(
     """GWT-1: PATCH {domain:luft} without tank_id clears stale membership."""
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        tank_id = await _create_tank(
-            client, operator_headers, zone.zone_id, "AUT-1328 Clear Tank"
-        )
+        tank_id = await _create_tank(client, operator_headers, zone.zone_id, "AUT-1328 Clear Tank")
         assign_resp = await client.put(
             f"/api/v1/tanks/{tank_id}/devices/{esp.device_id}",
             headers=operator_headers,
@@ -755,9 +741,7 @@ async def test_patch_domain_luft_clears_tank_id_without_tank_in_body(
         assert body["zone_id"] == zone.zone_id
         assert body["zone_name"] == zone.name
 
-        members = await client.get(
-            f"/api/v1/tanks/{tank_id}/devices", headers=operator_headers
-        )
+        members = await client.get(f"/api/v1/tanks/{tank_id}/devices", headers=operator_headers)
         assert members.status_code == 200
         assert members.json()["count"] == 0
 
@@ -775,9 +759,7 @@ async def test_assign_device_rejects_luft_domain(
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        tank_id = await _create_tank(
-            client, operator_headers, zone.zone_id, "AUT-1328 Reject Luft"
-        )
+        tank_id = await _create_tank(client, operator_headers, zone.zone_id, "AUT-1328 Reject Luft")
         assign_resp = await client.put(
             f"/api/v1/tanks/{tank_id}/devices/{esp.device_id}",
             headers=operator_headers,
@@ -785,15 +767,11 @@ async def test_assign_device_rejects_luft_domain(
         assert assign_resp.status_code == 400, assign_resp.text
         assert "wasser" in assign_resp.json()["detail"]
 
-        members = await client.get(
-            f"/api/v1/tanks/{tank_id}/devices", headers=operator_headers
-        )
+        members = await client.get(f"/api/v1/tanks/{tank_id}/devices", headers=operator_headers)
         assert members.status_code == 200
         assert members.json()["count"] == 0
 
-        esp_get = await client.get(
-            f"/api/v1/esp/devices/{esp.device_id}", headers=operator_headers
-        )
+        esp_get = await client.get(f"/api/v1/esp/devices/{esp.device_id}", headers=operator_headers)
         assert esp_get.status_code == 200
         assert esp_get.json()["tank_id"] is None
         assert esp_get.json()["domain"] == "luft"
@@ -808,9 +786,7 @@ async def test_patch_tank_id_null_keeps_wasser_domain(
     """GWT-3: PATCH {tank_id:null} keeps domain=wasser."""
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        tank_id = await _create_tank(
-            client, operator_headers, zone.zone_id, "AUT-1328 Keep Wasser"
-        )
+        tank_id = await _create_tank(client, operator_headers, zone.zone_id, "AUT-1328 Keep Wasser")
         assign_resp = await client.put(
             f"/api/v1/tanks/{tank_id}/devices/{esp.device_id}",
             headers=operator_headers,

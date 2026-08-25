@@ -43,9 +43,7 @@ class MultispeQRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def get_snapshot_by_id(
-        self, snapshot_id: uuid.UUID
-    ) -> Optional[SensorData]:
+    async def get_snapshot_by_id(self, snapshot_id: uuid.UUID) -> Optional[SensorData]:
         """
         Look up a single ``sensor_data`` row by primary key.
 
@@ -75,11 +73,7 @@ class MultispeQRepository:
             snapshot_id: ``sensor_data.id`` UUID of the snapshot to update.
             plant_id: New plant UUID to assign.
         """
-        stmt = (
-            update(SensorData)
-            .where(SensorData.id == snapshot_id)
-            .values(plant_id=plant_id)
-        )
+        stmt = update(SensorData).where(SensorData.id == snapshot_id).values(plant_id=plant_id)
         await self.session.execute(stmt)
 
     async def get_aggregates(
@@ -113,15 +107,9 @@ class MultispeQRepository:
                 f"Allowed values: {sorted(self._AGGREGATE_GROUP_FIELDS.keys())}."
             )
 
-        median_expr = func.percentile_cont(0.5).within_group(
-            SensorData.processed_value.asc()
-        )
-        q1_expr = func.percentile_cont(0.25).within_group(
-            SensorData.processed_value.asc()
-        )
-        q3_expr = func.percentile_cont(0.75).within_group(
-            SensorData.processed_value.asc()
-        )
+        median_expr = func.percentile_cont(0.5).within_group(SensorData.processed_value.asc())
+        q1_expr = func.percentile_cont(0.25).within_group(SensorData.processed_value.asc())
+        q3_expr = func.percentile_cont(0.75).within_group(SensorData.processed_value.asc())
 
         stmt = (
             select(
@@ -158,9 +146,7 @@ class MultispeQRepository:
                     "group_label": label,
                     "min": float(row.min) if row.min is not None else None,
                     "q1": float(row.q1) if row.q1 is not None else None,
-                    "median": (
-                        float(row.median) if row.median is not None else None
-                    ),
+                    "median": (float(row.median) if row.median is not None else None),
                     "q3": float(row.q3) if row.q3 is not None else None,
                     "max": float(row.max) if row.max is not None else None,
                     "n": int(row.n),

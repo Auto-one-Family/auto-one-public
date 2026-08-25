@@ -382,6 +382,7 @@ class SensorSchedulerService:
             # R1 — AUT-590: Skip measurement command when ESP is under FreeRTOS
             # queue pressure to avoid compounding the queue fill level.
             from ..mqtt.handlers.queue_pressure_handler import is_esp_under_pressure
+
             if is_esp_under_pressure(esp_id):
                 logger.warning(
                     f"Scheduled measurement skipped - ESP under queue pressure: {esp_id}/GPIO {gpio}"

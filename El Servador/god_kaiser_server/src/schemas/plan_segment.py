@@ -84,9 +84,7 @@ class PlanSegmentCreate(BaseModel):
             return None
         canonical = normalize_growth_phase(v)
         if canonical is None:
-            raise ValueError(
-                f"phase_ref '{v}' is not a PLANT_PHASES key or known alias"
-            )
+            raise ValueError(f"phase_ref '{v}' is not a PLANT_PHASES key or known alias")
         return canonical
 
 
@@ -108,9 +106,7 @@ class PlanSegmentUpdate(BaseModel):
     to_ts: Optional[datetime] = None
     interp: Optional[str] = Field(None, description=f"One of {sorted(PLAN_INTERPS)}")
     phase_ref: Optional[str] = Field(None, max_length=64)
-    status: Optional[str] = Field(
-        None, description=f"One of {sorted(PLAN_SEGMENT_STATUSES)}"
-    )
+    status: Optional[str] = Field(None, description=f"One of {sorted(PLAN_SEGMENT_STATUSES)}")
     tolerance: Optional[float] = None
 
     @field_validator("domain")
@@ -148,9 +144,7 @@ class PlanSegmentUpdate(BaseModel):
             return None
         canonical = normalize_growth_phase(v)
         if canonical is None:
-            raise ValueError(
-                f"phase_ref '{v}' is not a PLANT_PHASES key or known alias"
-            )
+            raise ValueError(f"phase_ref '{v}' is not a PLANT_PHASES key or known alias")
         return canonical
 
 

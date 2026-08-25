@@ -1140,9 +1140,7 @@ class TopicBuilder:
         return f"kaiser/{kaiser_id}/esp/{esp_id}/system/queue_pressure"
 
     @staticmethod
-    def build_actuator_latched_offline_topic(
-        esp_id: str, gpio: int, kaiser_id: str = "god"
-    ) -> str:
+    def build_actuator_latched_offline_topic(esp_id: str, gpio: int, kaiser_id: str = "god") -> str:
         """
         Build actuator latched-offline telemetry topic (AUT-117).
 
@@ -1162,9 +1160,7 @@ class TopicBuilder:
         Returns:
             kaiser/{kaiser_id}/esp/{esp_id}/actuator/{gpio}/latched_offline
         """
-        return (
-            f"kaiser/{kaiser_id}/esp/{esp_id}/actuator/{gpio}/latched_offline"
-        )
+        return f"kaiser/{kaiser_id}/esp/{esp_id}/actuator/{gpio}/latched_offline"
 
     @staticmethod
     def parse_actuator_latched_offline_topic(
@@ -1183,10 +1179,7 @@ class TopicBuilder:
             Parsed topic components ``{kaiser_id, esp_id, gpio, type}``
             or ``None`` if parse fails.
         """
-        pattern = (
-            r"^kaiser/([a-zA-Z0-9_]+)/esp/([A-Z0-9_]+)/"
-            r"actuator/(\d+)/latched_offline$"
-        )
+        pattern = r"^kaiser/([a-zA-Z0-9_]+)/esp/([A-Z0-9_]+)/" r"actuator/(\d+)/latched_offline$"
         match = re.match(pattern, topic)
         if match:
             return {

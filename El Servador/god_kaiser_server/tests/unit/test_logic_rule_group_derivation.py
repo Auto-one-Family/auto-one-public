@@ -72,10 +72,7 @@ class TestDeriveRuleGroup:
         """AUT-1163 (L4, Option a): eine Schwellwert+Benachrichtigung-Regel bekommt
         keine eigene 'alarm'-Gruppe mehr — sie landet in ihrer Messgrößen-Kategorie,
         die Benachrichtigung wird ein Kennzeichen innerhalb der Gruppe (AUT-1176)."""
-        assert (
-            LogicService.derive_rule_group(None, [_SENSOR_THRESHOLD_PH], [_NOTIFICATION])
-            == "ph"
-        )
+        assert LogicService.derive_rule_group(None, [_SENSOR_THRESHOLD_PH], [_NOTIFICATION]) == "ph"
 
     def test_threshold_plus_actuator_off_returns_sicherheit(self):
         assert (
@@ -108,9 +105,7 @@ class TestDeriveRuleGroup:
         'temperatur' abgeleitet würde, aber ein explizites rule_group hat, muss
         den Override liefern, unverändert — die Ableitung darf gar nicht laufen."""
         assert (
-            LogicService.derive_rule_group(
-                "sonstiges", [_HYSTERESIS_TEMPERATURE], [_ACTUATOR_ON]
-            )
+            LogicService.derive_rule_group("sonstiges", [_HYSTERESIS_TEMPERATURE], [_ACTUATOR_ON])
             == "sonstiges"
         )
 

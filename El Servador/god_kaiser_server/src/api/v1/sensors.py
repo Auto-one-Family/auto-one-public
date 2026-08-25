@@ -175,9 +175,7 @@ def _model_to_response(
     # `thresholds` above). None if unset — CustomThresholds() would produce an
     # all-None object instead, which the frontend can't distinguish from "unset".
     custom_thresholds_raw = (sensor.alert_config or {}).get("custom_thresholds")
-    custom_thresholds = (
-        CustomThresholds(**custom_thresholds_raw) if custom_thresholds_raw else None
-    )
+    custom_thresholds = CustomThresholds(**custom_thresholds_raw) if custom_thresholds_raw else None
 
     # Convert pi_enhanced boolean to processing_mode string
     processing_mode = "pi_enhanced" if sensor.pi_enhanced else "raw"
@@ -860,9 +858,7 @@ async def create_or_update_sensor(
             subzone_error = str(e)
         except SQLAlchemyError as e:
             # AUT-228 (E2): Erwartete DB-Fehler -> WARNING, non-fatal
-            logger.warning(
-                f"Subzone assignment DB error for {esp_id}/GPIO {gpio}: {e}"
-            )
+            logger.warning(f"Subzone assignment DB error for {esp_id}/GPIO {gpio}: {e}")
             await db.rollback()
             subzone_error = "subzone_db_error"
         except Exception as e:
@@ -979,12 +975,16 @@ async def create_or_update_sensor(
                     conflict_type=validation_result.conflict_type.value,
                     conflict_component=validation_result.conflict_component,
                     conflict_id=(
-                        str(validation_result.conflict_id) if validation_result.conflict_id else None
+                        str(validation_result.conflict_id)
+                        if validation_result.conflict_id
+                        else None
                     ),
                     message=validation_result.message,
                 )
             if validation_result.warning:
-                logger.info(f"GPIO warning for ESP {esp_id}, GPIO {gpio}: {validation_result.warning}")
+                logger.info(
+                    f"GPIO warning for ESP {esp_id}, GPIO {gpio}: {validation_result.warning}"
+                )
     # =========================================================================
 
     # Convert schema fields to model fields
@@ -1597,9 +1597,7 @@ async def query_sensor_data(
         ]
     else:
         reading_responses = [
-            reading
-            for reading in (_raw_row_to_reading(r) for r in readings)
-            if reading is not None
+            reading for reading in (_raw_row_to_reading(r) for r in readings) if reading is not None
         ]
 
     # Cursor pagination metadata
@@ -1692,9 +1690,7 @@ async def get_sensor_data_by_source(
 
     # Convert to response format (skip warming_up — AUT-723 E3)
     reading_responses = [
-        reading
-        for reading in (_raw_row_to_reading(r) for r in readings)
-        if reading is not None
+        reading for reading in (_raw_row_to_reading(r) for r in readings) if reading is not None
     ]
 
     return SensorDataResponse(
@@ -2499,7 +2495,9 @@ async def update_sensor_alert_config(
     sensor.alert_config = existing
     await session.commit()
 
-    logger.info(f"Alert config updated: sensor {sensor_id}, user={user.username}, config={existing}")
+    logger.info(
+        f"Alert config updated: sensor {sensor_id}, user={user.username}, config={existing}"
+    )
     return SensorAlertConfigViewResponse(status="ok", alert_config=existing)
 
 
@@ -2659,11 +2657,17 @@ async def export_sensor_data(
     esp_id: Annotated[Optional[str], Query(description="Filter by ESP device ID")] = None,
     gpio: Annotated[Optional[int], Query(ge=0, le=39, description="Filter by GPIO")] = None,
     sensor_type: Annotated[Optional[str], Query(description="Filter by sensor type")] = None,
-    start_time: Annotated[Optional[datetime], Query(description="Start of time range (ISO-8601)")] = None,
-    end_time: Annotated[Optional[datetime], Query(description="End of time range (ISO-8601)")] = None,
+    start_time: Annotated[
+        Optional[datetime], Query(description="Start of time range (ISO-8601)")
+    ] = None,
+    end_time: Annotated[
+        Optional[datetime], Query(description="End of time range (ISO-8601)")
+    ] = None,
     columns: Annotated[
         Optional[str],
-        Query(description="Comma-separated column names (default: timestamp,processed_value,unit,quality,sensor_type)"),
+        Query(
+            description="Comma-separated column names (default: timestamp,processed_value,unit,quality,sensor_type)"
+        ),
     ] = None,
     resolution: Annotated[
         Optional[str],

@@ -27,6 +27,7 @@ from unittest.mock import MagicMock, AsyncMock, patch
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.db.models.esp import ESPDevice
+from src.db.models.actuator import ActuatorConfig
 from src.db.models.sensor import SensorConfig
 from src.db.models.subzone import SubzoneConfig
 from src.db.repositories import ESPRepository
@@ -351,9 +352,7 @@ class TestSubzoneAssignmentValidation:
         )
         assert response.success is True
 
-        subzone = await subzone_service.get_subzone(
-            esp_with_zone.device_id, "klima_reihe_2"
-        )
+        subzone = await subzone_service.get_subzone(esp_with_zone.device_id, "klima_reihe_2")
         assert subzone is not None
         assert subzone.position_label == "Reihe 2, oberes Regal"
 
@@ -370,9 +369,7 @@ class TestSubzoneAssignmentValidation:
             assigned_gpios=[5],
             subzone_name="Klima ohne Position",
         )
-        subzone = await subzone_service.get_subzone(
-            esp_with_zone.device_id, "klima_ohne_pos"
-        )
+        subzone = await subzone_service.get_subzone(esp_with_zone.device_id, "klima_ohne_pos")
         assert subzone is not None
         assert subzone.position_label is None
 
@@ -397,9 +394,7 @@ class TestSubzoneAssignmentValidation:
             subzone_name="Klima Keep",
             # position_label omitted → must not clear
         )
-        subzone = await subzone_service.get_subzone(
-            esp_with_zone.device_id, "klima_keep_pos"
-        )
+        subzone = await subzone_service.get_subzone(esp_with_zone.device_id, "klima_keep_pos")
         assert subzone is not None
         assert subzone.position_label == "Tisch links"
 

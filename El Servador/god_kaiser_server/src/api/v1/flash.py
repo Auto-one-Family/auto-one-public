@@ -346,7 +346,9 @@ async def execute_flash(
                     ),
                 },
             )
-        board_dir = _BOARD_DIR_MAP.get(device.board_type, device.board_type.lower().replace("-", "_"))
+        board_dir = _BOARD_DIR_MAP.get(
+            device.board_type, device.board_type.lower().replace("-", "_")
+        )
 
         flash_fn = flash_firmware if request.flash_type == "firmware" else flash_full
         executor = _FIRMWARE_FLASH_EXECUTOR

@@ -166,10 +166,7 @@ def _normalize_measurement(
         return None
 
     timestamp = _coerce_timestamp(
-        raw.get("timestamp")
-        or raw.get("time")
-        or raw.get("datum")
-        or raw.get("created_at")
+        raw.get("timestamp") or raw.get("time") or raw.get("datum") or raw.get("created_at")
     )
     if timestamp is None:
         return None
@@ -302,25 +299,16 @@ async def import_multispeq(
     device_serial: str = Form(..., description="Virtual MultispeQ device_id"),
     zone_id: str = Form(..., description="Target zone_id (snapshot context)"),
     subzone_id: Optional[str] = Form(None, description="Optional subzone_id"),
-    calibration_date: date = Form(
-        ..., description="Calibration validity date (audit context)"
-    ),
-    kaiser_id: Optional[str] = Form(
-        None, description="Optional tenant filter for plant lookups"
-    ),
-    dry_run: bool = Form(
-        False, description="Validate without inserting if True"
-    ),
+    calibration_date: date = Form(..., description="Calibration validity date (audit context)"),
+    kaiser_id: Optional[str] = Form(None, description="Optional tenant filter for plant lookups"),
+    dry_run: bool = Form(False, description="Validate without inserting if True"),
 ) -> DataResponse[dict]:
     # 1. Size guard.
     content = await file.read()
     if len(content) > MAX_UPLOAD_BYTES:
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=(
-                f"Upload exceeds maximum size of "
-                f"{MAX_UPLOAD_BYTES // (1024 * 1024)} MB."
-            ),
+            detail=(f"Upload exceeds maximum size of " f"{MAX_UPLOAD_BYTES // (1024 * 1024)} MB."),
         )
 
     # 2. Format detection. Filename takes precedence; content-type is hint.
@@ -412,15 +400,11 @@ async def assign_plant_to_snapshot(
         event_type=_EVENT_MULTISPEQ_ASSIGN_PLANT,
         severity=AuditSeverity.INFO,
         source_id=str(current_user.id),
-        message=(
-            f"Reassigned snapshot {snapshot_id} to plant {body.plant_id}"
-        ),
+        message=(f"Reassigned snapshot {snapshot_id} to plant {body.plant_id}"),
         details={
             "snapshot_id": str(snapshot_id),
             "new_plant_id": str(body.plant_id),
-            "previous_plant_id": (
-                str(previous_plant_id) if previous_plant_id else None
-            ),
+            "previous_plant_id": (str(previous_plant_id) if previous_plant_id else None),
             "sensor_type": snapshot.sensor_type,
         },
     )
@@ -431,9 +415,7 @@ async def assign_plant_to_snapshot(
         data={
             "snapshot_id": str(snapshot_id),
             "plant_id": str(body.plant_id),
-            "previous_plant_id": (
-                str(previous_plant_id) if previous_plant_id else None
-            ),
+            "previous_plant_id": (str(previous_plant_id) if previous_plant_id else None),
         },
     )
 
@@ -459,9 +441,7 @@ async def get_multispeq_aggregates(
         ...,
         description="Group dimension: zone_id | subzone_id | plant_id",
     ),
-    date_range: str = Query(
-        "30d", description="Window: 7d | 30d | 90d | season"
-    ),
+    date_range: str = Query("30d", description="Window: 7d | 30d | 90d | season"),
 ) -> DataResponse[list[dict]]:
     # 1. Validate group_by early (mirrors the repo-side ValueError for fast 422).
     if group_by not in _AGGREGATE_GROUP_FIELDS:
@@ -518,9 +498,7 @@ async def get_multispeq_correlation(
     y_metadata_key: str = Query(
         ..., description="Key in sensor_metadata for Y axis (e.g. yield_g)"
     ),
-    date_range: str = Query(
-        "30d", description="Window: 7d | 30d | 90d | season"
-    ),
+    date_range: str = Query("30d", description="Window: 7d | 30d | 90d | season"),
 ) -> DataResponse[list[dict]]:
     cutoff = _resolve_date_cutoff(date_range)
 

@@ -75,7 +75,9 @@ api_v1_router.include_router(plants_router)  # AUT-222 - Phyta Plants Schema
 api_v1_router.include_router(plan_segments_router)  # AUT-1232 - Plan Segment CRUD (T5 precondition)
 api_v1_router.include_router(stock_mix_recipes_router)  # AUT-1361 - Stock mix recipe identity (P9)
 api_v1_router.include_router(salt_compositions_router)  # AUT-1418 - Salt composition library (B1)
-api_v1_router.include_router(applied_setpoint_logs_router)  # AUT-1236 - Applied setpoint log read (T6)
+api_v1_router.include_router(
+    applied_setpoint_logs_router
+)  # AUT-1236 - Applied setpoint log read (T6)
 api_v1_router.include_router(tanks_router)  # AUT-1217 - Tank / Ledger write API
 api_v1_router.include_router(users_router)
 api_v1_router.include_router(zone_router)

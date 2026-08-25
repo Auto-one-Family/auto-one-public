@@ -38,9 +38,9 @@ class TestFlowProcessorTimeNormalization:
         r2 = processor.process(raw_value=343.0, params={"time_window": 9.0})
         assert r1.quality != "error"
         assert r2.quality != "error"
-        assert abs(r1.value - r2.value) < 0.15, (
-            f"Flow rate inconsistent across window lengths: {r1.value} vs {r2.value}"
-        )
+        assert (
+            abs(r1.value - r2.value) < 0.15
+        ), f"Flow rate inconsistent across window lengths: {r1.value} vs {r2.value}"
 
     def test_both_pass_validation(self, processor: FlowProcessor) -> None:
         """Both corrected values must be below 100 L/min validate() threshold."""
@@ -73,9 +73,9 @@ class TestFlowProcessorMissingTimeWindow:
     def test_old_bug_value_not_emitted(self, processor: FlowProcessor) -> None:
         """The old buggy 206.36 must never be emitted silently."""
         result = processor.process(raw_value=1135.0, params={})
-        assert result.value != pytest.approx(206.36, abs=1.0), (
-            "Old bug value 206.36 emitted — time_window=1.0 default was not removed"
-        )
+        assert result.value != pytest.approx(
+            206.36, abs=1.0
+        ), "Old bug value 206.36 emitted — time_window=1.0 default was not removed"
 
 
 class TestFlowProcessorZeroFlow:

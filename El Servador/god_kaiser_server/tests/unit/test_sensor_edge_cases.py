@@ -250,12 +250,19 @@ class TestAUT948AdcSourceSSoT:
         )
         captured: dict = {}
         with (
-            patch("src.sensors.library_loader.get_library_loader", return_value=self._make_loader_capturing(captured)),
+            patch(
+                "src.sensors.library_loader.get_library_loader",
+                return_value=self._make_loader_capturing(captured),
+            ),
             patch("src.sensors.sensor_type_registry.normalize_sensor_type", return_value="ph"),
         ):
             await handler._trigger_pi_enhanced_processing(
-                esp_id="ESP_TEST", gpio=1, sensor_type="ph",
-                raw_value=20000, sensor_config=cfg, raw_mode=True,
+                esp_id="ESP_TEST",
+                gpio=1,
+                sensor_type="ph",
+                raw_value=20000,
+                sensor_config=cfg,
+                raw_mode=True,
             )
 
         assert captured["calibration"]["adc_source"] == "ads1115"
@@ -271,12 +278,19 @@ class TestAUT948AdcSourceSSoT:
         captured: dict = {}
         with (
             caplog.at_level(logging.WARNING),
-            patch("src.sensors.library_loader.get_library_loader", return_value=self._make_loader_capturing(captured)),
+            patch(
+                "src.sensors.library_loader.get_library_loader",
+                return_value=self._make_loader_capturing(captured),
+            ),
             patch("src.sensors.sensor_type_registry.normalize_sensor_type", return_value="ph"),
         ):
             await handler._trigger_pi_enhanced_processing(
-                esp_id="ESP_TEST", gpio=1, sensor_type="ph",
-                raw_value=20000, sensor_config=cfg, raw_mode=True,
+                esp_id="ESP_TEST",
+                gpio=1,
+                sensor_type="ph",
+                raw_value=20000,
+                sensor_config=cfg,
+                raw_mode=True,
             )
 
         assert any("[AUT-948]" in r.message for r in caplog.records)
@@ -293,12 +307,19 @@ class TestAUT948AdcSourceSSoT:
         captured: dict = {}
         with (
             caplog.at_level(logging.WARNING),
-            patch("src.sensors.library_loader.get_library_loader", return_value=self._make_loader_capturing(captured)),
+            patch(
+                "src.sensors.library_loader.get_library_loader",
+                return_value=self._make_loader_capturing(captured),
+            ),
             patch("src.sensors.sensor_type_registry.normalize_sensor_type", return_value="ph"),
         ):
             await handler._trigger_pi_enhanced_processing(
-                esp_id="ESP_TEST", gpio=1, sensor_type="ph",
-                raw_value=20000, sensor_config=cfg, raw_mode=True,
+                esp_id="ESP_TEST",
+                gpio=1,
+                sensor_type="ph",
+                raw_value=20000,
+                sensor_config=cfg,
+                raw_mode=True,
             )
 
         assert not any("[AUT-948]" in r.message for r in caplog.records)
@@ -308,12 +329,19 @@ class TestAUT948AdcSourceSSoT:
         cfg = self._make_sensor_config(adc_source="internal", pga_gain=None, calibration_data=None)
         captured: dict = {}
         with (
-            patch("src.sensors.library_loader.get_library_loader", return_value=self._make_loader_capturing(captured)),
+            patch(
+                "src.sensors.library_loader.get_library_loader",
+                return_value=self._make_loader_capturing(captured),
+            ),
             patch("src.sensors.sensor_type_registry.normalize_sensor_type", return_value="ph"),
         ):
             await handler._trigger_pi_enhanced_processing(
-                esp_id="ESP_TEST", gpio=2, sensor_type="ph",
-                raw_value=2048, sensor_config=cfg, raw_mode=True,
+                esp_id="ESP_TEST",
+                gpio=2,
+                sensor_type="ph",
+                raw_value=2048,
+                sensor_config=cfg,
+                raw_mode=True,
             )
 
         assert captured["calibration"]["adc_source"] == "internal"

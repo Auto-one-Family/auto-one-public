@@ -39,18 +39,14 @@ async def list_applied_setpoint_logs(
     db: DBSession,
     _user: ActiveUser,
     zone_id: Optional[str] = Query(None, description="Filter by zone_id"),
-    subzone_config_id: Optional[UUID] = Query(
-        None, description="Filter by subzone_config_id"
-    ),
+    subzone_config_id: Optional[UUID] = Query(None, description="Filter by subzone_config_id"),
     domain: Optional[str] = Query(None, description="Filter by domain"),
     measure: Optional[str] = Query(None, description="Filter by measure"),
     rule_id: Optional[UUID] = Query(None, description="Filter by consuming rule id"),
     from_ts: Optional[datetime] = Query(
         None, description="Window start (inclusive) on effective_at"
     ),
-    to_ts: Optional[datetime] = Query(
-        None, description="Window end (exclusive) on effective_at"
-    ),
+    to_ts: Optional[datetime] = Query(None, description="Window end (exclusive) on effective_at"),
     limit: int = Query(500, ge=1, le=2000, description="Max rows (cap 2000)"),
 ) -> List[AppliedSetpointLogResponse]:
     repo = AppliedSetpointLogRepository(db)

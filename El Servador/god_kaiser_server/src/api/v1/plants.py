@@ -131,9 +131,7 @@ async def _assert_zone_subzone_consistent(
     if subzone_id is None:
         return
 
-    result = await db.execute(
-        select(SubzoneConfig).where(SubzoneConfig.id == subzone_id)
-    )
+    result = await db.execute(select(SubzoneConfig).where(SubzoneConfig.id == subzone_id))
     subzone = result.scalar_one_or_none()
     if subzone is None:
         raise HTTPException(
@@ -142,10 +140,7 @@ async def _assert_zone_subzone_consistent(
         )
     if zone_id is None:
         return
-    if (
-        subzone.parent_zone_id is not None
-        and subzone.parent_zone_id != zone_id
-    ):
+    if subzone.parent_zone_id is not None and subzone.parent_zone_id != zone_id:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=(
@@ -297,12 +292,8 @@ async def create_plant(
 async def list_plants(
     db: DBSession,
     _user: ActiveUser,
-    kaiser_id: Optional[str] = Query(
-        None, description="Filter by tenant (kaiser_id)"
-    ),
-    phase: Optional[str] = Query(
-        None, description="Filter by light/growth lifecycle phase"
-    ),
+    kaiser_id: Optional[str] = Query(None, description="Filter by tenant (kaiser_id)"),
+    phase: Optional[str] = Query(None, description="Filter by light/growth lifecycle phase"),
     # AUT-1183: filter by nutrient/fertilizer phase axis.
     nutrient_phase: Optional[str] = Query(
         None, description="Filter by nutrient/fertilizer phase (AUT-1183)"
@@ -394,9 +385,7 @@ async def patch_plant(
     # Conflict / existence check against the post-update state (AUT-1073).
     final_zone_id = update_data.get("zone_id", plant.zone_id)
     final_subzone_id = update_data.get("subzone_id", plant.subzone_id)
-    await _assert_zone_subzone_consistent(
-        db, zone_id=final_zone_id, subzone_id=final_subzone_id
-    )
+    await _assert_zone_subzone_consistent(db, zone_id=final_zone_id, subzone_id=final_subzone_id)
 
     # Note: BaseRepository.update keys on ``id`` but Plant's PK is ``plant_id``.
     # We update fields directly on the instance for clarity and correctness.
@@ -661,9 +650,7 @@ async def list_lifecycle_events(
         plant_id=plant_id,
         total=len(events),
         events=[LifecycleEventResponse.model_validate(e) for e in events],
-        tank_incidents=[
-            TankIncidentEventResponse.model_validate(i) for i in tank_incidents
-        ],
+        tank_incidents=[TankIncidentEventResponse.model_validate(i) for i in tank_incidents],
     )
 
 
@@ -712,9 +699,7 @@ async def list_phase_sections(
         belonging: list[PhaseSectionActionResponse] = []
         for ev in actions:
             if ev.linked_sensor_window_start and ev.linked_sensor_window_end:
-                if section.overlaps(
-                    ev.linked_sensor_window_start, ev.linked_sensor_window_end
-                ):
+                if section.overlaps(ev.linked_sensor_window_start, ev.linked_sensor_window_end):
                     belonging.append(PhaseSectionActionResponse.model_validate(ev))
             elif section.covers(ev.event_timestamp):
                 belonging.append(PhaseSectionActionResponse.model_validate(ev))
@@ -845,9 +830,7 @@ async def add_lifecycle_event(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=str(exc),
             ) from exc
-        existing_events = await plant_repo.get_lifecycle_events(
-            plant.plant_id, limit=1000
-        )
+        existing_events = await plant_repo.get_lifecycle_events(plant.plant_id, limit=1000)
         sections = build_phase_sections(plant, existing_events, axis="light", now=now_utc)
         covering = None
         if window_start is not None and window_end is not None:
@@ -856,18 +839,14 @@ async def add_lifecycle_event(
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                     detail=(
-                        "Action window must overlap a plant-phase section "
-                        "(WHEN) for this plant."
+                        "Action window must overlap a plant-phase section " "(WHEN) for this plant."
                     ),
                 )
         else:
             covering = section_covering(sections, event_timestamp)
         if covering is not None and new_phase is None:
             new_phase = covering.phase
-    elif (
-        body.linked_sensor_window_start is not None
-        or body.linked_sensor_window_end is not None
-    ):
+    elif body.linked_sensor_window_start is not None or body.linked_sensor_window_end is not None:
         try:
             window_start, window_end = validate_action_window(
                 body.linked_sensor_window_start,
@@ -1060,8 +1039,7 @@ async def update_lifecycle_event_status(
         )
 
     has_correction = any(
-        f is not None
-        for f in (body.event_timestamp, body.notes, body.event_type, body.new_phase)
+        f is not None for f in (body.event_timestamp, body.notes, body.event_type, body.new_phase)
     )
     # AUT-1208: a settled (reverted) event is not corrected further — only
     # its status may still change (e.g. un-reverting it back to 'occurred').
@@ -1101,14 +1079,10 @@ async def update_lifecycle_event_status(
         corrections.append({"field": "notes", "old": event.notes, "new": body.notes})
         event.notes = body.notes
     if body.event_type is not None and body.event_type != event.event_type:
-        corrections.append(
-            {"field": "event_type", "old": event.event_type, "new": body.event_type}
-        )
+        corrections.append({"field": "event_type", "old": event.event_type, "new": body.event_type})
         event.event_type = body.event_type
     if body.new_phase is not None and body.new_phase != event.new_phase:
-        corrections.append(
-            {"field": "new_phase", "old": event.new_phase, "new": body.new_phase}
-        )
+        corrections.append({"field": "new_phase", "old": event.new_phase, "new": body.new_phase})
         event.new_phase = body.new_phase
 
     if body.event_status is not None:

@@ -21,13 +21,13 @@ async def test_entered_pressure_logs_at_warning(caplog):
     }
 
     with caplog.at_level(logging.WARNING):
-        with patch(
-            "src.mqtt.handlers.queue_pressure_handler.increment_queue_pressure_event"
-        ) as mock_inc, patch.object(
-            handler, "_persist_transition"
-        ) as mock_persist, patch.object(
-            handler, "_broadcast_transition"
-        ) as mock_broadcast:
+        with (
+            patch(
+                "src.mqtt.handlers.queue_pressure_handler.increment_queue_pressure_event"
+            ) as mock_inc,
+            patch.object(handler, "_persist_transition") as mock_persist,
+            patch.object(handler, "_broadcast_transition") as mock_broadcast,
+        ):
             ok = await handler.handle_queue_pressure(topic, payload)
 
     assert ok is True
@@ -52,12 +52,10 @@ async def test_recovered_logs_at_info(caplog):
     }
 
     with caplog.at_level(logging.INFO):
-        with patch(
-            "src.mqtt.handlers.queue_pressure_handler.increment_queue_pressure_event"
-        ), patch.object(
-            handler, "_persist_transition"
-        ), patch.object(
-            handler, "_broadcast_transition"
+        with (
+            patch("src.mqtt.handlers.queue_pressure_handler.increment_queue_pressure_event"),
+            patch.object(handler, "_persist_transition"),
+            patch.object(handler, "_broadcast_transition"),
         ):
             ok = await handler.handle_queue_pressure(topic, payload)
 

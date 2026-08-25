@@ -87,9 +87,7 @@ async def test_logic_engine_composition_matches_recipe_volume_ratio(engine: Logi
             ],
         }
     ]
-    result = await engine._compute_chemistry_dose_ml(
-        rule, actions, {"value": 1000.0}
-    )
+    result = await engine._compute_chemistry_dose_ml(rule, actions, {"value": 1000.0})
     dose_a = result[0]["steps"][0]["action"]["dose_ml"]
     dose_b = result[0]["steps"][1]["action"]["dose_ml"]
     assert dose_a == pytest.approx(dose_b)
@@ -122,9 +120,7 @@ async def test_assist_equals_logic_engine_same_config(engine: LogicEngine) -> No
         {"type": "actuator_command", "esp_id": "ESP_A", "gpio": 5},
         {"type": "actuator_command", "esp_id": "ESP_B", "gpio": 6},
     ]
-    result = await engine._compute_chemistry_dose_ml(
-        rule, actions, {"value": 1000.0}
-    )
+    result = await engine._compute_chemistry_dose_ml(rule, actions, {"value": 1000.0})
     assert result[0]["dose_ml"] == pytest.approx(dose_a_assist)
     assert result[1]["dose_ml"] == pytest.approx(dose_b_assist)
 

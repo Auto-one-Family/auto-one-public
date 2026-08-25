@@ -770,7 +770,11 @@ class ESPService:
                         "reason_code": reason_code,
                         "generation": resolved_generation,
                         "config_fingerprint": resolved_fingerprint,
-                        **({"offline_rules_diagnostics": offline_rules_diagnostics} if offline_rules_diagnostics else {}),
+                        **(
+                            {"offline_rules_diagnostics": offline_rules_diagnostics}
+                            if offline_rules_diagnostics
+                            else {}
+                        ),
                     },
                 )
             except Exception as audit_err:
@@ -959,9 +963,7 @@ class ESPService:
                 coalesced: bool,
             ) -> None:
                 if coalesced:
-                    resolved_reason = (
-                        f"coalesced:{push_reason}" if push_reason else "coalesced"
-                    )
+                    resolved_reason = f"coalesced:{push_reason}" if push_reason else "coalesced"
                 else:
                     resolved_reason = push_reason or reason_code
                 session_maker = get_session_maker()

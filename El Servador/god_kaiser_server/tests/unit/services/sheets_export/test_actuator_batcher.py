@@ -162,7 +162,12 @@ class TestPairingEdgeCases:
         esp = await _make_esp(session)
         t0 = datetime(2026, 5, 23, 10, 0, 0, tzinfo=timezone.utc)
         await _add_history(
-            session, esp, gpio=18, command_type="set", value=1.0, timestamp=t0,
+            session,
+            esp,
+            gpio=18,
+            command_type="set",
+            value=1.0,
+            timestamp=t0,
             issued_by="logic:11111111-1111-1111-1111-111111111111",
         )
         await session.commit()
@@ -180,7 +185,12 @@ class TestPairingEdgeCases:
         esp = await _make_esp(session)
         t0 = datetime(2026, 5, 23, 10, 0, 0, tzinfo=timezone.utc)
         await _add_history(
-            session, esp, gpio=18, command_type="stop", value=0.0, timestamp=t0,
+            session,
+            esp,
+            gpio=18,
+            command_type="stop",
+            value=0.0,
+            timestamp=t0,
             issued_by="system:lwt_disconnect",
         )
         await session.commit()
@@ -203,7 +213,12 @@ class TestPairingEdgeCases:
         t1 = datetime(2026, 5, 23, 10, 0, 5, tzinfo=timezone.utc)
         await _add_history(session, esp, gpio=18, command_type="set", value=1.0, timestamp=t0)
         await _add_history(
-            session, esp, gpio=18, command_type="emergency_stop", value=0.0, timestamp=t1,
+            session,
+            esp,
+            gpio=18,
+            command_type="emergency_stop",
+            value=0.0,
+            timestamp=t1,
             issued_by="emergency:operator",
         )
         await session.commit()
@@ -223,7 +238,12 @@ class TestPairingEdgeCases:
         t1 = datetime(2026, 5, 23, 10, 0, 10, tzinfo=timezone.utc)
         await _add_history(session, esp, gpio=18, command_type="set", value=1.0, timestamp=t0)
         await _add_history(
-            session, esp, gpio=18, command_type="stop", value=0.0, timestamp=t1,
+            session,
+            esp,
+            gpio=18,
+            command_type="stop",
+            value=0.0,
+            timestamp=t1,
             issued_by="system:lwt_disconnect",
         )
         await session.commit()
@@ -270,9 +290,7 @@ class TestPairingEdgeCases:
             }
         }
         t_off = datetime(2026, 5, 23, 9, 0, 45, tzinfo=timezone.utc)
-        await _add_history(
-            session, esp, gpio=18, command_type="stop", value=0.0, timestamp=t_off
-        )
+        await _add_history(session, esp, gpio=18, command_type="stop", value=0.0, timestamp=t_off)
         await session.commit()
 
         batcher = ActuatorExportBatcher(session)
@@ -306,11 +324,21 @@ class TestAusloeserVocabulary:
         t0 = datetime(2026, 5, 23, 10, 0, 0, tzinfo=timezone.utc)
         t1 = datetime(2026, 5, 23, 10, 0, 30, tzinfo=timezone.utc)
         await _add_history(
-            session, esp, gpio=18, command_type="set", value=1.0, timestamp=t0,
+            session,
+            esp,
+            gpio=18,
+            command_type="set",
+            value=1.0,
+            timestamp=t0,
             issued_by=f"logic:{rule_id}",
         )
         await _add_history(
-            session, esp, gpio=18, command_type="stop", value=0.0, timestamp=t1,
+            session,
+            esp,
+            gpio=18,
+            command_type="stop",
+            value=0.0,
+            timestamp=t1,
             issued_by=f"logic:{rule_id}",
         )
         await session.commit()
@@ -327,11 +355,21 @@ class TestAusloeserVocabulary:
         t0 = datetime(2026, 5, 23, 10, 0, 0, tzinfo=timezone.utc)
         t1 = datetime(2026, 5, 23, 10, 0, 5, tzinfo=timezone.utc)
         await _add_history(
-            session, esp, gpio=18, command_type="set", value=1.0, timestamp=t0,
+            session,
+            esp,
+            gpio=18,
+            command_type="set",
+            value=1.0,
+            timestamp=t0,
             issued_by="system:offline_safe",
         )
         await _add_history(
-            session, esp, gpio=18, command_type="stop", value=0.0, timestamp=t1,
+            session,
+            esp,
+            gpio=18,
+            command_type="stop",
+            value=0.0,
+            timestamp=t1,
             issued_by="system:offline_safe",
         )
         await session.commit()
@@ -347,11 +385,21 @@ class TestAusloeserVocabulary:
         t0 = datetime(2026, 5, 23, 10, 0, 0, tzinfo=timezone.utc)
         t1 = datetime(2026, 5, 23, 10, 0, 5, tzinfo=timezone.utc)
         await _add_history(
-            session, esp, gpio=18, command_type="set", value=1.0, timestamp=t0,
+            session,
+            esp,
+            gpio=18,
+            command_type="set",
+            value=1.0,
+            timestamp=t0,
             issued_by="api:dashboard",
         )
         await _add_history(
-            session, esp, gpio=18, command_type="stop", value=0.0, timestamp=t1,
+            session,
+            esp,
+            gpio=18,
+            command_type="stop",
+            value=0.0,
+            timestamp=t1,
             issued_by="api:dashboard",
         )
         await session.commit()
@@ -369,7 +417,12 @@ class TestAusloeserVocabulary:
         esp = await _make_esp(session)
         t0 = datetime(2026, 5, 23, 10, 0, 0, tzinfo=timezone.utc)
         await _add_history(
-            session, esp, gpio=18, command_type="stop", value=0.0, timestamp=t0,
+            session,
+            esp,
+            gpio=18,
+            command_type="stop",
+            value=0.0,
+            timestamp=t0,
             issued_by="",
         )
         await session.commit()
@@ -414,12 +467,22 @@ class TestD8Correlation:
         await session.flush()
 
         await _add_history(
-            session, esp, gpio=18, command_type="set", value=1.0, timestamp=t0,
+            session,
+            esp,
+            gpio=18,
+            command_type="set",
+            value=1.0,
+            timestamp=t0,
             issued_by=f"logic:{rule_id}",
             metadata={"correlation_id": corr},
         )
         await _add_history(
-            session, esp, gpio=18, command_type="stop", value=0.0, timestamp=t1,
+            session,
+            esp,
+            gpio=18,
+            command_type="stop",
+            value=0.0,
+            timestamp=t1,
             issued_by=f"logic:{rule_id}",
             metadata={"correlation_id": corr},
         )
@@ -455,11 +518,20 @@ class TestD8Correlation:
         await session.flush()
 
         await _add_history(
-            session, esp, gpio=18, command_type="set", value=1.0, timestamp=t0,
+            session,
+            esp,
+            gpio=18,
+            command_type="set",
+            value=1.0,
+            timestamp=t0,
             issued_by=f"logic:{rule_id}",
         )
         await _add_history(
-            session, esp, gpio=18, command_type="stop", value=0.0,
+            session,
+            esp,
+            gpio=18,
+            command_type="stop",
+            value=0.0,
             timestamp=t0.replace(second=20),
             issued_by=f"logic:{rule_id}",
         )

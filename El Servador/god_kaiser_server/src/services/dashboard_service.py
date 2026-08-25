@@ -268,9 +268,7 @@ class DashboardService:
             await self.session.commit()
         except IntegrityError:
             await self.session.rollback()
-            raise ValueError(
-                f"User {user_id} is already assigned to dashboard {dashboard_id}"
-            )
+            raise ValueError(f"User {user_id} is already assigned to dashboard {dashboard_id}")
 
         logger.info(
             f"Dashboard {dashboard_id} assigned to user {user_id} by operator {operator_id}"

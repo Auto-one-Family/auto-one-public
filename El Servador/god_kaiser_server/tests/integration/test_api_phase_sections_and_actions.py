@@ -64,9 +64,7 @@ async def test_phase_change_syncs_zone_context_canonical_key(
     operator_headers: dict,
     db_session: AsyncSession,
 ) -> None:
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         response = await client.post(
             f"/api/v1/plants/{zoned_plant.plant_id}/lifecycle-event",
             json={"event_type": "phase_changed", "new_phase": "bluete-bulk"},
@@ -101,9 +99,7 @@ async def test_zone_context_maps_legacy_string_and_does_not_overwrite_plant(
     )
     await db_session.commit()
 
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         mapped = await client.put(
             f"/api/v1/zone/context/{zoned_plant.zone_id}",
             json={
@@ -134,9 +130,7 @@ async def test_executed_action_persists_on_phase_section(
     start = datetime(2026, 2, 1, 8, 0, tzinfo=timezone.utc)
     end = start + timedelta(hours=6)
 
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         created = await client.post(
             f"/api/v1/plants/{zoned_plant.plant_id}/lifecycle-event",
             json={
@@ -181,9 +175,7 @@ async def test_action_window_outside_section_is_rejected(
 ) -> None:
     start = datetime(2025, 1, 1, tzinfo=timezone.utc)
     end = start + timedelta(hours=2)
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         response = await client.post(
             f"/api/v1/plants/{zoned_plant.plant_id}/lifecycle-event",
             json={

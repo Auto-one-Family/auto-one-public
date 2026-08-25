@@ -119,9 +119,7 @@ class TestScanUsbDevices:
 
     @patch("src.services.flash.device_scanner.list_ports.comports")
     def test_esp32s3_devkit_jtag_detected(self, mock_comports: MagicMock) -> None:
-        mock_comports.return_value = [
-            _make_port("/dev/ttyACM1", _VID_ESPRESSIF, _PID_ESP32S3_JTAG)
-        ]
+        mock_comports.return_value = [_make_port("/dev/ttyACM1", _VID_ESPRESSIF, _PID_ESP32S3_JTAG)]
         devices = scan_usb_devices()
 
         assert devices[0].chip_family == "ESP32-S3"
@@ -129,9 +127,7 @@ class TestScanUsbDevices:
 
     @patch("src.services.flash.device_scanner.list_ports.comports")
     def test_esp32c3_cdc_detected(self, mock_comports: MagicMock) -> None:
-        mock_comports.return_value = [
-            _make_port("COM7", _VID_ESPRESSIF, _PID_ESP32C3_CDC_JTAG)
-        ]
+        mock_comports.return_value = [_make_port("COM7", _VID_ESPRESSIF, _PID_ESP32C3_CDC_JTAG)]
         devices = scan_usb_devices()
 
         assert devices[0].chip_family == "ESP32-C3"
@@ -139,9 +135,7 @@ class TestScanUsbDevices:
 
     @patch("src.services.flash.device_scanner.list_ports.comports")
     def test_unknown_device_included_not_filtered(self, mock_comports: MagicMock) -> None:
-        mock_comports.return_value = [
-            _make_port("COM9", 0x1234, 0x5678, "Unknown USB Serial")
-        ]
+        mock_comports.return_value = [_make_port("COM9", 0x1234, 0x5678, "Unknown USB Serial")]
         devices = scan_usb_devices()
 
         assert len(devices) == 1
@@ -229,9 +223,7 @@ class TestIsUsbScanningSupported:
     @patch("src.services.flash.device_scanner.Path")
     @patch("src.services.flash.device_scanner.sys")
     @patch.dict("os.environ", {}, clear=False)
-    def test_linux_serial_devices_present(
-        self, mock_sys: MagicMock, mock_path: MagicMock
-    ) -> None:
+    def test_linux_serial_devices_present(self, mock_sys: MagicMock, mock_path: MagicMock) -> None:
         mock_sys.platform = "linux"
         import os
 
@@ -244,9 +236,7 @@ class TestIsUsbScanningSupported:
     @patch("src.services.flash.device_scanner.Path")
     @patch("src.services.flash.device_scanner.sys")
     @patch.dict("os.environ", {}, clear=False)
-    def test_linux_no_devices_degraded(
-        self, mock_sys: MagicMock, mock_path: MagicMock
-    ) -> None:
+    def test_linux_no_devices_degraded(self, mock_sys: MagicMock, mock_path: MagicMock) -> None:
         mock_sys.platform = "linux"
         import os
 

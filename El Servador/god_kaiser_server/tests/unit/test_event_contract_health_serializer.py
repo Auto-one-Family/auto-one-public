@@ -36,9 +36,7 @@ def test_extract_last_known_health_metrics_maps_all_keys():
 
 
 def test_extract_last_known_health_metrics_partial_only_known_keys():
-    assert extract_last_known_health_metrics({"last_heap_free": 1000}) == {
-        "heap_free": 1000
-    }
+    assert extract_last_known_health_metrics({"last_heap_free": 1000}) == {"heap_free": 1000}
 
 
 def test_extract_last_known_health_metrics_skips_none_values():

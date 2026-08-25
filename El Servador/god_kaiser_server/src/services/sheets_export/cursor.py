@@ -274,16 +274,12 @@ class SheetsExportCursor:
         elif isinstance(value, dict):
             stored = _normalise_cursor(value)
         else:
-            raise ValueError(
-                f"Cursor value must be a dict or null, got {type(value).__name__}."
-            )
+            raise ValueError(f"Cursor value must be a dict or null, got {type(value).__name__}.")
 
         await self._set(
             cursor_name,
             stored,
             description=f"Manual operator reset of cursor {cursor_name} (AUT-446 / D7).",
         )
-        logger.warning(
-            "[sheets_export] cursor %s manually reset to %s", cursor_name, stored
-        )
+        logger.warning("[sheets_export] cursor %s manually reset to %s", cursor_name, stored)
         return stored

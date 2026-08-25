@@ -76,9 +76,7 @@ def compute_ratio_shares_from_volume(
     if n == 0:
         return []
     if concentrations is not None and len(concentrations) != n:
-        raise ValueError(
-            f"concentrations length {len(concentrations)} != components length {n}"
-        )
+        raise ValueError(f"concentrations length {len(concentrations)} != components length {n}")
 
     volume_shares = resolve_volume_shares(components)
     concs: list[float] = []
@@ -90,9 +88,7 @@ def compute_ratio_shares_from_volume(
         try:
             conc = float(raw)  # type: ignore[arg-type]
         except (TypeError, ValueError) as exc:
-            raise ValueError(
-                f"component concentration must be > 0, got {raw!r}"
-            ) from exc
+            raise ValueError(f"component concentration must be > 0, got {raw!r}") from exc
         if conc <= 0:
             raise ValueError(f"component concentration must be > 0, got {conc}")
         concs.append(conc)

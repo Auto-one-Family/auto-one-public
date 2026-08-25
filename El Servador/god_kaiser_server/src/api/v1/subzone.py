@@ -624,7 +624,10 @@ async def assign_sensor_to_subzone(
     response_model=SubzoneRemoveResponse,
     responses={
         200: {"description": "Sensor assignment removed"},
-        404: {"description": "Assignment, subzone or sensor config not found", "model": ErrorResponse},
+        404: {
+            "description": "Assignment, subzone or sensor config not found",
+            "model": ErrorResponse,
+        },
     },
     summary="Remove Sensor from Subzone",
     description="""
@@ -809,7 +812,10 @@ async def assign_actuator_to_subzone(
     response_model=SubzoneRemoveResponse,
     responses={
         200: {"description": "Actuator assignment removed"},
-        404: {"description": "Assignment, subzone or actuator config not found", "model": ErrorResponse},
+        404: {
+            "description": "Assignment, subzone or actuator config not found",
+            "model": ErrorResponse,
+        },
     },
     summary="Remove Actuator from Subzone",
     description="""

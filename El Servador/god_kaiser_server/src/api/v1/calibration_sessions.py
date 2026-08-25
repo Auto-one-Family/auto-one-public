@@ -226,7 +226,9 @@ async def start_session(
         if request.calibration_temperature is not None:
             session_metadata["calibration_temperature"] = request.calibration_temperature
         if request.calibration_temperature_source:
-            session_metadata["calibration_temperature_source"] = request.calibration_temperature_source
+            session_metadata["calibration_temperature_source"] = (
+                request.calibration_temperature_source
+            )
         session = await service.start_session(
             esp_id=request.esp_id,
             gpio=request.gpio,

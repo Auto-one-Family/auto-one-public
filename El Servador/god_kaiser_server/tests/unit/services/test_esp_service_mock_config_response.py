@@ -274,7 +274,10 @@ class TestStripInconsistentOfflineRules:
             ),
             patch("src.services.esp_service.ESPRepository"),
             patch("src.services.esp_service.ESPService", return_value=mock_delegated),
-            patch("src.services.config_builder.ConfigPayloadBuilder", return_value=mock_builder_instance),
+            patch(
+                "src.services.config_builder.ConfigPayloadBuilder",
+                return_value=mock_builder_instance,
+            ),
             patch("src.db.repositories.SensorRepository"),
             patch("src.db.repositories.ActuatorRepository"),
         ):

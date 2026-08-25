@@ -109,7 +109,9 @@ class TestPriority1ExplicitLink:
         linked_cfg = _make_linked_config()
         mock_repo = AsyncMock()
         mock_repo.get_by_id.return_value = linked_cfg
-        mock_repo.get_latest_reading.return_value = _make_reading(age=timedelta(seconds=10), value=None)
+        mock_repo.get_latest_reading.return_value = _make_reading(
+            age=timedelta(seconds=10), value=None
+        )
 
         with (
             patch("src.mqtt.handlers.sensor_handler.SensorRepository", return_value=mock_repo),
@@ -128,7 +130,9 @@ class TestPriority1ExplicitLink:
         linked_cfg = _make_linked_config()
         mock_repo = AsyncMock()
         mock_repo.get_by_id.return_value = linked_cfg
-        mock_repo.get_latest_reading.return_value = _make_reading(age=timedelta(seconds=2), value=22.5)
+        mock_repo.get_latest_reading.return_value = _make_reading(
+            age=timedelta(seconds=2), value=22.5
+        )
 
         with (
             patch("src.mqtt.handlers.sensor_handler.SensorRepository", return_value=mock_repo),
@@ -333,7 +337,9 @@ class TestNoReadFailedReturned:
         linked = _make_linked_config()
         mock_repo = AsyncMock()
         mock_repo.get_by_id.return_value = linked
-        mock_repo.get_latest_reading.return_value = _make_reading(age=timedelta(minutes=10), value=19.0)
+        mock_repo.get_latest_reading.return_value = _make_reading(
+            age=timedelta(minutes=10), value=19.0
+        )
 
         with (
             patch("src.mqtt.handlers.sensor_handler.SensorRepository", return_value=mock_repo),

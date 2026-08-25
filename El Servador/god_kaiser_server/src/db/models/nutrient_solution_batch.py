@@ -77,9 +77,7 @@ NUTRIENT_BATCH_QUALIFIERS: tuple[str, ...] = (
     "estimated",
 )
 
-_ENTRY_TYPE_CHECK = (
-    f"entry_type IN ({', '.join(repr(e) for e in NUTRIENT_BATCH_ENTRY_TYPES)})"
-)
+_ENTRY_TYPE_CHECK = f"entry_type IN ({', '.join(repr(e) for e in NUTRIENT_BATCH_ENTRY_TYPES)})"
 _ACQUISITION_METHOD_CHECK = (
     f"acquisition_method IN ({', '.join(repr(m) for m in NUTRIENT_BATCH_ACQUISITION_METHODS)})"
 )

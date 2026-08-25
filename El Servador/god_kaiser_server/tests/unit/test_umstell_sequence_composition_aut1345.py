@@ -67,9 +67,7 @@ class TestUmstellSequenceOrder:
     async def test_a_before_mix_before_b_order(self):
         order: List[str] = []
         actuator = Mock()
-        actuator.supports = Mock(
-            side_effect=lambda t: t in ("actuator", "actuator_command")
-        )
+        actuator.supports = Mock(side_effect=lambda t: t in ("actuator", "actuator_command"))
 
         async def _act(action: dict, context: dict) -> ActionResult:
             order.append(f"gpio{action.get('gpio')}")
@@ -105,12 +103,8 @@ class TestUmstellInterlockDuringSequence:
     @pytest.mark.asyncio
     async def test_not_running_false_during_mischzeit_delay(self):
         actuator = Mock()
-        actuator.supports = Mock(
-            side_effect=lambda t: t in ("actuator", "actuator_command")
-        )
-        actuator.execute = AsyncMock(
-            return_value=ActionResult(success=True, message="ok")
-        )
+        actuator.supports = Mock(side_effect=lambda t: t in ("actuator", "actuator_command"))
+        actuator.execute = AsyncMock(return_value=ActionResult(success=True, message="ok"))
 
         executor = SequenceActionExecutor(websocket_manager=AsyncMock())
         executor.set_action_executors([actuator])

@@ -455,9 +455,7 @@ class TestExtractOfflineRuleUnit:
         builder = self._builder()
         rule = _make_rule(
             rule_name="timmsregen",
-            trigger_conditions=_cooling_condition(
-                ESP_ID_A, gpio=5, sensor_type="sht31_humidity"
-            ),
+            trigger_conditions=_cooling_condition(ESP_ID_A, gpio=5, sensor_type="sht31_humidity"),
             actions=[
                 _actuator_action(ESP_ID_A, gpio=25, duration_seconds=8),
                 _actuator_action(ESP_ID_A, gpio=14, duration_seconds=8),
@@ -475,7 +473,6 @@ class TestExtractOfflineRuleUnit:
             assert r["max_on_seconds"] == 8
             assert r["activate_above"] == 28.0
             assert r["deactivate_below"] == 24.0
-
 
     # ------------------------------------------------------------------
     # AUT-739: OR-compound DNF-flattening
@@ -518,7 +515,7 @@ class TestExtractOfflineRuleUnit:
             assert r["sensor_value_type"] == "sht31_humidity"
             assert r["activate_below"] > 0.0
             assert r["deactivate_above"] > 0.0
-            assert r["activate_above"] == 0.0   # heating mode — cooling fields zero
+            assert r["activate_above"] == 0.0  # heating mode — cooling fields zero
             assert r["deactivate_below"] == 0.0
 
     def test_or_compound_threshold_conditions_flattened(self):
@@ -555,8 +552,8 @@ class TestExtractOfflineRuleUnit:
         assert sensor_gpios == {4, 7}
         for r in result:
             assert r["actuator_gpio"] == 18
-            assert r["activate_below"] > 0.0     # heating threshold set
-            assert r["deactivate_above"] > 0.0   # deadband added
+            assert r["activate_below"] > 0.0  # heating threshold set
+            assert r["deactivate_above"] > 0.0  # deadband added
             assert r["activate_above"] == 0.0
             assert r["deactivate_below"] == 0.0
 
@@ -570,7 +567,7 @@ class TestExtractOfflineRuleUnit:
                     "type": "hysteresis",
                     "esp_id": ESP_ID_A,
                     "gpio": 34,
-                    "sensor_type": "ph",        # calibration-required → branch skipped
+                    "sensor_type": "ph",  # calibration-required → branch skipped
                     "activate_below": 6.0,
                     "deactivate_above": 7.0,
                 },
@@ -578,7 +575,7 @@ class TestExtractOfflineRuleUnit:
                     "type": "hysteresis",
                     "esp_id": ESP_ID_A,
                     "gpio": 4,
-                    "sensor_type": "ds18b20",   # valid
+                    "sensor_type": "ds18b20",  # valid
                     "activate_below": 18.0,
                     "deactivate_above": 22.0,
                 },
@@ -1251,7 +1248,9 @@ class TestResolveMaxOfflineRules:
         from src.services.config_builder import resolve_max_offline_rules
 
         esp = _make_esp(ESP_ID_A)
-        assert resolve_max_offline_rules(esp.hardware_type) == ConfigPayloadBuilder.MAX_OFFLINE_RULES
+        assert (
+            resolve_max_offline_rules(esp.hardware_type) == ConfigPayloadBuilder.MAX_OFFLINE_RULES
+        )
 
 
 class TestBuildOfflineRulesS3BoardDifferentiation:
@@ -1283,6 +1282,4 @@ class TestBuildOfflineRulesS3BoardDifferentiation:
 
         result = await builder._build_offline_rules(mock_db, esp)
 
-        assert len(result) == 16, (
-            f"S3 board must accept up to 16 offline rules, got {len(result)}"
-        )
+        assert len(result) == 16, f"S3 board must accept up to 16 offline rules, got {len(result)}"

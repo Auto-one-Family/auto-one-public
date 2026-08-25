@@ -568,10 +568,7 @@ class AuditLogRepository(BaseRepository[AuditLog]):
         # Fetch paginated rows ordered newest-first.
         offset = (page - 1) * page_size
         data_stmt = (
-            select(AuditLog)
-            .order_by(desc(AuditLog.created_at))
-            .offset(offset)
-            .limit(page_size)
+            select(AuditLog).order_by(desc(AuditLog.created_at)).offset(offset).limit(page_size)
         )
         if conditions:
             data_stmt = data_stmt.where(and_(*conditions))

@@ -253,7 +253,18 @@ def test_schema_rejects_pct_out_of_range() -> None:
 
 
 def test_schema_accepts_stoichiometric_mkp_numbers() -> None:
-    create = SaltCompositionCreate(**_MKP)
+    create = SaltCompositionCreate(
+        name="MKP",
+        formula="KH2PO4",
+        n_pct=0.0,
+        p_pct=22.7608,
+        k_pct=28.7311,
+        ca_pct=0.0,
+        mg_pct=0.0,
+        s_pct=0.0,
+        source_type="stoichiometric",
+        source_note="stoichiometric MKP elemental percents",
+    )
     assert create.p_pct == pytest.approx(22.7608)
     assert create.k_pct == pytest.approx(28.7311)
     assert create.source_type == "stoichiometric"

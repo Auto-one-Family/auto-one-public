@@ -39,9 +39,7 @@ class TestIntegrateFlowRateToVolumeL:
         t0 = datetime(2026, 7, 23, 12, 0, 0, tzinfo=timezone.utc)
         t1 = t0 + timedelta(seconds=30)
         t2 = t0 + timedelta(seconds=60)
-        volume = integrate_flow_rate_to_volume_l(
-            [(t2, 6.0), (t0, 6.0), (t1, 6.0)]
-        )
+        volume = integrate_flow_rate_to_volume_l([(t2, 6.0), (t0, 6.0), (t1, 6.0)])
         assert volume == pytest.approx(6.0, abs=1e-6)
 
     def test_fewer_than_two_samples_returns_zero(self) -> None:

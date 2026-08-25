@@ -337,9 +337,7 @@ class NotRunningCondition(BaseModel):
         }
     """
 
-    type: Literal["not_running"] = Field(
-        ..., description="Condition type (must be 'not_running')"
-    )
+    type: Literal["not_running"] = Field(..., description="Condition type (must be 'not_running')")
     target: Literal["sequence", "actuator"] = Field(
         ..., description="Idle-check target (sequence or actuator)"
     )
@@ -355,9 +353,7 @@ class NotRunningCondition(BaseModel):
         min_length=36,
         max_length=36,
     )
-    gpio: Optional[int] = Field(
-        None, description="GPIO pin when target=actuator", ge=0, le=50
-    )
+    gpio: Optional[int] = Field(None, description="GPIO pin when target=actuator", ge=0, le=50)
 
     @field_validator("rule_id", "esp_id")
     @classmethod

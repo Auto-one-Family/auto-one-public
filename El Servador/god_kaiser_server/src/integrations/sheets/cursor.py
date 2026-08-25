@@ -126,6 +126,5 @@ class SheetsCursorService:
         if cursor_name not in ALLOWED_SHEETS_CURSOR_NAMES:
             allowed = ", ".join(sorted(ALLOWED_SHEETS_CURSOR_NAMES))
             raise ValueError(
-                f"Unknown Sheets-Export cursor {cursor_name!r}. "
-                f"Allowed values: {allowed}"
+                f"Unknown Sheets-Export cursor {cursor_name!r}. " f"Allowed values: {allowed}"
             )

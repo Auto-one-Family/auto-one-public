@@ -151,9 +151,7 @@ GPIO_RESERVED_ESP32_S3_DEVKITC1 = {
 # Safe GPIO pins for each board
 GPIO_SAFE_ESP32_WROOM = set(GPIO_RANGE_ESP32_WROOM) - GPIO_RESERVED_ESP32_WROOM
 GPIO_SAFE_XIAO_ESP32C3 = set(GPIO_RANGE_XIAO_ESP32C3) - GPIO_RESERVED_XIAO_ESP32C3
-GPIO_SAFE_ESP32_S3_DEVKITC1 = (
-    set(GPIO_RANGE_ESP32_S3_DEVKITC1) - GPIO_RESERVED_ESP32_S3_DEVKITC1
-)
+GPIO_SAFE_ESP32_S3_DEVKITC1 = set(GPIO_RANGE_ESP32_S3_DEVKITC1) - GPIO_RESERVED_ESP32_S3_DEVKITC1
 
 # =============================================================================
 # SENSOR TYPES
@@ -198,6 +196,7 @@ DOMAINS = ["luft", WATER_DOMAIN, "boden", "licht", "mensch", "pflanze"]
 def domain_allows_tank(domain: str | None) -> bool:
     """AUT-1328: tank membership is valid only for report domain wasser."""
     return domain == WATER_DOMAIN
+
 
 # =============================================================================
 # ACTUATOR TYPES

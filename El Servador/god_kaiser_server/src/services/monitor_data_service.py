@@ -109,7 +109,9 @@ class MonitorDataService:
 
         # 2b. Build sensor_config_id -> set[(subzone_id, subzone_name)] from n:m table (AUT-1179)
         #     Additive alongside the GPIO path — neither replaces the other.
-        from ..db.repositories.sensor_subzone_assignment_repo import SensorSubzoneAssignmentRepository
+        from ..db.repositories.sensor_subzone_assignment_repo import (
+            SensorSubzoneAssignmentRepository,
+        )
         from ..db.repositories.actuator_subzone_assignment_repo import (
             ActuatorSubzoneAssignmentRepository,
         )
@@ -129,9 +131,7 @@ class MonitorDataService:
 
         # 2c. Build actuator_config_id -> set[(subzone_id, subzone_name)] from n:m (Verortung)
         actuator_nm_repo = ActuatorSubzoneAssignmentRepository(self.session)
-        actuator_nm_assignments = await actuator_nm_repo.get_assignments_for_subzones(
-            subzone_pks
-        )
+        actuator_nm_assignments = await actuator_nm_repo.get_assignments_for_subzones(subzone_pks)
         actuator_nm_subzones: Dict[uuid.UUID, Set[Tuple[str, str]]] = {}
         for assignment in actuator_nm_assignments:
             info = subzone_pk_to_info.get(assignment.subzone_config_id)

@@ -188,7 +188,9 @@ class TestL2LWTHandlerHistory:
                             mock_contract.return_value.upsert_terminal_event_authority = AsyncMock(
                                 return_value=(None, False)
                             )
-                            mock_contract.return_value.list_open_intents_for_esp = AsyncMock(return_value=[])
+                            mock_contract.return_value.list_open_intents_for_esp = AsyncMock(
+                                return_value=[]
+                            )
                             with patch("src.websocket.manager.WebSocketManager") as mock_ws:
                                 mock_ws.get_instance = AsyncMock(return_value=AsyncMock())
                                 return await handler.handle_lwt(topic, payload)

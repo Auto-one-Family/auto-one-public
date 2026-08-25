@@ -90,11 +90,7 @@ def build_phase_sections(
     zone_id = PlantRepository.resolve_effective_zone_id(plant)
     subzone_id = plant.subzone_id
     occurred = sorted(
-        (
-            ev
-            for ev in events
-            if ev.event_type == event_type and ev.event_status == "occurred"
-        ),
+        (ev for ev in events if ev.event_type == event_type and ev.event_status == "occurred"),
         key=lambda ev: _as_utc(ev.event_timestamp),
     )
 
@@ -122,11 +118,7 @@ def build_phase_sections(
         if phase is None:
             continue
         start = _as_utc(ev.event_timestamp)
-        end = (
-            _as_utc(occurred[index + 1].event_timestamp)
-            if index + 1 < len(occurred)
-            else None
-        )
+        end = _as_utc(occurred[index + 1].event_timestamp) if index + 1 < len(occurred) else None
         sections.append(
             PhaseSection(
                 plant_id=plant.plant_id,
@@ -191,13 +183,10 @@ def validate_action_window(
         return None, None
     if window_start is None or window_end is None:
         raise ValueError(
-            "linked_sensor_window_start and linked_sensor_window_end must "
-            "be provided together."
+            "linked_sensor_window_start and linked_sensor_window_end must " "be provided together."
         )
     start = _as_utc(window_start)
     end = _as_utc(window_end)
     if end <= start:
-        raise ValueError(
-            "linked_sensor_window_end must be after linked_sensor_window_start"
-        )
+        raise ValueError("linked_sensor_window_end must be after linked_sensor_window_start")
     return start, end

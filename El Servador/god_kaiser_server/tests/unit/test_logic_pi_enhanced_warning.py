@@ -73,9 +73,7 @@ class TestCheckPiEnhancedWarning:
             patch("src.services.logic_service.SensorRepository") as MockSensorRepo,
         ):
             MockESPRepo.return_value.get_by_device_id = AsyncMock(return_value=esp_device)
-            MockSensorRepo.return_value.get_by_esp_and_gpio = AsyncMock(
-                return_value=sensor_config
-            )
+            MockSensorRepo.return_value.get_by_esp_and_gpio = AsyncMock(return_value=sensor_config)
 
             warnings = await service._check_pi_enhanced_warning([_hysteresis_condition()])
 
@@ -94,9 +92,7 @@ class TestCheckPiEnhancedWarning:
             patch("src.services.logic_service.SensorRepository") as MockSensorRepo,
         ):
             MockESPRepo.return_value.get_by_device_id = AsyncMock(return_value=esp_device)
-            MockSensorRepo.return_value.get_by_esp_and_gpio = AsyncMock(
-                return_value=sensor_config
-            )
+            MockSensorRepo.return_value.get_by_esp_and_gpio = AsyncMock(return_value=sensor_config)
 
             warnings = await service._check_pi_enhanced_warning([_hysteresis_condition()])
 

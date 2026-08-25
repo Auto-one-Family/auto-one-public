@@ -68,9 +68,7 @@ class NotRunningConditionEvaluator(BaseConditionEvaluator):
             return await self._evaluate_sequence(condition)
         if target == "actuator":
             return await self._evaluate_actuator(condition)
-        logger.warning(
-            "NotRunningConditionEvaluator: unsupported or missing target=%r", target
-        )
+        logger.warning("NotRunningConditionEvaluator: unsupported or missing target=%r", target)
         return False
 
     async def _evaluate_sequence(self, condition: Dict) -> bool:
@@ -80,9 +78,7 @@ class NotRunningConditionEvaluator(BaseConditionEvaluator):
             return False
 
         if self._sequence_executor is None:
-            logger.warning(
-                "NotRunningConditionEvaluator: no sequence_executor configured"
-            )
+            logger.warning("NotRunningConditionEvaluator: no sequence_executor configured")
             return False
 
         try:
@@ -105,23 +101,15 @@ class NotRunningConditionEvaluator(BaseConditionEvaluator):
         esp_id_raw = condition.get("esp_id")
         gpio_raw = condition.get("gpio")
         if esp_id_raw is None or gpio_raw is None:
-            logger.warning(
-                "NotRunningConditionEvaluator: actuator target missing esp_id or gpio"
-            )
+            logger.warning("NotRunningConditionEvaluator: actuator target missing esp_id or gpio")
             return False
 
         if not self._session_factory:
-            logger.warning(
-                "NotRunningConditionEvaluator: no session factory configured"
-            )
+            logger.warning("NotRunningConditionEvaluator: no session factory configured")
             return False
 
         try:
-            esp_id = (
-                esp_id_raw
-                if isinstance(esp_id_raw, uuid.UUID)
-                else uuid.UUID(str(esp_id_raw))
-            )
+            esp_id = esp_id_raw if isinstance(esp_id_raw, uuid.UUID) else uuid.UUID(str(esp_id_raw))
             gpio = int(gpio_raw)
         except (ValueError, TypeError) as exc:
             logger.warning(
@@ -148,9 +136,7 @@ class NotRunningConditionEvaluator(BaseConditionEvaluator):
 
         return state not in _ACTUATOR_RUNNING_STATES
 
-    async def _get_actuator_state(
-        self, esp_id: uuid.UUID, gpio: int
-    ) -> Optional[str]:
+    async def _get_actuator_state(self, esp_id: uuid.UUID, gpio: int) -> Optional[str]:
         """Read ActuatorState.state via ActuatorRepository.get_state()."""
         from ....db.repositories.actuator_repo import ActuatorRepository
 

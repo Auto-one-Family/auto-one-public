@@ -111,9 +111,7 @@ async def _make_sensor_data(
 class TestSensorBatcherFetch:
     async def test_empty_table_returns_empty_batch(self, session: AsyncSession):
         batcher = SensorExportBatcher(session)
-        batch = await batcher.fetch_batch(
-            last_timestamp_iso=None, last_id=None, limit=100
-        )
+        batch = await batcher.fetch_batch(last_timestamp_iso=None, last_id=None, limit=100)
         assert batch.is_empty() is True
         assert batch.rows == []
 
@@ -123,20 +121,28 @@ class TestSensorBatcherFetch:
     ):
         esp = await _make_esp(session)
         await _make_sensor_config(
-            session, esp, gpio=4, sensor_type="ds18b20", name="Wurzel-Temp",
+            session,
+            esp,
+            gpio=4,
+            sensor_type="ds18b20",
+            name="Wurzel-Temp",
             onewire="28FF82F110C78897",
         )
         ts = datetime(2026, 5, 23, 10, 0, 0, tzinfo=timezone.utc)
         await _make_sensor_data(
-            session, esp, gpio=4, sensor_type="ds18b20",
-            value=22.5, timestamp=ts, unit="C", zone_id="zone-a",
+            session,
+            esp,
+            gpio=4,
+            sensor_type="ds18b20",
+            value=22.5,
+            timestamp=ts,
+            unit="C",
+            zone_id="zone-a",
         )
         await session.commit()
 
         batcher = SensorExportBatcher(session)
-        batch = await batcher.fetch_batch(
-            last_timestamp_iso=None, last_id=None, limit=100
-        )
+        batch = await batcher.fetch_batch(last_timestamp_iso=None, last_id=None, limit=100)
         assert len(batch.rows) == 1
         row = batch.rows[0]
         assert row.sensor_type == "ds18b20"
@@ -153,17 +159,13 @@ class TestSensorBatcherFetch:
         session: AsyncSession,
     ):
         esp = await _make_esp(session)
-        await _make_sensor_config(
-            session, esp, gpio=5, sensor_type="ph_v2", name="pH"
-        )
+        await _make_sensor_config(session, esp, gpio=5, sensor_type="ph_v2", name="pH")
         ts1 = datetime(2026, 5, 23, 10, 0, 0, tzinfo=timezone.utc)
         ts2 = datetime(2026, 5, 23, 10, 0, 30, tzinfo=timezone.utc)
         row1 = await _make_sensor_data(
             session, esp, gpio=5, sensor_type="ph_v2", value=6.5, timestamp=ts1
         )
-        await _make_sensor_data(
-            session, esp, gpio=5, sensor_type="ph_v2", value=6.6, timestamp=ts2
-        )
+        await _make_sensor_data(session, esp, gpio=5, sensor_type="ph_v2", value=6.6, timestamp=ts2)
         await session.commit()
 
         batcher = SensorExportBatcher(session)
@@ -178,20 +180,27 @@ class TestSensorBatcherFetch:
     async def test_i2c_address_is_hex_formatted(self, session: AsyncSession):
         esp = await _make_esp(session)
         await _make_sensor_config(
-            session, esp, gpio=21, sensor_type="sht31_temp", name="SHT31-T",
+            session,
+            esp,
+            gpio=21,
+            sensor_type="sht31_temp",
+            name="SHT31-T",
             i2c=0x44,
         )
         ts = datetime(2026, 5, 23, 10, 0, 0, tzinfo=timezone.utc)
         await _make_sensor_data(
-            session, esp, gpio=21, sensor_type="sht31_temp",
-            value=21.3, timestamp=ts, unit="C",
+            session,
+            esp,
+            gpio=21,
+            sensor_type="sht31_temp",
+            value=21.3,
+            timestamp=ts,
+            unit="C",
         )
         await session.commit()
 
         batcher = SensorExportBatcher(session)
-        batch = await batcher.fetch_batch(
-            last_timestamp_iso=None, last_id=None, limit=10
-        )
+        batch = await batcher.fetch_batch(last_timestamp_iso=None, last_id=None, limit=10)
         assert batch.rows[0].i2c_address == "0x44"
 
     async def test_multi_value_sensor_produces_separate_rows(
@@ -201,28 +210,44 @@ class TestSensorBatcherFetch:
         esp = await _make_esp(session)
         # SHT31 multi-value: same gpio, different sensor_type, same i2c
         await _make_sensor_config(
-            session, esp, gpio=21, sensor_type="sht31_temp", name="SHT31-T",
+            session,
+            esp,
+            gpio=21,
+            sensor_type="sht31_temp",
+            name="SHT31-T",
             i2c=0x44,
         )
         await _make_sensor_config(
-            session, esp, gpio=21, sensor_type="sht31_humidity", name="SHT31-H",
+            session,
+            esp,
+            gpio=21,
+            sensor_type="sht31_humidity",
+            name="SHT31-H",
             i2c=0x44,
         )
         ts = datetime(2026, 5, 23, 10, 0, 0, tzinfo=timezone.utc)
         await _make_sensor_data(
-            session, esp, gpio=21, sensor_type="sht31_temp",
-            value=22.0, timestamp=ts, unit="C",
+            session,
+            esp,
+            gpio=21,
+            sensor_type="sht31_temp",
+            value=22.0,
+            timestamp=ts,
+            unit="C",
         )
         await _make_sensor_data(
-            session, esp, gpio=21, sensor_type="sht31_humidity",
-            value=55.0, timestamp=ts, unit="%",
+            session,
+            esp,
+            gpio=21,
+            sensor_type="sht31_humidity",
+            value=55.0,
+            timestamp=ts,
+            unit="%",
         )
         await session.commit()
 
         batcher = SensorExportBatcher(session)
-        batch = await batcher.fetch_batch(
-            last_timestamp_iso=None, last_id=None, limit=10
-        )
+        batch = await batcher.fetch_batch(last_timestamp_iso=None, last_id=None, limit=10)
         types = {row.sensor_type for row in batch.rows}
         assert types == {"sht31_temp", "sht31_humidity"}
         assert all(row.i2c_address == "0x44" for row in batch.rows)
@@ -232,20 +257,21 @@ class TestSensorBatcherFetch:
 class TestSensorBatchSerialization:
     async def test_to_sheet_values_uses_header_order(self, session: AsyncSession):
         esp = await _make_esp(session)
-        await _make_sensor_config(
-            session, esp, gpio=4, sensor_type="ds18b20", name="Test"
-        )
+        await _make_sensor_config(session, esp, gpio=4, sensor_type="ds18b20", name="Test")
         ts = datetime(2026, 5, 23, 8, 0, 0, tzinfo=timezone.utc)
         await _make_sensor_data(
-            session, esp, gpio=4, sensor_type="ds18b20",
-            value=20.0, timestamp=ts, unit="C",
+            session,
+            esp,
+            gpio=4,
+            sensor_type="ds18b20",
+            value=20.0,
+            timestamp=ts,
+            unit="C",
         )
         await session.commit()
 
         batcher = SensorExportBatcher(session)
-        batch = await batcher.fetch_batch(
-            last_timestamp_iso=None, last_id=None, limit=10
-        )
+        batch = await batcher.fetch_batch(last_timestamp_iso=None, last_id=None, limit=10)
         rows = batch.to_sheet_values()
         assert len(rows) == 1
         sheet_row = rows[0]

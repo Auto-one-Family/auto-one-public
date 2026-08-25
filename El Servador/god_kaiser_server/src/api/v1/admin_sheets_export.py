@@ -47,9 +47,7 @@ class ResetCursorRequest(BaseModel):
     def cursor_name_must_be_allowed(cls, v: str) -> str:
         if v not in ALLOWED_SHEETS_CURSOR_NAMES:
             allowed = sorted(ALLOWED_SHEETS_CURSOR_NAMES)
-            raise ValueError(
-                f"Unknown cursor_name {v!r}. Allowed: {allowed}"
-            )
+            raise ValueError(f"Unknown cursor_name {v!r}. Allowed: {allowed}")
         return v
 
 

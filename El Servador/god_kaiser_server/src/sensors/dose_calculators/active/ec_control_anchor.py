@@ -84,10 +84,7 @@ def _component_ec_contribution(component: Dict[str, Any]) -> Optional[float]:
         return None
     if "ec_contribution" in component and component["ec_contribution"] is not None:
         return float(component["ec_contribution"])
-    if (
-        "ec_contribution_ms_cm" in component
-        and component["ec_contribution_ms_cm"] is not None
-    ):
+    if "ec_contribution_ms_cm" in component and component["ec_contribution_ms_cm"] is not None:
         return float(component["ec_contribution_ms_cm"])
     return None
 
@@ -126,16 +123,12 @@ def calculate_expected_ec(
         prior_ec = prior_ec_ms_cm
 
     contributing = [
-        c
-        for c in components
-        if isinstance(c, dict) and _component_ec_contribution(c) is not None
+        c for c in components if isinstance(c, dict) and _component_ec_contribution(c) is not None
     ]
     if not contributing:
         return None
 
-    new_addition_ec = sum(
-        float(_component_ec_contribution(c) or 0.0) for c in contributing
-    )
+    new_addition_ec = sum(float(_component_ec_contribution(c) or 0.0) for c in contributing)
 
     if prior_volume_l > 0 and prior_ec is not None:
         total_volume_l = prior_volume_l + volume_l

@@ -172,9 +172,7 @@ async def finalize_auto_cal_from_sequence(
             )
             continue
 
-        measured = concentration_from_delta_ec(
-            previous_ec, ec1, volume.volume_l, dose_ml
-        )
+        measured = concentration_from_delta_ec(previous_ec, ec1, volume.volume_l, dose_ml)
         if measured is None or measured <= 0:
             logger.warning(
                 "AUT-1371: non-positive concentration gpio=%s ec0=%s ec1=%s V=%s ml=%s",
@@ -316,9 +314,7 @@ async def _build_auto_cal_plan(
     dose_pumps.sort(key=lambda p: role_order.get(p["dose_role"], 99))
 
     needs_seed = any(p["needs_cal"] for p in dose_pumps)
-    mix_esp, mix_gpio = await _resolve_mix_pump(
-        session, dose_esp_device_id, mix_candidates
-    )
+    mix_esp, mix_gpio = await _resolve_mix_pump(session, dose_esp_device_id, mix_candidates)
 
     if needs_seed:
         settle = float(AUTO_CAL_SETTLE_SECONDS)
@@ -371,7 +367,10 @@ def _build_seed_steps(
     for pump in dose_pumps:
         dose_action = deepcopy(pump["action"])
         # Normalize duration key for FW/command path.
-        if dose_action.get("duration_seconds") is None and dose_action.get("duration_s") is not None:
+        if (
+            dose_action.get("duration_seconds") is None
+            and dose_action.get("duration_s") is not None
+        ):
             dose_action["duration_seconds"] = dose_action["duration_s"]
         new_steps.append(
             {

@@ -31,7 +31,19 @@ def _mock_rule(rule_id: uuid.UUID | None = None, enabled: bool = True):
     rule.enabled = enabled
     rule.priority = 50
     rule.cooldown_seconds = 60
+    rule.settle_after_rule_id = None
+    rule.settle_seconds = None
     rule.max_executions_per_hour = None
+    rule.max_executions_per_day = None
+    rule.max_dose_ml_per_day = None
+    rule.rule_metadata = {}
+    rule.rule_group = None
+    rule.follows_plan = False
+    rule.plan_zone_id = None
+    rule.plan_subzone_config_id = None
+    rule.plan_domain = None
+    rule.plan_measure = None
+    rule.rule_warnings = []
     rule.last_triggered = None
     rule.is_critical = False
     rule.escalation_policy = None
@@ -69,6 +81,7 @@ async def test_create_rule_triggers_config_push():
         logic_service = MagicMock()
         logic_service.create_rule = AsyncMock(return_value=created_rule)
         logic_service_cls.return_value = logic_service
+        logic_service_cls.derive_rule_group.return_value = "sonstiges"
 
         with patch("src.api.v1.logic.LogicRepository") as logic_repo_cls:
             logic_repo = MagicMock()
@@ -97,6 +110,7 @@ async def test_update_rule_triggers_config_push():
         logic_service = MagicMock()
         logic_service.update_rule = AsyncMock(return_value=rule)
         logic_service_cls.return_value = logic_service
+        logic_service_cls.derive_rule_group.return_value = "sonstiges"
 
         with patch("src.api.v1.logic.LogicRepository") as logic_repo_cls:
             logic_repo = MagicMock()
@@ -175,9 +189,7 @@ async def test_push_config_uses_coalesced_scheduler():
     builder = MagicMock()
     builder.build_combined_config = AsyncMock(return_value={"sensors": [], "actuators": []})
     esp_service = MagicMock()
-    esp_service.send_config_coalesced = AsyncMock(
-        return_value={"scheduled": True, "merged": True}
-    )
+    esp_service.send_config_coalesced = AsyncMock(return_value={"scheduled": True, "merged": True})
 
     with (
         patch("src.api.v1.logic.get_config_builder", return_value=builder),

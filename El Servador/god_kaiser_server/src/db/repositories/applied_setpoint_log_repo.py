@@ -44,9 +44,7 @@ class AppliedSetpointLogRepository(BaseRepository[AppliedSetpointLog]):
         if zone_id is not None:
             conditions.append(AppliedSetpointLog.zone_id == zone_id)
         if subzone_config_id is not None:
-            conditions.append(
-                AppliedSetpointLog.subzone_config_id == subzone_config_id
-            )
+            conditions.append(AppliedSetpointLog.subzone_config_id == subzone_config_id)
         if domain is not None:
             conditions.append(AppliedSetpointLog.domain == domain)
         if measure is not None:

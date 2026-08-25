@@ -114,9 +114,7 @@ class TestLogicServiceHysteresisDryRun:
         assert response.condition_results[0].result is True
         assert response.condition_results[0].actual_value == 989
 
-    async def test_hysteresis_deactivate_above_releases(
-        self, logic_service: LogicService
-    ):
+    async def test_hysteresis_deactivate_above_releases(self, logic_service: LogicService):
         """Schwelle aus: after activate, value above deactivate_above → would_trigger False."""
         rule = _ph_raise_rule()
 

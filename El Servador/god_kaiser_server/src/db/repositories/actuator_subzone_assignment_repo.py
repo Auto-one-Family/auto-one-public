@@ -35,9 +35,7 @@ class ActuatorSubzoneAssignmentRepository(BaseRepository[ActuatorSubzoneAssignme
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
 
-    async def get_by_subzone(
-        self, subzone_config_id: uuid.UUID
-    ) -> List[ActuatorSubzoneAssignment]:
+    async def get_by_subzone(self, subzone_config_id: uuid.UUID) -> List[ActuatorSubzoneAssignment]:
         """Return all assignments for a given subzone config."""
         stmt = select(ActuatorSubzoneAssignment).where(
             ActuatorSubzoneAssignment.subzone_config_id == subzone_config_id
@@ -106,9 +104,7 @@ class ActuatorSubzoneAssignmentRepository(BaseRepository[ActuatorSubzoneAssignme
         await self.session.flush()
         return True
 
-    async def unassign_all_for_actuator(
-        self, actuator_config_id: uuid.UUID
-    ) -> int:
+    async def unassign_all_for_actuator(self, actuator_config_id: uuid.UUID) -> int:
         """Delete all assignments for an actuator config."""
         rows = await self.get_by_actuator(actuator_config_id)
         for row in rows:
@@ -116,9 +112,7 @@ class ActuatorSubzoneAssignmentRepository(BaseRepository[ActuatorSubzoneAssignme
         await self.session.flush()
         return len(rows)
 
-    async def unassign_all_for_subzone(
-        self, subzone_config_id: uuid.UUID
-    ) -> int:
+    async def unassign_all_for_subzone(self, subzone_config_id: uuid.UUID) -> int:
         """Delete all assignments for a subzone config."""
         rows = await self.get_by_subzone(subzone_config_id)
         for row in rows:

@@ -77,4 +77,7 @@ def test_read_calibrated_at_prefers_derived_when_both_exist():
 def test_read_calibrated_at_returns_none_for_empty_payload():
     assert read_calibrated_at(None) is None
     assert read_calibrated_at({}) is None
-    assert read_calibrated_at({"method": "ph_2point", "points": [], "derived": {}, "metadata": {}}) is None
+    assert (
+        read_calibrated_at({"method": "ph_2point", "points": [], "derived": {}, "metadata": {}})
+        is None
+    )

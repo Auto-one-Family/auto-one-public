@@ -72,12 +72,14 @@ QUALITY_LEVELS = [
 
 # AUT-299: Sensor types that are valid ATC temperature sources.
 # Used both for schema documentation and for API-layer validation in sensors.py.
-_TEMPERATURE_SENSOR_TYPES: frozenset[str] = frozenset({
-    "ds18b20",
-    "temperature",
-    "sht31_temp",
-    "bmp280_temp",
-})
+_TEMPERATURE_SENSOR_TYPES: frozenset[str] = frozenset(
+    {
+        "ds18b20",
+        "temperature",
+        "sht31_temp",
+        "bmp280_temp",
+    }
+)
 
 
 # =============================================================================

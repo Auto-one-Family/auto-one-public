@@ -5,6 +5,7 @@ Business logic for actuator control, safety checks, command validation.
 """
 
 import asyncio
+import inspect
 import uuid
 import json
 import time
@@ -323,10 +324,10 @@ class ActuatorService:
                         success=False,
                         issued_by=issued_by,
                         error_message=failure_reason,
-                metadata={
-                    "correlation_id": correlation_id,
-                    "reason_code": failure_code,
-                },
+                        metadata={
+                            "correlation_id": correlation_id,
+                            "reason_code": failure_code,
+                        },
                     )
 
                 audit_repo = AuditLogRepository(session)
@@ -764,9 +765,7 @@ class ActuatorService:
                     }
                     # AUT-1020: last_seen as Epoch timestamp (AUT-592 pattern, lwt_handler.py:417)
                     if safety_result.last_seen_ts is not None:
-                        _failed_payload["last_seen"] = int(
-                            safety_result.last_seen_ts.timestamp()
-                        )
+                        _failed_payload["last_seen"] = int(safety_result.last_seen_ts.timestamp())
                     await ws_manager.broadcast(
                         "actuator_command_failed",
                         _failed_payload,
@@ -880,6 +879,8 @@ class ActuatorService:
                 correlation_id=correlation_id,
                 issued_by=issued_by,
             )
+            if inspect.isawaitable(success):
+                success = await success
             # #region agent log
             if command_upper == "OFF":
                 _agent_debug_log(

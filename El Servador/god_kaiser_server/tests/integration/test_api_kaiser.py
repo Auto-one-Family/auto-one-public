@@ -117,9 +117,7 @@ class TestListKaisers:
         sample_kaiser: KaiserRegistry,
     ):
         """List endpoint returns 200 with the existing Kaiser."""
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.get("/api/v1/kaiser", headers=operator_headers)
 
         assert response.status_code == 200
@@ -132,9 +130,7 @@ class TestListKaisers:
     @pytest.mark.asyncio
     async def test_list_kaisers_empty(self, operator_headers: dict):
         """List endpoint returns 200 with empty list when no Kaiser exists."""
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.get("/api/v1/kaiser", headers=operator_headers)
 
         assert response.status_code == 200
@@ -146,9 +142,7 @@ class TestListKaisers:
     @pytest.mark.asyncio
     async def test_list_kaisers_no_auth(self):
         """List endpoint returns 401 without auth header."""
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.get("/api/v1/kaiser")
 
         assert response.status_code == 401
@@ -169,9 +163,7 @@ class TestGetKaiser:
         sample_kaiser: KaiserRegistry,
     ):
         """Get endpoint returns 200 with details."""
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.get(
                 f"/api/v1/kaiser/{sample_kaiser.kaiser_id}",
                 headers=operator_headers,
@@ -187,9 +179,7 @@ class TestGetKaiser:
     @pytest.mark.asyncio
     async def test_get_kaiser_not_found(self, operator_headers: dict):
         """Get endpoint returns 404 for unknown Kaiser (KaiserNotFoundException)."""
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.get(
                 "/api/v1/kaiser/UNKNOWN_KAISER",
                 headers=operator_headers,
@@ -200,9 +190,7 @@ class TestGetKaiser:
     @pytest.mark.asyncio
     async def test_get_kaiser_no_auth(self, sample_kaiser: KaiserRegistry):
         """Get endpoint returns 401 without auth header."""
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.get(f"/api/v1/kaiser/{sample_kaiser.kaiser_id}")
 
         assert response.status_code == 401
@@ -223,9 +211,7 @@ class TestGetHierarchy:
         sample_kaiser: KaiserRegistry,
     ):
         """Hierarchy endpoint returns 200 (with empty zones when no ESPs)."""
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.get(
                 f"/api/v1/kaiser/{sample_kaiser.kaiser_id}/hierarchy",
                 headers=operator_headers,
@@ -243,9 +229,7 @@ class TestGetHierarchy:
     @pytest.mark.asyncio
     async def test_get_hierarchy_not_found(self, operator_headers: dict):
         """Hierarchy endpoint returns 404 for unknown Kaiser."""
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.get(
                 "/api/v1/kaiser/UNKNOWN_KAISER/hierarchy",
                 headers=operator_headers,
@@ -273,9 +257,7 @@ class TestRegisterKaiser:
             "mac_address": "AA:BB:CC:11:22:33",
         }
 
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post(
                 "/api/v1/kaiser",
                 json=body,
@@ -295,9 +277,7 @@ class TestRegisterKaiser:
         """
         body = {"zone_ids": []}
 
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post(
                 "/api/v1/kaiser",
                 json=body,
@@ -317,9 +297,7 @@ class TestRegisterKaiser:
         """Register endpoint returns 409 for duplicate Kaiser."""
         body = {"kaiser_id": sample_kaiser.kaiser_id}
 
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post(
                 "/api/v1/kaiser",
                 json=body,
@@ -331,9 +309,7 @@ class TestRegisterKaiser:
     @pytest.mark.asyncio
     async def test_register_kaiser_no_auth(self):
         """Register endpoint returns 401 without auth header."""
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post(
                 "/api/v1/kaiser",
                 json={"kaiser_id": "KAISER_X"},
@@ -344,9 +320,7 @@ class TestRegisterKaiser:
     @pytest.mark.asyncio
     async def test_register_kaiser_active_user_forbidden(self, active_headers: dict):
         """Register endpoint returns 403 for non-operator active user."""
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post(
                 "/api/v1/kaiser",
                 json={"kaiser_id": "KAISER_FORBIDDEN"},
@@ -373,9 +347,7 @@ class TestUpdateZones:
         """Update zones endpoint returns 200 and updates zone_ids."""
         body = {"zone_ids": ["zone_new_1", "zone_new_2", "zone_new_3"]}
 
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.put(
                 f"/api/v1/kaiser/{sample_kaiser.kaiser_id}/zones",
                 json=body,
@@ -391,9 +363,7 @@ class TestUpdateZones:
     @pytest.mark.asyncio
     async def test_update_zones_not_found(self, operator_headers: dict):
         """Update zones endpoint returns 404 for unknown Kaiser."""
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.put(
                 "/api/v1/kaiser/UNKNOWN_KAISER/zones",
                 json={"zone_ids": []},
@@ -405,9 +375,7 @@ class TestUpdateZones:
     @pytest.mark.asyncio
     async def test_update_zones_no_auth(self, sample_kaiser: KaiserRegistry):
         """Update zones endpoint returns 401 without auth header."""
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.put(
                 f"/api/v1/kaiser/{sample_kaiser.kaiser_id}/zones",
                 json={"zone_ids": []},

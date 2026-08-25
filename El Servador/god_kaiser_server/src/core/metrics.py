@@ -890,9 +890,13 @@ def increment_logic_dispatch_skipped_offline() -> None:
     LOGIC_DISPATCH_SKIPPED_OFFLINE_TOTAL.inc()
 
 
-def increment_rule_skip_target_offline(rule_id: str, esp_id: str, time_window: str = "unknown") -> None:
+def increment_rule_skip_target_offline(
+    rule_id: str, esp_id: str, time_window: str = "unknown"
+) -> None:
     """Increment per-rule offline-skip counter (AUT-110)."""
-    RULE_SKIP_TARGET_OFFLINE_TOTAL.labels(rule_id=rule_id, esp_id=esp_id, time_window=time_window).inc()
+    RULE_SKIP_TARGET_OFFLINE_TOTAL.labels(
+        rule_id=rule_id, esp_id=esp_id, time_window=time_window
+    ).inc()
 
 
 def increment_actuator_timeout() -> None:
@@ -1059,9 +1063,7 @@ def observe_heartbeat_firmware_counters(esp_id: str, payload: dict) -> None:
     for field in counter_fields:
         value = payload.get(field)
         if isinstance(value, (int, float)) and value >= 0:
-            HEARTBEAT_FIRMWARE_COUNTER_GAUGE.labels(
-                esp_id=esp_label, counter_name=field
-            ).set(value)
+            HEARTBEAT_FIRMWARE_COUNTER_GAUGE.labels(esp_id=esp_label, counter_name=field).set(value)
 
 
 def increment_contract_unknown_code(event_type: str, amount: int = 1) -> None:

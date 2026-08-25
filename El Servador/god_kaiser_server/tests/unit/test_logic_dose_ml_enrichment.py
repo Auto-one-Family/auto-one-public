@@ -75,17 +75,19 @@ class TestDoseMlResolvedToDuration:
         mock_esp_repo.get_by_device_id = AsyncMock(return_value=_make_esp(esp_uuid))
 
         mock_actuator_repo = AsyncMock()
-        mock_actuator_repo.get_by_esp_and_gpio = AsyncMock(
-            return_value=_make_actuator(flow_rate)
-        )
+        mock_actuator_repo.get_by_esp_and_gpio = AsyncMock(return_value=_make_actuator(flow_rate))
 
-        actions = [{"type": "actuator_command", "esp_id": esp_id_str, "gpio": gpio, "dose_ml": dose_ml}]
+        actions = [
+            {"type": "actuator_command", "esp_id": esp_id_str, "gpio": gpio, "dose_ml": dose_ml}
+        ]
 
         with (
             patch("src.services.logic_engine.ESPRepository", return_value=mock_esp_repo),
             patch("src.services.logic_engine.ActuatorRepository", return_value=mock_actuator_repo),
         ):
-            enriched, failed = await engine._enrich_actions_with_duration(actions, session=mock_session)
+            enriched, failed = await engine._enrich_actions_with_duration(
+                actions, session=mock_session
+            )
 
         assert failed == []
         assert len(enriched) == 1
@@ -109,17 +111,19 @@ class TestDoseMlCeilingRounding:
         mock_esp_repo.get_by_device_id = AsyncMock(return_value=_make_esp(esp_uuid))
 
         mock_actuator_repo = AsyncMock()
-        mock_actuator_repo.get_by_esp_and_gpio = AsyncMock(
-            return_value=_make_actuator(flow_rate)
-        )
+        mock_actuator_repo.get_by_esp_and_gpio = AsyncMock(return_value=_make_actuator(flow_rate))
 
-        actions = [{"type": "actuator_command", "esp_id": esp_id_str, "gpio": gpio, "dose_ml": dose_ml}]
+        actions = [
+            {"type": "actuator_command", "esp_id": esp_id_str, "gpio": gpio, "dose_ml": dose_ml}
+        ]
 
         with (
             patch("src.services.logic_engine.ESPRepository", return_value=mock_esp_repo),
             patch("src.services.logic_engine.ActuatorRepository", return_value=mock_actuator_repo),
         ):
-            enriched, failed = await engine._enrich_actions_with_duration(actions, session=mock_session)
+            enriched, failed = await engine._enrich_actions_with_duration(
+                actions, session=mock_session
+            )
 
         assert failed == []
         assert len(enriched) == 1
@@ -148,7 +152,9 @@ class TestDurationSecondsPassthrough:
             patch("src.services.logic_engine.ESPRepository", return_value=mock_esp_repo),
             patch("src.services.logic_engine.ActuatorRepository", return_value=mock_actuator_repo),
         ):
-            enriched, failed = await engine._enrich_actions_with_duration(actions, session=mock_session)
+            enriched, failed = await engine._enrich_actions_with_duration(
+                actions, session=mock_session
+            )
 
         assert failed == []
         assert len(enriched) == 1
@@ -182,7 +188,9 @@ class TestDoseMlFlowRateNoneSkip:
             patch("src.services.logic_engine.ESPRepository", return_value=mock_esp_repo),
             patch("src.services.logic_engine.ActuatorRepository", return_value=mock_actuator_repo),
         ):
-            enriched, failed = await engine._enrich_actions_with_duration(actions, session=mock_session)
+            enriched, failed = await engine._enrich_actions_with_duration(
+                actions, session=mock_session
+            )
 
         assert enriched == []
         assert len(failed) == 1
@@ -193,9 +201,7 @@ class TestDoseMlFlowRateNoneDurationFallback:
     """AUT-1384: flow_rate missing + duration_seconds>0 → pass through duration-driven."""
 
     @pytest.mark.asyncio
-    async def test_dose_ml_flow_rate_none_uses_duration_fallback(
-        self, engine, mock_session
-    ):
+    async def test_dose_ml_flow_rate_none_uses_duration_fallback(self, engine, mock_session):
         esp_uuid = uuid.uuid4()
         esp_id_str = "ESP_DOSE_04B"
         gpio = 12
@@ -212,9 +218,7 @@ class TestDoseMlFlowRateNoneDurationFallback:
         mock_esp_repo = AsyncMock()
         mock_esp_repo.get_by_device_id = AsyncMock(return_value=_make_esp(esp_uuid))
         mock_actuator_repo = AsyncMock()
-        mock_actuator_repo.get_by_esp_and_gpio = AsyncMock(
-            return_value=_make_actuator(None)
-        )
+        mock_actuator_repo.get_by_esp_and_gpio = AsyncMock(return_value=_make_actuator(None))
 
         with (
             patch("src.services.logic_engine.ESPRepository", return_value=mock_esp_repo),
@@ -257,7 +261,9 @@ class TestDoseMlFlowRateZeroSkip:
             patch("src.services.logic_engine.ESPRepository", return_value=mock_esp_repo),
             patch("src.services.logic_engine.ActuatorRepository", return_value=mock_actuator_repo),
         ):
-            enriched, failed = await engine._enrich_actions_with_duration(actions, session=mock_session)
+            enriched, failed = await engine._enrich_actions_with_duration(
+                actions, session=mock_session
+            )
 
         assert enriched == []
         assert len(failed) == 1
@@ -287,7 +293,9 @@ class TestDoseMlEspNotFoundSkip:
             patch("src.services.logic_engine.ESPRepository", return_value=mock_esp_repo),
             patch("src.services.logic_engine.ActuatorRepository", return_value=mock_actuator_repo),
         ):
-            enriched, failed = await engine._enrich_actions_with_duration(actions, session=mock_session)
+            enriched, failed = await engine._enrich_actions_with_duration(
+                actions, session=mock_session
+            )
 
         assert enriched == []
         assert len(failed) == 1
@@ -331,7 +339,9 @@ class TestMixedActionsPartialEnrich:
             patch("src.services.logic_engine.ESPRepository", return_value=mock_esp_repo),
             patch("src.services.logic_engine.ActuatorRepository", return_value=mock_actuator_repo),
         ):
-            enriched, failed = await engine._enrich_actions_with_duration(actions, session=mock_session)
+            enriched, failed = await engine._enrich_actions_with_duration(
+                actions, session=mock_session
+            )
 
         assert failed == []
         assert len(enriched) == 2
@@ -360,17 +370,19 @@ class TestMinimumDurationGuard:
         mock_esp_repo.get_by_device_id = AsyncMock(return_value=_make_esp(esp_uuid))
 
         mock_actuator_repo = AsyncMock()
-        mock_actuator_repo.get_by_esp_and_gpio = AsyncMock(
-            return_value=_make_actuator(flow_rate)
-        )
+        mock_actuator_repo.get_by_esp_and_gpio = AsyncMock(return_value=_make_actuator(flow_rate))
 
-        actions = [{"type": "actuator_command", "esp_id": esp_id_str, "gpio": gpio, "dose_ml": dose_ml}]
+        actions = [
+            {"type": "actuator_command", "esp_id": esp_id_str, "gpio": gpio, "dose_ml": dose_ml}
+        ]
 
         with (
             patch("src.services.logic_engine.ESPRepository", return_value=mock_esp_repo),
             patch("src.services.logic_engine.ActuatorRepository", return_value=mock_actuator_repo),
         ):
-            enriched, failed = await engine._enrich_actions_with_duration(actions, session=mock_session)
+            enriched, failed = await engine._enrich_actions_with_duration(
+                actions, session=mock_session
+            )
 
         assert failed == []
         assert len(enriched) == 1
@@ -392,17 +404,19 @@ class TestFlowRateSnapshotInEnriched:
         mock_esp_repo.get_by_device_id = AsyncMock(return_value=_make_esp(esp_uuid))
 
         mock_actuator_repo = AsyncMock()
-        mock_actuator_repo.get_by_esp_and_gpio = AsyncMock(
-            return_value=_make_actuator(flow_rate)
-        )
+        mock_actuator_repo.get_by_esp_and_gpio = AsyncMock(return_value=_make_actuator(flow_rate))
 
-        actions = [{"type": "actuator_command", "esp_id": esp_id_str, "gpio": gpio, "dose_ml": dose_ml}]
+        actions = [
+            {"type": "actuator_command", "esp_id": esp_id_str, "gpio": gpio, "dose_ml": dose_ml}
+        ]
 
         with (
             patch("src.services.logic_engine.ESPRepository", return_value=mock_esp_repo),
             patch("src.services.logic_engine.ActuatorRepository", return_value=mock_actuator_repo),
         ):
-            enriched, failed = await engine._enrich_actions_with_duration(actions, session=mock_session)
+            enriched, failed = await engine._enrich_actions_with_duration(
+                actions, session=mock_session
+            )
 
         assert failed == []
         assert len(enriched) == 1
@@ -421,9 +435,7 @@ class TestDoseMlOverridesExistingDuration:
         mock_esp_repo = AsyncMock()
         mock_esp_repo.get_by_device_id = AsyncMock(return_value=_make_esp(esp_uuid))
         mock_actuator_repo = AsyncMock()
-        mock_actuator_repo.get_by_esp_and_gpio = AsyncMock(
-            return_value=_make_actuator(1.5)
-        )
+        mock_actuator_repo.get_by_esp_and_gpio = AsyncMock(return_value=_make_actuator(1.5))
         actions = [
             {
                 "type": "actuator_command",
@@ -464,9 +476,7 @@ class TestSequenceStepDoseMlResolved:
         mock_esp_repo.get_by_device_id = AsyncMock(return_value=_make_esp(esp_uuid))
 
         mock_actuator_repo = AsyncMock()
-        mock_actuator_repo.get_by_esp_and_gpio = AsyncMock(
-            return_value=_make_actuator(flow_rate)
-        )
+        mock_actuator_repo.get_by_esp_and_gpio = AsyncMock(return_value=_make_actuator(flow_rate))
 
         sequence_action = {
             "type": "sequence",
@@ -490,7 +500,9 @@ class TestSequenceStepDoseMlResolved:
             patch("src.services.logic_engine.ESPRepository", return_value=mock_esp_repo),
             patch("src.services.logic_engine.ActuatorRepository", return_value=mock_actuator_repo),
         ):
-            enriched, failed = await engine._enrich_actions_with_duration(actions, session=mock_session)
+            enriched, failed = await engine._enrich_actions_with_duration(
+                actions, session=mock_session
+            )
 
         assert failed == []
         assert len(enriched) == 1
@@ -539,7 +551,9 @@ class TestSequenceStepDoseMlFailSkipsWholeSequence:
             patch("src.services.logic_engine.ESPRepository", return_value=mock_esp_repo),
             patch("src.services.logic_engine.ActuatorRepository", return_value=mock_actuator_repo),
         ):
-            enriched, failed = await engine._enrich_actions_with_duration(actions, session=mock_session)
+            enriched, failed = await engine._enrich_actions_with_duration(
+                actions, session=mock_session
+            )
 
         assert enriched == []
         assert len(failed) == 1
@@ -554,7 +568,14 @@ class TestSequenceWithoutDoseMlPassthrough:
         sequence_action = {
             "type": "sequence",
             "steps": [
-                {"action": {"type": "actuator_command", "esp_id": "ESP_SEQ_03", "gpio": 7, "command": "ON"}},
+                {
+                    "action": {
+                        "type": "actuator_command",
+                        "esp_id": "ESP_SEQ_03",
+                        "gpio": 7,
+                        "command": "ON",
+                    }
+                },
                 {"delay_seconds": 5},
             ],
         }
@@ -567,7 +588,9 @@ class TestSequenceWithoutDoseMlPassthrough:
             patch("src.services.logic_engine.ESPRepository", return_value=mock_esp_repo),
             patch("src.services.logic_engine.ActuatorRepository", return_value=mock_actuator_repo),
         ):
-            enriched, failed = await engine._enrich_actions_with_duration(actions, session=mock_session)
+            enriched, failed = await engine._enrich_actions_with_duration(
+                actions, session=mock_session
+            )
 
         assert failed == []
         assert len(enriched) == 1

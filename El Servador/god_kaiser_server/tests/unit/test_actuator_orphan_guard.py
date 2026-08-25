@@ -24,9 +24,12 @@ def test_orphan_external_actuator_failure_not_orphan_when_configured():
 
 
 def test_parse_gpio_from_actuator_error_message():
-    assert parse_gpio_from_actuator_error_message(
-        "Actuator not configured on GPIO 0. Configure via API first."
-    ) == 0
+    assert (
+        parse_gpio_from_actuator_error_message(
+            "Actuator not configured on GPIO 0. Configure via API first."
+        )
+        == 0
+    )
 
 
 def test_suppress_actuator_not_found_error_broadcast():

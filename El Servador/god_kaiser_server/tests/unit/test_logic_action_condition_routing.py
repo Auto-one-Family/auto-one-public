@@ -122,9 +122,7 @@ class TestActionRoutingValidation:
 class TestConditionGateHelpers:
     def test_d4_absent_and_empty_use_global_gate(self):
         results = [True, False]
-        assert (
-            LogicEngine._action_passes_condition_gate({}, results, True, "AND") is True
-        )
+        assert LogicEngine._action_passes_condition_gate({}, results, True, "AND") is True
         assert (
             LogicEngine._action_passes_condition_gate(
                 {"condition_refs": None}, results, False, "AND"
@@ -132,9 +130,7 @@ class TestConditionGateHelpers:
             is False
         )
         assert (
-            LogicEngine._action_passes_condition_gate(
-                {"condition_refs": []}, results, True, "AND"
-            )
+            LogicEngine._action_passes_condition_gate({"condition_refs": []}, results, True, "AND")
             is True
         )
 
@@ -182,21 +178,13 @@ class TestConditionGateHelpers:
     def test_condition_op_defaults_to_rule_operator(self):
         results = [True, False]
         action = {"condition_refs": [0, 1]}  # no condition_op
-        assert (
-            LogicEngine._action_passes_condition_gate(action, results, False, "OR")
-            is True
-        )
-        assert (
-            LogicEngine._action_passes_condition_gate(action, results, False, "AND")
-            is False
-        )
+        assert LogicEngine._action_passes_condition_gate(action, results, False, "OR") is True
+        assert LogicEngine._action_passes_condition_gate(action, results, False, "AND") is False
 
     def test_invalid_index_fails_closed(self):
         results = [True]
         assert (
-            LogicEngine._action_passes_condition_gate(
-                {"condition_refs": [5]}, results, True, "AND"
-            )
+            LogicEngine._action_passes_condition_gate({"condition_refs": [5]}, results, True, "AND")
             is False
         )
 
@@ -204,17 +192,13 @@ class TestConditionGateHelpers:
         results = [True, False]
         flat = {"command": "ON"}  # global gate
         routed = {"condition_refs": [1], "command": "OFF"}
-        gated = LogicEngine._filter_actions_by_condition_gate(
-            [flat, routed], results, True, "OR"
-        )
+        gated = LogicEngine._filter_actions_by_condition_gate([flat, routed], results, True, "OR")
         assert gated == [flat]  # global true; C1 false
 
     def test_rule_has_routed_actions(self):
         assert LogicEngine._rule_has_routed_actions([{"command": "ON"}]) is False
         assert (
-            LogicEngine._rule_has_routed_actions(
-                [{"command": "ON"}, {"condition_refs": [0]}]
-            )
+            LogicEngine._rule_has_routed_actions([{"command": "ON"}, {"condition_refs": [0]}])
             is True
         )
 

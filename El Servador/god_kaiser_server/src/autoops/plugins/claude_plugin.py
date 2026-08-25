@@ -114,9 +114,7 @@ class ClaudePlugin(AutoOpsPlugin):
         # config_overrides are stored in context.extra by PluginService
         # =============================================
         config_overrides: dict = context.extra.get("config_overrides", {})
-        api_key: str | None = config_overrides.get("api_key") or os.environ.get(
-            "ANTHROPIC_API_KEY"
-        )
+        api_key: str | None = config_overrides.get("api_key") or os.environ.get("ANTHROPIC_API_KEY")
 
         if not api_key:
             actions.append(

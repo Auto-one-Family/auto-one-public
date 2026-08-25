@@ -69,9 +69,7 @@ async def operator_user(db_session: AsyncSession) -> User:
 
 @pytest.fixture
 def admin_headers(admin_user: User) -> dict:
-    token = create_access_token(
-        user_id=admin_user.id, additional_claims={"role": admin_user.role}
-    )
+    token = create_access_token(user_id=admin_user.id, additional_claims={"role": admin_user.role})
     return {"Authorization": f"Bearer {token}"}
 
 
@@ -133,9 +131,7 @@ class TestResetCursorEndpoint:
         "cursor_name",
         [SHEETS_CURSOR_SENSOR, SHEETS_CURSOR_HISTORY, SHEETS_CURSOR_LOGIC],
     )
-    async def test_all_allowed_cursor_names_accepted(
-        self, cursor_name: str, admin_headers: dict
-    ):
+    async def test_all_allowed_cursor_names_accepted(self, cursor_name: str, admin_headers: dict):
         """All three cursor names must be accepted with HTTP 200."""
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post(
@@ -179,9 +175,7 @@ class TestResetCursorEndpoint:
         assert response.status_code == 401
 
     @pytest.mark.asyncio
-    async def test_reset_cursor_is_idempotent(
-        self, admin_headers: dict, db_session: AsyncSession
-    ):
+    async def test_reset_cursor_is_idempotent(self, admin_headers: dict, db_session: AsyncSession):
         """Calling reset twice should be safe: first returns deleted=True, second deleted=False."""
         repo = SystemConfigRepository(db_session)
         await repo.set_sheets_export_cursor(SHEETS_CURSOR_LOGIC, "2026-05-23T10:00:00+00:00")

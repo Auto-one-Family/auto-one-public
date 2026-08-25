@@ -108,9 +108,7 @@ class TestHelpers:
 
     def test_success_without_noop_is_real_dispatch(self):
         assert (
-            action_result_is_real_dispatch(
-                {"success": True, "data": {"esp_id": "E", "gpio": 1}}
-            )
+            action_result_is_real_dispatch({"success": True, "data": {"esp_id": "E", "gpio": 1}})
             is True
         )
 
@@ -157,14 +155,19 @@ class TestHelpers:
             {"type": "sequence", "steps": []},
         ]
         results = [
-            {"type": "actuator", "success": True, "data": {"noop": True, "esp_id": "ESP_X", "gpio": 12}},
-            {"type": "sequence", "success": True, "data": {"sequence_id": "s1", "status": "running"}},
+            {
+                "type": "actuator",
+                "success": True,
+                "data": {"noop": True, "esp_id": "ESP_X", "gpio": 12},
+            },
+            {
+                "type": "sequence",
+                "success": True,
+                "data": {"sequence_id": "s1", "status": "running"},
+            },
         ]
         assert (
-            collect_dispatched_dose_pumps(
-                enriched_actions=enriched, action_results=results
-            )
-            == []
+            collect_dispatched_dose_pumps(enriched_actions=enriched, action_results=results) == []
         )
 
     def test_ph_exclude_from_ec_composition(self):
@@ -249,9 +252,7 @@ async def test_record_writes_one_entry_two_components(
 
 
 @pytest.mark.asyncio
-async def test_record_idempotent_skip(
-    db_session: AsyncSession, tank_and_esp
-) -> None:
+async def test_record_idempotent_skip(db_session: AsyncSession, tank_and_esp) -> None:
     tank, esp, _service = tank_and_esp
     exec_id = uuid.uuid4()
     rule_id = uuid.uuid4()
@@ -272,15 +273,11 @@ async def test_record_idempotent_skip(
     )
     assert first is not None
     assert second is None
-    assert await ledger_has_logic_execution(
-        db_session, tank_id=tank.id, logic_execution_id=exec_id
-    )
+    assert await ledger_has_logic_execution(db_session, tank_id=tank.id, logic_execution_id=exec_id)
 
 
 @pytest.mark.asyncio
-async def test_record_skips_when_tank_id_null(
-    db_session: AsyncSession, zone: Zone
-) -> None:
+async def test_record_skips_when_tank_id_null(db_session: AsyncSession, zone: Zone) -> None:
     esp = ESPDevice(
         device_id="ESP_NO_TANK",
         name="No Tank",
@@ -305,9 +302,7 @@ async def test_record_skips_when_tank_id_null(
 
 
 @pytest.mark.asyncio
-async def test_v_alt_rises_after_top_up_dose(
-    db_session: AsyncSession, tank_and_esp
-) -> None:
+async def test_v_alt_rises_after_top_up_dose(db_session: AsyncSession, tank_and_esp) -> None:
     tank, esp, service = tank_and_esp
     before, _ = await service._derive_prior_state(tank.id)
     assert before == pytest.approx(20.0)
@@ -351,9 +346,7 @@ async def test_assist_stays_sensor_ec_after_logic_dose(
 
 
 @pytest.mark.asyncio
-async def test_ph_minus_tagged_and_filtered(
-    db_session: AsyncSession, tank_and_esp
-) -> None:
+async def test_ph_minus_tagged_and_filtered(db_session: AsyncSession, tank_and_esp) -> None:
     _tank, esp, _service = tank_and_esp
     result = await record_logic_dose_to_ledger(
         db_session,

@@ -553,8 +553,12 @@ async def test_ec_linear_2point_canonical_structure(db_session):
         expected_points=2,
         initiated_by="tester",
     )
-    await service.add_point(session_id=session.id, raw=625.0, reference=1413.0, point_role="reference_low")
-    await service.add_point(session_id=session.id, raw=3200.0, reference=12880.0, point_role="reference_high")
+    await service.add_point(
+        session_id=session.id, raw=625.0, reference=1413.0, point_role="reference_low"
+    )
+    await service.add_point(
+        session_id=session.id, raw=3200.0, reference=12880.0, point_role="reference_high"
+    )
 
     session = await service.finalize(session.id)
     result = session.calibration_result
@@ -586,8 +590,12 @@ async def test_ec_linear_2point_missing_reference_low(db_session):
         expected_points=2,
     )
     # Add only reference_high, skip reference_low
-    await service.add_point(session_id=session.id, raw=600.0, reference=1413.0, point_role="reference_low")
-    await service.add_point(session_id=session.id, raw=3200.0, reference=12880.0, point_role="reference_high")
+    await service.add_point(
+        session_id=session.id, raw=600.0, reference=1413.0, point_role="reference_low"
+    )
+    await service.add_point(
+        session_id=session.id, raw=3200.0, reference=12880.0, point_role="reference_high"
+    )
     # Overwrite reference_low with a wrong role to simulate missing scenario by checking
     # that invalid role is rejected first
 
@@ -691,6 +699,7 @@ def test_ec_linear_2point_static_compute_slope_and_offset():
     expected_slope = (12880.0 - 1413.0) / (v_high - v_low)
     expected_offset = 1413.0 - expected_slope * v_low
     import pytest
+
     assert result["slope"] == pytest.approx(expected_slope, rel=0.001)
     assert result["offset"] == pytest.approx(expected_offset, rel=0.001)
 
@@ -707,6 +716,7 @@ def test_ec_linear_2point_static_compute_temperature_normalization():
     # At 30°C: actual EC = reference * (1 + 0.02 * (30 - 25)) = reference * 1.1
     # ref_low_at_cal_temp(30°C) = 1413 * 1.1 ≈ 1554.3
     import pytest
+
     assert result_30["ref_low_at_cal_temp"] == pytest.approx(1413.0 * 1.1, rel=0.001)
     assert result_30["ref_high_at_cal_temp"] == pytest.approx(12880.0 * 1.1, rel=0.001)
 

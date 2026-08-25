@@ -1032,9 +1032,7 @@ async def lifespan(app: FastAPI):
                 "DailyAnalysisJob (AUT-194) scheduled: morning=06:00 UTC, evening=18:00 UTC"
             )
         except Exception as _aut194_err:
-            logger.warning(
-                f"DailyAnalysisJob registration failed (non-critical): {_aut194_err}"
-            )
+            logger.warning(f"DailyAnalysisJob registration failed (non-critical): {_aut194_err}")
 
         # Step 6.3: Plugin Schedule Registration (Phase B V3.1)
         # Load plugin schedules from DB and register as APScheduler cron jobs

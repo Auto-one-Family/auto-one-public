@@ -301,7 +301,9 @@ class TestLWTInstantOffline:
         assert result is True
         mock_terminal_authority_repo.upsert_outcome.assert_awaited()
         intent_calls = [
-            call for call in mock_ws.broadcast.call_args_list if call.args and call.args[0] == "intent_outcome"
+            call
+            for call in mock_ws.broadcast.call_args_list
+            if call.args and call.args[0] == "intent_outcome"
         ]
         assert len(intent_calls) == 1
         assert intent_calls[0].args[1]["code"] == "ESP_DISCONNECTED_BEFORE_OUTCOME"

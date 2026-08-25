@@ -279,9 +279,7 @@ class SheetsClient:
                 if exc_name != "WorksheetNotFound":
                     raise
                 cols = max(default_cols, len(header_row))
-                ws = spreadsheet.add_worksheet(
-                    title=tab_name, rows=default_rows, cols=cols
-                )
+                ws = spreadsheet.add_worksheet(title=tab_name, rows=default_rows, cols=cols)
                 ws.append_row(header_row, value_input_option="RAW")
                 logger.info(
                     "[sheets_export] Created new tab %s with %d header columns",
@@ -297,9 +295,7 @@ class SheetsClient:
         except Exception as exc:
             err = classify_api_error(exc)
             # Override numeric code for clarity when it's a tab creation issue.
-            if not err.retryable and err.numeric_code in (
-                ConfigErrorCode.SHEETS_WRITE_FAILED,
-            ):
+            if not err.retryable and err.numeric_code in (ConfigErrorCode.SHEETS_WRITE_FAILED,):
                 err = NonRetryableSheetsError(
                     f"Failed to create worksheet {tab_name!r}: {exc}",
                     numeric_code=ConfigErrorCode.SHEETS_TAB_CREATE_FAILED,
@@ -339,18 +335,13 @@ class SheetsClient:
         min_size = self._settings.batch_min_size_for_split
 
         async def _do_append(chunk: List[List[Any]]) -> None:
-            await asyncio.to_thread(
-                worksheet.append_rows, chunk, value_input_option="RAW"
-            )
+            await asyncio.to_thread(worksheet.append_rows, chunk, value_input_option="RAW")
 
         try:
             await self.execute_with_retry(lambda: _do_append(rows))
             return
         except NonRetryableSheetsError as exc:
-            if (
-                exc.numeric_code == ConfigErrorCode.SHEETS_PAYLOAD_TOO_LARGE
-                and len(rows) > 1
-            ):
+            if exc.numeric_code == ConfigErrorCode.SHEETS_PAYLOAD_TOO_LARGE and len(rows) > 1:
                 # 413 — split and retry both halves.
                 if len(rows) < min_size:
                     raise NonRetryableSheetsError(

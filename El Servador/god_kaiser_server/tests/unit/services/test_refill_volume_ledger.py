@@ -121,9 +121,7 @@ async def test_maybe_record_refill_writes_ledger_once() -> None:
                 source="measure_binding",
             ),
         ),
-        patch(
-            "src.services.refill_volume_ledger.TankService"
-        ) as mock_tank_cls,
+        patch("src.services.refill_volume_ledger.TankService") as mock_tank_cls,
     ):
         mock_tank = AsyncMock()
         mock_tank.create_batch = AsyncMock(return_value=created)
@@ -160,9 +158,7 @@ async def test_resolve_refill_flow_sensor_from_measure_binding() -> None:
     rule.rule_metadata = {
         "measure_bindings": [
             {
-                "sensor_refs": [
-                    {"esp_id": "ESP_AABBCC", "gpio": 14, "sensor_type": "flow"}
-                ],
+                "sensor_refs": [{"esp_id": "ESP_AABBCC", "gpio": 14, "sensor_type": "flow"}],
                 "hooks": ["on_start", "on_complete"],
                 "formula_id": "difference",
                 "formula_params": {
@@ -200,9 +196,7 @@ async def test_resolve_refill_flow_sensor_legacy_fallback() -> None:
 
 
 @pytest.mark.asyncio
-async def test_resolve_volume_zugabe_manual_beats_measured(
-    service: TankService, zone
-) -> None:
+async def test_resolve_volume_zugabe_manual_beats_measured(service: TankService, zone) -> None:
     tank = await service.create_tank(
         TankCreate(
             zone_id=zone.zone_id,
@@ -220,9 +214,7 @@ async def test_resolve_volume_zugabe_manual_beats_measured(
             qualifier="approximate",
         ),
     )
-    volume, source, occurred, label = await service._resolve_volume_zugabe(
-        tank.id, 2.5
-    )
+    volume, source, occurred, label = await service._resolve_volume_zugabe(tank.id, 2.5)
     assert volume == pytest.approx(2.5)
     assert source == "manual"
     assert occurred is None
@@ -230,9 +222,7 @@ async def test_resolve_volume_zugabe_manual_beats_measured(
 
 
 @pytest.mark.asyncio
-async def test_resolve_volume_zugabe_from_ledger(
-    service: TankService, zone
-) -> None:
+async def test_resolve_volume_zugabe_from_ledger(service: TankService, zone) -> None:
     tank = await service.create_tank(
         TankCreate(
             zone_id=zone.zone_id,
@@ -250,9 +240,7 @@ async def test_resolve_volume_zugabe_from_ledger(
             qualifier="approximate",
         ),
     )
-    volume, source, occurred, label = await service._resolve_volume_zugabe(
-        tank.id, 0.0
-    )
+    volume, source, occurred, label = await service._resolve_volume_zugabe(tank.id, 0.0)
     assert volume == pytest.approx(4.0)
     assert source == "measured"
     assert occurred is not None
@@ -260,9 +248,7 @@ async def test_resolve_volume_zugabe_from_ledger(
 
 
 @pytest.mark.asyncio
-async def test_resolve_volume_zugabe_none_when_empty(
-    service: TankService, zone
-) -> None:
+async def test_resolve_volume_zugabe_none_when_empty(service: TankService, zone) -> None:
     tank = await service.create_tank(
         TankCreate(
             zone_id=zone.zone_id,
@@ -270,9 +256,7 @@ async def test_resolve_volume_zugabe_none_when_empty(
             operation_mode="drain_to_waste",
         )
     )
-    volume, source, occurred, label = await service._resolve_volume_zugabe(
-        tank.id, 0.0
-    )
+    volume, source, occurred, label = await service._resolve_volume_zugabe(tank.id, 0.0)
     assert volume == 0.0
     assert source == "none"
     assert occurred is None

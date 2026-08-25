@@ -236,9 +236,7 @@ class ActuatorExportBatcher:
         rule_lookup = await self._build_rule_lookup(events_with_esp)
         rule_correlation = await self._build_rule_correlation(events_with_esp)
 
-        open_state: Dict[str, Dict[str, Any]] = {
-            k: dict(v) for k, v in (open_runs or {}).items()
-        }
+        open_state: Dict[str, Dict[str, Any]] = {k: dict(v) for k, v in (open_runs or {}).items()}
         batch = ActuatorBatch(open_runs_after=open_state)
 
         for history, esp_device_id in events_with_esp:
@@ -269,9 +267,7 @@ class ActuatorExportBatcher:
                     )
                     _bump(batch.notes_counter, "off_without_on")
                 else:
-                    start_ts = _ensure_aware(
-                        datetime.fromisoformat(current_open["start_ts"])
-                    )
+                    start_ts = _ensure_aware(datetime.fromisoformat(current_open["start_ts"]))
                     duration_s = int(max(0.0, (ts - start_ts).total_seconds()))
                     notes = current_open.get("notes") or ""
                     if (history.command_type or "").lower() == "emergency_stop":
@@ -305,9 +301,7 @@ class ActuatorExportBatcher:
                 # ON
                 if current_open is not None:
                     # double-ON without OFF -> close previous as overlapping
-                    start_ts = _ensure_aware(
-                        datetime.fromisoformat(current_open["start_ts"])
-                    )
+                    start_ts = _ensure_aware(datetime.fromisoformat(current_open["start_ts"]))
                     duration_s = int(max(0.0, (ts - start_ts).total_seconds()))
                     batch.rows.append(
                         ActuatorRunRow(
@@ -317,10 +311,7 @@ class ActuatorExportBatcher:
                             esp_id=esp_display,
                             gpio=int(history.gpio),
                             actuator_type=str(history.actuator_type or ""),
-                            ausloeser=(
-                                current_open.get("ausloeser")
-                                or ausloeser
-                            ),
+                            ausloeser=(current_open.get("ausloeser") or ausloeser),
                             result=_result_string(history),
                             notes="overlapping_on",
                         )
@@ -394,9 +385,7 @@ class ActuatorExportBatcher:
         earliest = min(_ensure_aware(h.timestamp) for h, _ in events) - (
             self._correlation_window * 2
         )
-        latest = max(_ensure_aware(h.timestamp) for h, _ in events) + (
-            self._correlation_window * 2
-        )
+        latest = max(_ensure_aware(h.timestamp) for h, _ in events) + (self._correlation_window * 2)
         stmt = (
             select(LogicExecutionHistory)
             .where(LogicExecutionHistory.logic_rule_id.in_(list(rule_ids)))

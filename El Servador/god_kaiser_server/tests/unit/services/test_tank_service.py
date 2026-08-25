@@ -281,9 +281,7 @@ async def test_create_batch_rejects_mixed_fields_on_component() -> None:
 
 
 @pytest.mark.asyncio
-async def test_ec_never_measured_vs_measured_zero(
-    service: TankService, zone: Zone
-) -> None:
+async def test_ec_never_measured_vs_measured_zero(service: TankService, zone: Zone) -> None:
     tank = await service.create_tank(
         TankCreate(
             zone_id=zone.zone_id,
@@ -434,9 +432,7 @@ async def test_create_batch_ec_anchor_warns_but_persists(
 
 
 @pytest.mark.asyncio
-async def test_create_batch_first_entry_prior_null(
-    service: TankService, zone: Zone
-) -> None:
+async def test_create_batch_first_entry_prior_null(service: TankService, zone: Zone) -> None:
     """No history → prior_* stay NULL (never invented)."""
     tank = await service.create_tank(
         TankCreate(
@@ -460,9 +456,7 @@ async def test_create_batch_first_entry_prior_null(
 
 
 @pytest.mark.asyncio
-async def test_create_batch_writes_prior_from_history(
-    service: TankService, zone: Zone
-) -> None:
+async def test_create_batch_writes_prior_from_history(service: TankService, zone: Zone) -> None:
     """Second entry gets prior_volume from reconstructed ledger state."""
     tank = await service.create_tank(
         TankCreate(
@@ -503,9 +497,7 @@ async def test_create_batch_writes_prior_from_history(
 
 
 @pytest.mark.asyncio
-async def test_compute_dose_assist_manual_override(
-    service: TankService, zone: Zone
-) -> None:
+async def test_compute_dose_assist_manual_override(service: TankService, zone: Zone) -> None:
     tank = await service.create_tank(
         TankCreate(
             zone_id=zone.zone_id,
@@ -531,9 +523,7 @@ async def test_compute_dose_assist_manual_override(
 
 
 @pytest.mark.asyncio
-async def test_compute_dose_assist_from_ledger_volume(
-    service: TankService, zone: Zone
-) -> None:
+async def test_compute_dose_assist_from_ledger_volume(service: TankService, zone: Zone) -> None:
     tank = await service.create_tank(
         TankCreate(
             zone_id=zone.zone_id,
@@ -565,9 +555,7 @@ async def test_compute_dose_assist_from_ledger_volume(
 
 
 @pytest.mark.asyncio
-async def test_compute_dose_assist_requires_v_alt(
-    service: TankService, zone: Zone
-) -> None:
+async def test_compute_dose_assist_requires_v_alt(service: TankService, zone: Zone) -> None:
     tank = await service.create_tank(
         TankCreate(
             zone_id=zone.zone_id,
@@ -660,19 +648,17 @@ async def test_assign_device_to_tank_and_read_both_directions(
 
 
 @pytest.mark.asyncio
-async def test_assign_device_unknown_tank_raises(
-    service: TankService, esp: ESPDevice
-) -> None:
+async def test_assign_device_unknown_tank_raises(service: TankService, esp: ESPDevice) -> None:
     with pytest.raises(ValueError, match="not found"):
         await service.assign_device(uuid.uuid4(), esp.device_id)
 
 
 @pytest.mark.asyncio
-async def test_assign_device_unknown_device_raises(
-    service: TankService, zone: Zone
-) -> None:
+async def test_assign_device_unknown_device_raises(service: TankService, zone: Zone) -> None:
     tank = await service.create_tank(
-        TankCreate(zone_id=zone.zone_id, name="Tank Device Unknown", operation_mode="drain_to_waste")
+        TankCreate(
+            zone_id=zone.zone_id, name="Tank Device Unknown", operation_mode="drain_to_waste"
+        )
     )
     with pytest.raises(ValueError, match="not found"):
         await service.assign_device(tank.id, "ESP_DOES_NOT_EXIST")
@@ -684,9 +670,7 @@ async def test_assign_device_rejects_non_wasser_domain(
 ) -> None:
     """AUT-1328: Domain != wasser must not become a tank member."""
     tank = await service.create_tank(
-        TankCreate(
-            zone_id=zone.zone_id, name="Tank Domain Reject", operation_mode="drain_to_waste"
-        )
+        TankCreate(zone_id=zone.zone_id, name="Tank Domain Reject", operation_mode="drain_to_waste")
     )
     esp.domain = "luft"
     with pytest.raises(ValueError, match="requires domain 'wasser'"):
@@ -724,9 +708,7 @@ async def test_reassign_device_to_different_tank_replaces_previous(
 
 
 @pytest.mark.asyncio
-async def test_clear_device_assignment(
-    service: TankService, zone: Zone, esp: ESPDevice
-) -> None:
+async def test_clear_device_assignment(service: TankService, zone: Zone, esp: ESPDevice) -> None:
     tank = await service.create_tank(
         TankCreate(zone_id=zone.zone_id, name="Tank Clear", operation_mode="drain_to_waste")
     )
@@ -783,9 +765,7 @@ async def test_get_targets_at_now_without_segments_returns_null_values(
 ) -> None:
     """No plan_segment rows for the zone → both measures resolved_via=none."""
     tank = await service.create_tank(
-        TankCreate(
-            zone_id=zone.zone_id, name="Tank No Plan", operation_mode="drain_to_waste"
-        )
+        TankCreate(zone_id=zone.zone_id, name="Tank No Plan", operation_mode="drain_to_waste")
     )
     result = await service.get_targets_at_now(tank.id)
 
@@ -831,9 +811,7 @@ async def test_get_targets_at_now_with_covering_segment_returns_values(
     await db_session.flush()
 
     tank = await service.create_tank(
-        TankCreate(
-            zone_id=zone.zone_id, name="Tank With Plan", operation_mode="drain_to_waste"
-        )
+        TankCreate(zone_id=zone.zone_id, name="Tank With Plan", operation_mode="drain_to_waste")
     )
     result = await service.get_targets_at_now(tank.id)
 
@@ -857,9 +835,7 @@ async def test_get_targets_at_now_uses_first_assigned_subzone(
     """Subzone-specific segment (assigned to first subzone) resolves via subzone."""
     now = datetime.now(timezone.utc)
     tank = await service.create_tank(
-        TankCreate(
-            zone_id=zone.zone_id, name="Tank Subzone Plan", operation_mode="drain_to_waste"
-        )
+        TankCreate(zone_id=zone.zone_id, name="Tank Subzone Plan", operation_mode="drain_to_waste")
     )
     await service.assign_subzone(tank.id, subzones[0].id)
     await service.assign_subzone(tank.id, subzones[1].id)

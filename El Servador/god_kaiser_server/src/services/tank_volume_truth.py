@@ -93,14 +93,14 @@ async def resolve_v_real(
             level_gpio=int(level_cfg.gpio),
             level_device_id=level_device.device_id,
             flow_delta_l=0.0,
-            anchor_at=latest.timestamp
-            if latest.timestamp.tzinfo
-            else latest.timestamp.replace(tzinfo=timezone.utc),
+            anchor_at=(
+                latest.timestamp
+                if latest.timestamp.tzinfo
+                else latest.timestamp.replace(tzinfo=timezone.utc)
+            ),
         )
 
-    anchor_at = await _last_anchor_high_at(
-        session, level_cfg.esp_id, int(level_cfg.gpio)
-    )
+    anchor_at = await _last_anchor_high_at(session, level_cfg.esp_id, int(level_cfg.gpio))
     if anchor_at is None:
         logger.info(
             "AUT-1371 V_real: no historical '%s' high for tank %s (gpio=%s)",
@@ -185,10 +185,7 @@ async def _last_anchor_high_at(
             SensorData.esp_id == esp_id,
             SensorData.gpio == gpio,
             SensorData.sensor_type == LEVEL_SENSOR_TYPE,
-            (
-                (SensorData.processed_value == 1.0)
-                | (SensorData.raw_value == 1.0)
-            ),
+            ((SensorData.processed_value == 1.0) | (SensorData.raw_value == 1.0)),
         )
         .order_by(desc(SensorData.timestamp))
         .limit(1)
@@ -212,22 +209,24 @@ def _level_is_active(row: SensorData) -> bool:
         return False
 
 
-async def _resolve_flow_esp(
-    session: AsyncSession, devices: list[ESPDevice]
-) -> Optional[ESPDevice]:
+async def _resolve_flow_esp(session: AsyncSession, devices: list[ESPDevice]) -> Optional[ESPDevice]:
     by_id = {d.device_id: d for d in devices}
     if REFILL_FLOW_DEVICE_ID in by_id:
         return by_id[REFILL_FLOW_DEVICE_ID]
     # Fallback: any tank ESP that has a flow sensor on the canonical GPIO
     esp_ids = [d.id for d in devices]
-    stmt = select(SensorConfig.esp_id).where(
-        and_(
-            SensorConfig.esp_id.in_(esp_ids),
-            SensorConfig.gpio == REFILL_FLOW_GPIO,
-            SensorConfig.sensor_type == REFILL_FLOW_SENSOR_TYPE,
-            SensorConfig.enabled.is_(True),
+    stmt = (
+        select(SensorConfig.esp_id)
+        .where(
+            and_(
+                SensorConfig.esp_id.in_(esp_ids),
+                SensorConfig.gpio == REFILL_FLOW_GPIO,
+                SensorConfig.sensor_type == REFILL_FLOW_SENSOR_TYPE,
+                SensorConfig.enabled.is_(True),
+            )
         )
-    ).limit(1)
+        .limit(1)
+    )
     result = await session.execute(stmt)
     esp_uuid = result.scalar_one_or_none()
     if esp_uuid is None:

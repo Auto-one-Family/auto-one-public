@@ -72,9 +72,9 @@ class IntentOutcomeHandler:
                     payload.setdefault("_reconciliation", {})["intent_id_source"] = "correlation_id"
                 else:
                     corr_seed = "missing-corr"
-                    payload["intent_id"] = f"missing-intent:{esp_id}:{corr_seed}:{seq_seed}:{ts_seed}"[
-                        :128
-                    ]
+                    payload["intent_id"] = (
+                        f"missing-intent:{esp_id}:{corr_seed}:{seq_seed}:{ts_seed}"[:128]
+                    )
                     payload["code"] = "CONTRACT_MISSING_INTENT_ID"
                     payload["reason"] = "Contract violation: missing intent_id"
                     payload["retryable"] = False

@@ -33,9 +33,7 @@ class SensorSubzoneAssignmentRepository(BaseRepository[SensorSubzoneAssignment])
     # Query Methods
     # =========================================================================
 
-    async def get_by_sensor(
-        self, sensor_config_id: uuid.UUID
-    ) -> List[SensorSubzoneAssignment]:
+    async def get_by_sensor(self, sensor_config_id: uuid.UUID) -> List[SensorSubzoneAssignment]:
         """
         Return all assignments for a given sensor config.
 
@@ -51,9 +49,7 @@ class SensorSubzoneAssignmentRepository(BaseRepository[SensorSubzoneAssignment])
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
 
-    async def get_by_subzone(
-        self, subzone_config_id: uuid.UUID
-    ) -> List[SensorSubzoneAssignment]:
+    async def get_by_subzone(self, subzone_config_id: uuid.UUID) -> List[SensorSubzoneAssignment]:
         """
         Return all assignments for a given subzone config.
 
@@ -176,9 +172,7 @@ class SensorSubzoneAssignmentRepository(BaseRepository[SensorSubzoneAssignment])
         await self.session.flush()
         return True
 
-    async def unassign_all_for_sensor(
-        self, sensor_config_id: uuid.UUID
-    ) -> int:
+    async def unassign_all_for_sensor(self, sensor_config_id: uuid.UUID) -> int:
         """
         Delete all assignments for a sensor config (e.g. on sensor deletion).
 
@@ -194,9 +188,7 @@ class SensorSubzoneAssignmentRepository(BaseRepository[SensorSubzoneAssignment])
         await self.session.flush()
         return len(rows)
 
-    async def unassign_all_for_subzone(
-        self, subzone_config_id: uuid.UUID
-    ) -> int:
+    async def unassign_all_for_subzone(self, subzone_config_id: uuid.UUID) -> int:
         """
         Delete all assignments for a subzone config (e.g. on subzone deletion).
 

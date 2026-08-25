@@ -45,12 +45,8 @@ async def test_read_live_sensor_fresh_ec_succeeds():
     esp.is_online = True
 
     with (
-        patch(
-            "src.services.logic.measure_live_reader.ESPRepository"
-        ) as EspRepo,
-        patch(
-            "src.services.logic.measure_live_reader.SensorRepository"
-        ) as SensorRepo,
+        patch("src.services.logic.measure_live_reader.ESPRepository") as EspRepo,
+        patch("src.services.logic.measure_live_reader.SensorRepository") as SensorRepo,
     ):
         EspRepo.return_value.get_by_device_id = AsyncMock(return_value=esp)
         SensorRepo.return_value.get_latest_reading = AsyncMock(
@@ -78,12 +74,8 @@ async def test_read_live_sensor_fresh_ph_succeeds():
     esp.is_online = True
 
     with (
-        patch(
-            "src.services.logic.measure_live_reader.ESPRepository"
-        ) as EspRepo,
-        patch(
-            "src.services.logic.measure_live_reader.SensorRepository"
-        ) as SensorRepo,
+        patch("src.services.logic.measure_live_reader.ESPRepository") as EspRepo,
+        patch("src.services.logic.measure_live_reader.SensorRepository") as SensorRepo,
     ):
         EspRepo.return_value.get_by_device_id = AsyncMock(return_value=esp)
         SensorRepo.return_value.get_latest_reading = AsyncMock(
@@ -110,12 +102,8 @@ async def test_read_live_sensor_missing_fails_closed():
     esp.is_online = True
 
     with (
-        patch(
-            "src.services.logic.measure_live_reader.ESPRepository"
-        ) as EspRepo,
-        patch(
-            "src.services.logic.measure_live_reader.SensorRepository"
-        ) as SensorRepo,
+        patch("src.services.logic.measure_live_reader.ESPRepository") as EspRepo,
+        patch("src.services.logic.measure_live_reader.SensorRepository") as SensorRepo,
     ):
         EspRepo.return_value.get_by_device_id = AsyncMock(return_value=esp)
         SensorRepo.return_value.get_latest_reading = AsyncMock(return_value=None)
@@ -143,12 +131,8 @@ async def test_read_live_sensor_stale_fails_closed():
     esp.is_online = True
 
     with (
-        patch(
-            "src.services.logic.measure_live_reader.ESPRepository"
-        ) as EspRepo,
-        patch(
-            "src.services.logic.measure_live_reader.SensorRepository"
-        ) as SensorRepo,
+        patch("src.services.logic.measure_live_reader.ESPRepository") as EspRepo,
+        patch("src.services.logic.measure_live_reader.SensorRepository") as SensorRepo,
     ):
         EspRepo.return_value.get_by_device_id = AsyncMock(return_value=esp)
         SensorRepo.return_value.get_latest_reading = AsyncMock(

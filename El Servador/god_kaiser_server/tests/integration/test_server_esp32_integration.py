@@ -1175,7 +1175,9 @@ class TestHeartbeatHandlerProcessing:
         mock_adoption_service.clear_cycle = AsyncMock()
 
         with patch("src.mqtt.handlers.lwt_handler.resilient_session", mock_resilient_session):
-            with patch("src.mqtt.handlers.heartbeat_handler.resilient_session", mock_resilient_session):
+            with patch(
+                "src.mqtt.handlers.heartbeat_handler.resilient_session", mock_resilient_session
+            ):
                 with patch("src.mqtt.client.MQTTClient.get_instance", return_value=mock_mqtt):
                     with patch(
                         "src.websocket.manager.WebSocketManager.get_instance",
@@ -1200,9 +1202,7 @@ class TestHeartbeatHandlerProcessing:
 
                                         lwt_handler = LWTHandler()
                                         heartbeat_handler = HeartbeatHandler()
-                                        lwt_topic = (
-                                            f"kaiser/god/esp/{sample_esp_device.device_id}/system/will"
-                                        )
+                                        lwt_topic = f"kaiser/god/esp/{sample_esp_device.device_id}/system/will"
                                         lwt_payload = {
                                             "status": "offline",
                                             "reason": "unexpected_disconnect",
@@ -1224,9 +1224,7 @@ class TestHeartbeatHandlerProcessing:
                                         )
 
                                         heartbeat_ts = int(time.time())
-                                        heartbeat_topic = (
-                                            f"kaiser/god/esp/{sample_esp_device.device_id}/heartbeat"
-                                        )
+                                        heartbeat_topic = f"kaiser/god/esp/{sample_esp_device.device_id}/heartbeat"
                                         heartbeat_payload = {
                                             "ts": heartbeat_ts,
                                             "uptime": 12,

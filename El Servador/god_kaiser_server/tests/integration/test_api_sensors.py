@@ -329,7 +329,10 @@ class TestQueryData:
         assert data["success"] is True
         qualities = [r.get("quality") for r in data["readings"]]
         assert "warming_up" not in qualities
-        assert all(r.get("raw_value") != 0.0 or r.get("processed_value") is not None for r in data["readings"])
+        assert all(
+            r.get("raw_value") != 0.0 or r.get("processed_value") is not None
+            for r in data["readings"]
+        )
         assert any(r.get("processed_value") == 6.8 for r in data["readings"])
 
     @pytest.mark.asyncio

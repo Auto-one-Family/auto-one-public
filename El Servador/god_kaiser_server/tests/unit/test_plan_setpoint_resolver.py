@@ -411,7 +411,10 @@ class TestResolveEffectiveSetpoint:
         await db_session.flush()
 
         result = await resolve_effective_setpoint(
-            rule, session=db_session, static_value=1.5, static_value_source="trigger_conditions.value"
+            rule,
+            session=db_session,
+            static_value=1.5,
+            static_value_source="trigger_conditions.value",
         )
 
         assert result is not None

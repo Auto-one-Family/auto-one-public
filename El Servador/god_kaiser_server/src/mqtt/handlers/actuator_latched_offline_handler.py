@@ -43,9 +43,7 @@ logger = get_logger(__name__)
 
 # SSOT reason values — keep in sync with MQTT_TOPICS.md §2.8 and
 # El Trabajante/src/services/actuator/actuator_manager.cpp:publishLatchedOffline.
-_VALID_REASONS = frozenset(
-    {"offline_rule_hold", "safety_forced_off", "manual_override"}
-)
+_VALID_REASONS = frozenset({"offline_rule_hold", "safety_forced_off", "manual_override"})
 
 
 class ActuatorLatchedOfflineHandler:
@@ -60,9 +58,7 @@ class ActuatorLatchedOfflineHandler:
        Operator Dashboard.
     """
 
-    async def handle_actuator_latched_offline(
-        self, topic: str, payload: dict
-    ) -> bool:
+    async def handle_actuator_latched_offline(self, topic: str, payload: dict) -> bool:
         """
         Handle a latched-offline telemetry message.
 
@@ -88,9 +84,7 @@ class ActuatorLatchedOfflineHandler:
             esp_id_topic: str = parsed["esp_id"]
             gpio_topic: int = parsed["gpio"]
 
-            safe_payload: Dict[str, Any] = (
-                payload if isinstance(payload, dict) else {}
-            )
+            safe_payload: Dict[str, Any] = payload if isinstance(payload, dict) else {}
 
             # Topic is authoritative for esp_id/gpio (defense-in-depth):
             # use topic values for routing, but expose payload values
@@ -151,8 +145,7 @@ class ActuatorLatchedOfflineHandler:
                     },
                 )
                 logger.debug(
-                    "actuator_latched_offline broadcast via WebSocket "
-                    "(esp_id=%s gpio=%s)",
+                    "actuator_latched_offline broadcast via WebSocket " "(esp_id=%s gpio=%s)",
                     esp_id,
                     gpio,
                 )

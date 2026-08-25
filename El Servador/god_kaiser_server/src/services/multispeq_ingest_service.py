@@ -168,9 +168,7 @@ class IngestService:
                     result=result,
                 )
             except Exception as exc:  # pragma: no cover - defensive
-                self.logger.exception(
-                    "MultispeQ measurement #%d failed: %s", index, exc
-                )
+                self.logger.exception("MultispeQ measurement #%d failed: %s", index, exc)
                 result.errors.append(f"measurement[{index}]: {exc}")
 
         # Bulk insert with ON CONFLICT DO NOTHING for race-safety.
@@ -216,8 +214,7 @@ class IngestService:
                     )
             else:
                 self.logger.debug(
-                    "LogicEngine not initialised — skipping evaluation for "
-                    "%d MultispeQ rows",
+                    "LogicEngine not initialised — skipping evaluation for " "%d MultispeQ rows",
                     len(logic_triggers),
                 )
 
@@ -260,18 +257,14 @@ class IngestService:
 
         timestamp = measurement.get("timestamp")
         if not isinstance(timestamp, datetime):
-            result.errors.append(
-                f"measurement[{index}]: missing or invalid timestamp"
-            )
+            result.errors.append(f"measurement[{index}]: missing or invalid timestamp")
             return
         if timestamp.tzinfo is None:
             timestamp = timestamp.replace(tzinfo=timezone.utc)
 
         measurement_id = measurement.get("measurement_id")
         if not measurement_id:
-            result.errors.append(
-                f"measurement[{index}]: missing measurement_id"
-            )
+            result.errors.append(f"measurement[{index}]: missing measurement_id")
             return
 
         # 1. Parse PhotosynQ payload into internal sensor_type → float dict.
@@ -286,9 +279,7 @@ class IngestService:
 
         # Calibration warnings are non-fatal.
         for warning in validate_calibration(parsed):
-            result.warnings.append(
-                f"measurement[{index}] ({measurement_id}): {warning}"
-            )
+            result.warnings.append(f"measurement[{index}] ({measurement_id}): {warning}")
 
         # 2. Plant-Matching.
         custom_fields = measurement.get("custom_fields") or {}
@@ -330,9 +321,7 @@ class IngestService:
         )
 
         data_source_value = (
-            "multispeq_upload"
-            if source == ImportSource.manual_upload
-            else "multispeq_api_pull"
+            "multispeq_upload" if source == ImportSource.manual_upload else "multispeq_api_pull"
         )
 
         for row in rows:
@@ -369,9 +358,7 @@ class IngestService:
                 )
             )
 
-    async def _get_virtual_device(
-        self, device_serial: str
-    ) -> Optional[ESPDevice]:
+    async def _get_virtual_device(self, device_serial: str) -> Optional[ESPDevice]:
         """Find an existing virtual ESP for ``device_serial``.
 
         Only devices with ``status == 'virtual'`` qualify. Returns ``None`` if
@@ -385,14 +372,11 @@ class IngestService:
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
 
-    async def _is_duplicate(
-        self, measurement_id: str, sensor_type: str
-    ) -> bool:
+    async def _is_duplicate(self, measurement_id: str, sensor_type: str) -> bool:
         """Check whether a row with ``(measurement_id, sensor_type)`` exists."""
         stmt = select(func.count(SensorData.id)).where(
             SensorData.sensor_type == sensor_type,
-            SensorData.sensor_metadata["measurement_id"].astext
-            == measurement_id,
+            SensorData.sensor_metadata["measurement_id"].astext == measurement_id,
         )
         result = await self.session.execute(stmt)
         count = result.scalar_one()
@@ -412,9 +396,7 @@ class IngestService:
     ) -> None:
         """Best-effort audit log — never blocks the caller on failure."""
         try:
-            severity = (
-                AuditSeverity.WARNING if result.errors else AuditSeverity.INFO
-            )
+            severity = AuditSeverity.WARNING if result.errors else AuditSeverity.INFO
             details: dict[str, Any] = {
                 "source": source.value,
                 "zone_id": zone_id,
@@ -440,6 +422,4 @@ class IngestService:
             )
             await self.session.commit()
         except Exception as exc:  # pragma: no cover - audit must not fail caller
-            self.logger.warning(
-                "Failed to write audit log for MultispeQ ingest: %s", exc
-            )
+            self.logger.warning("Failed to write audit log for MultispeQ ingest: %s", exc)

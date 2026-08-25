@@ -17,9 +17,7 @@ async def test_malformed_lifecycle_returns_true_and_emits_tracing_degraded() -> 
     topic = "kaiser/god/esp/ESP_UNIT/system/intent_outcome/lifecycle"
     payload = {"schema": "intent_chain_stage_v1", "ts": 1}  # missing event_type
 
-    with patch(
-        "src.mqtt.handlers.intent_outcome_lifecycle_handler.emit_tracing_degraded"
-    ) as emit:
+    with patch("src.mqtt.handlers.intent_outcome_lifecycle_handler.emit_tracing_degraded") as emit:
         ok = await handler.handle_lifecycle(topic, payload)
     assert ok is True
     emit.assert_called_once()

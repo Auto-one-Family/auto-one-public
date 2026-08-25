@@ -258,8 +258,7 @@ async def assign_user_to_dashboard(
     response_model=DashboardAssignmentListResponse,
     summary="Unassign user from dashboard",
     description=(
-        "Remove a user's explicit assignment from a dashboard. "
-        "Requires operator or admin role."
+        "Remove a user's explicit assignment from a dashboard. " "Requires operator or admin role."
     ),
 )
 async def unassign_user_from_dashboard(
@@ -294,8 +293,7 @@ async def unassign_user_from_dashboard(
     response_model=DashboardAssignmentListResponse,
     summary="List dashboard assignments",
     description=(
-        "List all explicit user assignments for a dashboard. "
-        "Requires operator or admin role."
+        "List all explicit user assignments for a dashboard. " "Requires operator or admin role."
     ),
 )
 async def list_dashboard_assignments(

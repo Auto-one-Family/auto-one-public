@@ -245,7 +245,9 @@ class DashboardAssignmentResponse(BaseModel):
     dashboard_id: uuid.UUID = Field(..., description="Dashboard UUID")
     user_id: int = Field(..., description="Assigned user ID")
     assigned_at: Optional[datetime] = Field(None, description="Assignment timestamp (UTC)")
-    assigned_by: Optional[int] = Field(None, description="Operator user ID who created the assignment")
+    assigned_by: Optional[int] = Field(
+        None, description="Operator user ID who created the assignment"
+    )
 
     model_config = ConfigDict(from_attributes=True)
 

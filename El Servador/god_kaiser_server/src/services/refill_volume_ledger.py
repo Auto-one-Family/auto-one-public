@@ -90,15 +90,12 @@ async def resolve_refill_flow_sensor(
                 if not esp_id or gpio < 0:
                     continue
                 logger.info(
-                    "AUT-1397: refill flow sensor from measure_binding "
-                    "rule=%s esp=%s gpio=%s",
+                    "AUT-1397: refill flow sensor from measure_binding " "rule=%s esp=%s gpio=%s",
                     getattr(rule, "rule_name", rule.id),
                     esp_id,
                     gpio,
                 )
-                return RefillFlowSensorRef(
-                    device_id=esp_id, gpio=gpio, source="measure_binding"
-                )
+                return RefillFlowSensorRef(device_id=esp_id, gpio=gpio, source="measure_binding")
     except Exception as err:
         logger.error(
             "AUT-1397: measure_binding flow-sensor resolve failed: %s",
@@ -199,14 +196,10 @@ async def maybe_record_refill_volume_to_ledger(
         tank_id = device.tank_id
         off_aware = _ensure_aware(off_at)
         event_key = (
-            correlation_id
-            if correlation_id
-            else f"{device_id}:{gpio}:{off_aware.isoformat()}"
+            correlation_id if correlation_id else f"{device_id}:{gpio}:{off_aware.isoformat()}"
         )
 
-        if await ledger_has_refill_event(
-            session, tank_id=tank_id, event_key=event_key
-        ):
+        if await ledger_has_refill_event(session, tank_id=tank_id, event_key=event_key):
             logger.info(
                 "AUT-1385: skip refill ledger — event_key=%s already present",
                 event_key,
@@ -236,11 +229,7 @@ async def maybe_record_refill_volume_to_ledger(
             off_aware,
             device_id=flow_sensor.device_id,
             gpio=flow_sensor.gpio,
-            esp_uuid=(
-                esp_uuid
-                if flow_sensor.device_id == device_id
-                else None
-            ),
+            esp_uuid=(esp_uuid if flow_sensor.device_id == device_id else None),
         )
         volume_l = float(measured.volume_l)
         if volume_l <= 0:

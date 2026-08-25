@@ -25,6 +25,8 @@ def test_extract_context_fields_returns_expected_keys():
 def test_extract_context_fields_handles_legacy_non_dict():
     assert ErrorEventHandler._extract_context_fields(None) == {}
     assert ErrorEventHandler._extract_context_fields("legacy-string") == {}
+
+
 """Unit tests for AUT-456 context extraction in ErrorEventHandler."""
 
 from src.mqtt.handlers.error_handler import ErrorEventHandler

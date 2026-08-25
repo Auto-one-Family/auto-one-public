@@ -94,9 +94,7 @@ class TestListAppliedSetpointLogs:
         db_session.add_all([matching, outside_window, other_zone])
         await db_session.commit()
 
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.get(
                 "/api/v1/applied-setpoint-logs",
                 params={
@@ -119,9 +117,7 @@ class TestListAppliedSetpointLogs:
 
     @pytest.mark.asyncio
     async def test_list_empty_without_rows(self, auth_headers: dict, sample_zone: Zone):
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.get(
                 "/api/v1/applied-setpoint-logs",
                 params={"zone_id": sample_zone.zone_id},
@@ -133,8 +129,6 @@ class TestListAppliedSetpointLogs:
 
     @pytest.mark.asyncio
     async def test_list_requires_auth(self):
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.get("/api/v1/applied-setpoint-logs")
         assert response.status_code in (401, 403)

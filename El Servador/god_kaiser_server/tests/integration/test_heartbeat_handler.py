@@ -1293,7 +1293,9 @@ class TestHeartbeatReconnectMetadataConsistency:
             mock_session.return_value.__aenter__ = AsyncMock(return_value=heartbeat_db)
             mock_session.return_value.__aexit__ = AsyncMock(return_value=None)
 
-            with patch("src.mqtt.handlers.heartbeat_handler.ESPHeartbeatRepository") as mock_repo_class:
+            with patch(
+                "src.mqtt.handlers.heartbeat_handler.ESPHeartbeatRepository"
+            ) as mock_repo_class:
                 mock_repo = MagicMock()
                 mock_repo.log_heartbeat = AsyncMock()
                 mock_repo_class.return_value = mock_repo
