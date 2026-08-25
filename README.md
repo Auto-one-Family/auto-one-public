@@ -1,9 +1,15 @@
 # AutomationOne
 
-An environmental time-series acquisition system for protected horticulture
+Own acquisition system for environmental time series in protected horticulture
 (greenhouse, polytunnel, and indoor horticulture climate).
 
-Firmware measures, the server stores, the interface displays.
+Firmware measures, the server stores, the interface shows readings and lets
+an operator configure devices in space.
+
+A reading is bound to a **zone** (the house or climate context) and a
+**subzone** (the place inside that zone — air volume, substrate, or
+solution circuit). The value is a placed observation, not a nameless
+logger point.
 
 ```
 El Trabajante (ESP32)
@@ -20,16 +26,28 @@ El Frontend (Vue)
 ## Architecture
 
 Three layers. The device collects readings, the server persists them, the
-interface shows them.
+interface shows them and lets an operator assign devices to places.
 
 | Layer | Stack | Role |
 |-------|--------|------|
 | **El Trabajante** | C++ / PlatformIO / ESP32 | Measure and publish environmental readings |
 | **El Servador** | Python / FastAPI / PostgreSQL / MQTT | Store UTC time series and serve them |
-| **El Frontend** | Vue 3 / TypeScript | Display live and historical readings |
+| **El Frontend** | Vue 3 / TypeScript | Show live and history; configure devices in space |
 
 Data path: ESP32 publishes over MQTT, FastAPI writes PostgreSQL, the Vue
-dashboard updates over HTTP and WebSocket.
+interface updates over HTTP and WebSocket.
+
+---
+
+## Operator surface
+
+An operator assigns sensors and actuators to GPIO and subzone in the
+interface — zone → device → pin — without flashing firmware for that
+assignment. Live and historical readings are shown by zone and subzone.
+
+Actuator types in this tree: pump, valve, PWM, relay. They are
+configurable nodes on the same hardware view. This README makes no
+control, climate, or yield promise.
 
 ---
 
@@ -40,7 +58,9 @@ Types present in this tree — not a site log and not a running campaign:
 1. **Air:** temperature, humidity, CO₂, air pressure
 2. **Substrate:** moisture, temperature
 3. **Nutrient solution:** pH, EC
-4. **Also named in this snapshot:** flow, light intensity, fill level
+4. **Also named in this snapshot:** flow, light intensity, fill level.
+   Light intensity is a type on the server and in the interface schema;
+   this snapshot has no firmware driver for it.
 
 ---
 
@@ -52,11 +72,10 @@ quantity types. It does not document a current experiment series.
 - **Calibration.** Slope/offset coefficients and a two-point wizard exist.
   This tree does not record a calibration event against a reference standard,
   with date, validity window, or operator.
-- **Sample interval.** The measurement interval is configurable. This
-  description does not fix a period.
+- **Sample interval.** The measurement interval is configurable per sensor.
+  This description does not fix a period.
 - **Storage.** Readings are stored as a PostgreSQL time series in UTC.
-- **Actuators.** Actuator code exists in the tree. It is not part of this
-  public description. This README makes no control or automation promise.
+  Each reading carries zone and subzone at measurement time.
 
 ---
 
