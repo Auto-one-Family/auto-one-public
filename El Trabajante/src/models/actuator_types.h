@@ -33,6 +33,7 @@ struct RuntimeProtection {
   unsigned long max_runtime_ms = 3600000UL;  // 1h default (prevents continuous operation)
   bool timeout_enabled = true;               // Enable/disable timeout protection
   unsigned long activation_start_ms = 0;     // Timestamp when actuator was activated
+  unsigned long cooldown_ms = 30000UL;       // Min pause between activations (0 = no cooldown)
 };
 
 struct ActuatorConfig {

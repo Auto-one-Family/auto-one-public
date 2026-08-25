@@ -66,6 +66,9 @@
 #define ERROR_ACTUATOR_INIT_FAILED  1051
 #define ERROR_ACTUATOR_NOT_FOUND    1052
 #define ERROR_ACTUATOR_CONFLICT     1053
+// AUT-1020: Specific rejection codes (enable structured reason-response)
+#define ERROR_ACTUATOR_COOLDOWN_ACTIVE     1054  // Cooldown after last stop still running
+#define ERROR_ACTUATOR_EMERGENCY_ACTIVE    1056  // Emergency-stop active, command rejected
 
 // DS18B20-specific Temperature Errors (1060-1069)
 #define ERROR_DS18B20_SENSOR_FAULT        1060  // -127°C: Sensor disconnected or CRC failure

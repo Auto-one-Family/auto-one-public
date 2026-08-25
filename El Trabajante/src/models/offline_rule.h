@@ -12,7 +12,17 @@
 // and a 30s grace period has elapsed. Binary actuator control
 // only — no PWM, no business logic.
 
+// AUT-1143 S3: board-budgeted (S0/D6 beleg, docs/analysen/aut-1139-s0-...).
+// ESP32-S3: RAM/NVS-Headroom trivial (~161 KB) -> 16. WROOM-32: DRAM
+// .dram0.bss-Headroom nur ~232 B (AUT-602-Praezedenzfall: +96 B kippten den
+// Build) -> bleibt beim historischen 8, kein Wachstum. 16 ist zugleich die
+// Obergrenze, die der uint16_t-Debounce-Bitmask-Fix unten (offline_mode_manager.cpp)
+// ohne weiteren uint32_t-Schritt traegt.
+#ifdef ESP32_S3_DEVKIT_MODE
+static const uint8_t MAX_OFFLINE_RULES = 16;
+#else
 static const uint8_t MAX_OFFLINE_RULES = 8;
+#endif
 
 enum class OfflineRuleTimezone : uint8_t {
     UTC = 0,

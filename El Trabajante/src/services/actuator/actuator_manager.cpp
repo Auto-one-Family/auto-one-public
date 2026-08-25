@@ -287,7 +287,9 @@ bool ActuatorManager::configureActuator(const ActuatorConfig& incoming_config) {
                         (prev.runtime_protection.max_runtime_ms !=
                             config.runtime_protection.max_runtime_ms)      ||
                         (prev.runtime_protection.timeout_enabled !=
-                            config.runtime_protection.timeout_enabled);
+                            config.runtime_protection.timeout_enabled)     ||
+                        (prev.runtime_protection.cooldown_ms !=
+                            config.runtime_protection.cooldown_ms);        // AUT-1019
 
     if (!structural_changed && !soft_changed) {
       // Fully identical config — nothing to do
@@ -314,6 +316,8 @@ bool ActuatorManager::configureActuator(const ActuatorConfig& incoming_config) {
             config.runtime_protection.max_runtime_ms;
         existing->config.runtime_protection.timeout_enabled  =
             config.runtime_protection.timeout_enabled;
+        existing->config.runtime_protection.cooldown_ms      =
+            config.runtime_protection.cooldown_ms;            // AUT-1019
         existing->config.runtime_protection.activation_start_ms = keep_activation;
       }
       syncDriverSoftPolicyFromRegistered(*existing);
@@ -731,9 +735,10 @@ void ActuatorManager::processActuatorLoops() {
           // Emergency stop this actuator
           emergencyStopActuator(actuators_[i].config.gpio);
 
-          // Publish timeout alert
+          // Publish timeout alert (AUT-1020: pass max_runtime_ms so server/FE can show the configured limit)
           publishActuatorAlert(actuators_[i].config.gpio, "runtime_protection",
-                               "Actuator exceeded max runtime - emergency stopped");
+                               "Actuator exceeded max runtime - emergency stopped",
+                               actuators_[i].config.runtime_protection.max_runtime_ms);
 
           // Reset activation timestamp
           actuators_[i].config.runtime_protection.activation_start_ms = 0;
@@ -827,8 +832,13 @@ bool ActuatorManager::handleActuatorCommand(const String& topic, const String& p
     publishActuatorAlert(gpio, "emergency_stop",
                          "Actuator in emergency stop state. Clear emergency first.");
     publishActuatorStatus(gpio);
+    // AUT-1020: structured rejection info for emergency guard (B5, inline — no driver getter needed)
+    PumpActuator::ActivationDeniedInfo emergency_info;
+    emergency_info.reason = "emergency_stop";
+    emergency_info.error_code = ERROR_ACTUATOR_EMERGENCY_ACTIVE;
     publishActuatorResponse(command, false,
-                            "Actuator in emergency stop state. Clear emergency first.");
+                            "Actuator in emergency stop state. Clear emergency first.",
+                            &emergency_info);
     xSemaphoreGive(g_actuator_mutex);
     return false;
   }
@@ -848,6 +858,9 @@ bool ActuatorManager::handleActuatorCommand(const String& topic, const String& p
   // We only force a publish from this handler when command is a binary no-op
   // (already ON/OFF), because the control helper short-circuits in that case.
   bool expect_internal_status_publish = true;
+  // AUT-1020: optional denial info passed to publishActuatorResponse (B3/B4)
+  PumpActuator::ActivationDeniedInfo denied_info;
+  const PumpActuator::ActivationDeniedInfo* denied_info_ptr = nullptr;
 
   // Make command_source visible in the first status frame emitted by control helpers.
   actuator->last_command_source = command.issued_by;
@@ -860,7 +873,18 @@ bool ActuatorManager::handleActuatorCommand(const String& topic, const String& p
       LOG_I(TAG, "Actuator GPIO " + String(gpio) + " ON with duration " +
                   String(command.duration_s) + "s (auto-OFF scheduled)");
     }
-    if (!success) resultMessage = "Failed to turn actuator ON";
+    if (!success) {
+      resultMessage = "Failed to turn actuator ON";
+      // AUT-1020: read denial info from PUMP/RELAY driver (cast pattern from syncDriverSoftPolicy)
+      if (actuator->driver &&
+          (actuator->config.actuator_type == String(ActuatorTypeTokens::PUMP) ||
+           actuator->config.actuator_type == String(ActuatorTypeTokens::RELAY))) {
+        denied_info = static_cast<PumpActuator*>(actuator->driver.get())->getLastDeniedInfo();
+        if (denied_info.error_code != 0) {
+          denied_info_ptr = &denied_info;
+        }
+      }
+    }
   } else if (command.command.equalsIgnoreCase("OFF")) {
     expect_internal_status_publish = actuator->config.current_state;
     success = controlActuatorBinary(gpio, false);
@@ -878,7 +902,7 @@ bool ActuatorManager::handleActuatorCommand(const String& topic, const String& p
     resultMessage = "Unknown command: " + command.command;
   }
 
-  publishActuatorResponse(command, success, resultMessage);
+  publishActuatorResponse(command, success, resultMessage, denied_info_ptr);
   if (success) {
     LOG_I(TAG, "Actuator command executed: GPIO " + String(gpio) +
              " " + command.command + " = " + String(command.value));
@@ -1002,9 +1026,25 @@ bool ActuatorManager::parseActuatorDefinition(const JsonObjectConst& obj,
   }
 
   // SAFETY-P1 Mechanism C: max_runtime_ms configurable via Config-Push (default: 3600000ms)
+  // max_runtime_ms=0 means "no runtime limit" — sets timeout_enabled=false.
+  // Key absent: keep compiled default (timeout_enabled remains true, max_runtime_ms = 3600000ms).
   int max_runtime_value = 0;
-  if (JsonHelpers::extractInt(obj, "max_runtime_ms", max_runtime_value) && max_runtime_value > 0) {
-    config.runtime_protection.max_runtime_ms = static_cast<unsigned long>(max_runtime_value);
+  if (JsonHelpers::extractInt(obj, "max_runtime_ms", max_runtime_value)) {
+    if (max_runtime_value > 0) {
+      config.runtime_protection.max_runtime_ms = static_cast<unsigned long>(max_runtime_value);
+      config.runtime_protection.timeout_enabled = true;
+    } else {
+      config.runtime_protection.timeout_enabled = false;
+    }
+  }
+
+  // cooldown_ms configurable via Config-Push (default: 30000ms = 30s).
+  // cooldown_ms=0 means "no cooldown between activations".
+  // Key absent: keep compiled default (30s).
+  int cooldown_value = 0;
+  if (JsonHelpers::extractInt(obj, "cooldown_ms", cooldown_value)) {
+    config.runtime_protection.cooldown_ms =
+        static_cast<unsigned long>(cooldown_value >= 0 ? cooldown_value : 0);
   }
 
   return true;
@@ -1148,14 +1188,15 @@ void ActuatorManager::publishAllActuatorStatus() {
 
 String ActuatorManager::buildResponsePayload(const ActuatorCommand& command,
                                              bool success,
-                                             const String& message) const {
+                                             const String& message,
+                                             const PumpActuator::ActivationDeniedInfo* denied_info) const {
   // Phase 7: Get zone information from global variables
   extern KaiserZone g_kaiser;
   extern SystemConfig g_system_config;
-  
+
   // Phase 8: Use NTP-synchronized Unix timestamp
   time_t unix_ts = timeManager.getUnixTimestamp();
-  
+
   String payload = "{";
   payload += "\"esp_id\":\"" + g_system_config.esp_id + "\",";
   payload += "\"seq\":" + String(mqttClient.getNextSeq()) + ",";
@@ -1167,6 +1208,19 @@ String ActuatorManager::buildResponsePayload(const ActuatorCommand& command,
   payload += "\"duration\":" + String(command.duration_s) + ",";
   payload += "\"success\":" + String(success ? "true" : "false") + ",";
   payload += "\"message\":\"" + message + "\"";
+  // AUT-1020: additiv code + details bei strukturierter Ablehnung (B4)
+  if (!success && denied_info && denied_info->error_code != 0) {
+    payload += ",\"code\":" + String(denied_info->error_code);
+    payload += ",\"details\":{";
+    payload += "\"reason\":\"" + String(denied_info->reason) + "\"";
+    if (denied_info->limit_ms > 0) {
+      payload += ",\"limit_ms\":" + String(denied_info->limit_ms);
+    }
+    if (denied_info->remaining_ms > 0) {
+      payload += ",\"remaining_ms\":" + String(denied_info->remaining_ms);
+    }
+    payload += "}";
+  }
   if (command.correlation_id.length() > 0) {
     payload += ",\"correlation_id\":\"" + command.correlation_id + "\"";
   }
@@ -1179,12 +1233,13 @@ String ActuatorManager::buildResponsePayload(const ActuatorCommand& command,
 
 void ActuatorManager::publishActuatorResponse(const ActuatorCommand& command,
                                               bool success,
-                                              const String& message) {
+                                              const String& message,
+                                              const PumpActuator::ActivationDeniedInfo* denied_info) {
   // AUT-654: copy topic immediately — TopicBuilder reuses a shared static buffer;
   // a concurrent MQTT callback (main.cpp:881) can call buildActuatorCommandTopic(0)
   // and overwrite the buffer before the delayed String(topic) conversion below.
   String topic = String(TopicBuilder::buildActuatorResponseTopic(command.gpio));
-  String payload = buildResponsePayload(command, success, message);
+  String payload = buildResponsePayload(command, success, message, denied_info);
   // AUT-54: QoS 0 — response is telemetry; QoS-1 OUTBOX + OUTBOX-expiry caused transport
   // disconnects under slow PUBACK (field: ~11s after last command, AAAAA.md).
   mqttClient.safePublish(topic, payload, 0);
@@ -1192,14 +1247,15 @@ void ActuatorManager::publishActuatorResponse(const ActuatorCommand& command,
 
 void ActuatorManager::publishActuatorAlert(uint8_t gpio,
                                            const String& alert_type,
-                                           const String& message) {
+                                           const String& message,
+                                           unsigned long limit_ms) {
   // Phase 8: Use NTP-synchronized Unix timestamp
   time_t unix_ts = timeManager.getUnixTimestamp();
-  
+
   // Phase 7: Get zone information from global variables
   extern KaiserZone g_kaiser;
   extern SystemConfig g_system_config;
-  
+
   // AUT-654: copy immediately — TopicBuilder reuses a shared static buffer.
   String topic = String(TopicBuilder::buildActuatorAlertTopic(gpio));
   String payload = "{";
@@ -1210,6 +1266,10 @@ void ActuatorManager::publishActuatorAlert(uint8_t gpio,
   payload += "\"gpio\":" + String(gpio) + ",";
   payload += "\"alert_type\":\"" + alert_type + "\",";
   payload += "\"message\":\"" + message + "\"";
+  // AUT-1020: additiv limit_ms when alert carries a configured cap value (B4-Alert)
+  if (limit_ms > 0) {
+    payload += ",\"limit_ms\":" + String(limit_ms);
+  }
   payload += "}";
   // AUT-54: QoS 0 — same OUTBOX/backpressure rationale as actuator/response.
   mqttClient.safePublish(topic, payload, 0);

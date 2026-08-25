@@ -40,6 +40,13 @@ bool PumpActuator::begin(const ActuatorConfig& config) {
   config_ = config;
   gpio_ = config.gpio;
 
+  // R20-P11: protection_ is the member canActivate() actually enforces (separate from
+  // config_.runtime_protection). Without this sync, every newly-registered or structurally
+  // reconfigured actuator silently keeps the compiled defaults (30s cooldown, 1h max runtime)
+  // until a later soft-update calls syncRuntimeLimitsFromConfig() — same 2-line pattern as there.
+  protection_.max_runtime_ms = config.runtime_protection.max_runtime_ms;
+  protection_.cooldown_ms    = config.runtime_protection.cooldown_ms;
+
   if (!gpio_manager_->requestPin(gpio_, "actuator", config_.actuator_name.c_str())) {
     LOG_E(TAG, "PumpActuator: failed to reserve GPIO " + String(gpio_));
     errorTracker.trackError(ERROR_GPIO_RESERVED,
@@ -89,7 +96,11 @@ void PumpActuator::end() {
   }
 
   applyState(false, true);
-  gpio_manager_->releasePin(gpio_);
+  // AUT-1006: pass the inverted_logic-aware OFF level so GPIOManager keeps the pin
+  // actively driven instead of releasing to a high-impedance INPUT_PULLUP, which does
+  // not guarantee OFF on active-low relay hardware (weak pull-up can be overridden).
+  int safe_off_level = config_.inverted_logic ? HIGH : LOW;
+  gpio_manager_->releasePin(gpio_, safe_off_level);
   gpio_ = 255;
   initialized_ = false;
   running_ = false;
@@ -168,19 +179,25 @@ bool PumpActuator::applyState(bool state, bool force) {
 // Protection-Parameter werden vom Server konfiguriert (max_runtime, cooldown).
 // WICHTIG: Dies ist NICHT Business-Logic (keine Priority-basierte Entscheidung).
 // Dokumentiert in: docs/ZZZ.md - "Server-Centric Pragmatic Deviations"
-bool PumpActuator::canActivate() const {
+bool PumpActuator::canActivate() {
+  // AUT-1020: reset denial info before each check (member-approach, B3)
+  last_denied_info_ = ActivationDeniedInfo{};
+
   if (!initialized_) {
     return false;
   }
 
-  unsigned long now = millis();
-
-  // Enforce cooldown only when the *last continuous run* exceeded the runtime cap.
-  // accumulated_runtime_ms_ is telemetry across many cycles and must not keep
-  // the pump in permanent cooldown after one long run.
-  if (last_cycle_runtime_ms_ >= protection_.max_runtime_ms && last_stop_ms_ != 0) {
-    unsigned long since_stop = now - last_stop_ms_;
+  // Cooldown applies after EVERY stop, not just after a runtime-overrun.
+  // Server schema: cooldown_ms = "Minimum time between activations".
+  // cooldown_ms=0 disables this check entirely (no branching needed).
+  if (last_stop_ms_ != 0 && protection_.cooldown_ms > 0) {
+    unsigned long since_stop = millis() - last_stop_ms_;
     if (since_stop < protection_.cooldown_ms) {
+      // AUT-1020: populate denial info for structured response in actuator_manager
+      last_denied_info_.reason = "cooldown_active";
+      last_denied_info_.limit_ms = protection_.cooldown_ms;
+      last_denied_info_.remaining_ms = protection_.cooldown_ms - since_stop;
+      last_denied_info_.error_code = ERROR_ACTUATOR_COOLDOWN_ACTIVE;
       return false;
     }
   }
@@ -240,13 +257,24 @@ void PumpActuator::setRuntimeProtection(const RuntimeProtection& protection) {
 void PumpActuator::syncRuntimeLimitsFromConfig(const ActuatorConfig& cfg) {
   config_.runtime_protection = cfg.runtime_protection;
   protection_.max_runtime_ms = cfg.runtime_protection.max_runtime_ms;
+  protection_.cooldown_ms    = cfg.runtime_protection.cooldown_ms;
   config_.fail_safe_on_disconnect = cfg.fail_safe_on_disconnect;
   config_.has_fail_safe_override  = cfg.has_fail_safe_override;
   config_.critical                = cfg.critical;
   config_.actuator_name           = cfg.actuator_name;
   config_.subzone_id              = cfg.subzone_id;
+
+  // AUT-1008: inverted_logic flips the MEANING of the GPIO level already applied to
+  // the pin. Unlike the other soft fields above (no immediate physical consequence),
+  // a change here must re-apply the unchanged logical state so the physical pin
+  // follows the new polarity — otherwise ON/OFF silently inverts with no command sent.
+  bool inverted_logic_changed = (config_.inverted_logic != cfg.inverted_logic);
   config_.inverted_logic          = cfg.inverted_logic;
   config_.default_state           = cfg.default_state;
   config_.default_pwm             = cfg.default_pwm;
+
+  if (inverted_logic_changed && initialized_) {
+    applyState(running_, true);
+  }
 }
 

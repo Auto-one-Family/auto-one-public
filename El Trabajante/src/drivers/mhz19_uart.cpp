@@ -176,7 +176,7 @@ bool Mhz19UartReader::readRawPpm(uint16_t& ppm_out) {
     }
 
     // Disable ABC once after first successful read (idempotent: sensor stores in flash).
-    // ABC re-calibrates the lowest measured CO2 as 400 ppm — wrong in grow environments.
+    // ABC re-calibrates the lowest measured CO2 as 400 ppm — wrong in elevated-CO2 environments.
     if (!abc_disabled_) {
         Serial2.write(MHZ19_CMD_ABC_OFF, sizeof(MHZ19_CMD_ABC_OFF));
         Serial2.flush();

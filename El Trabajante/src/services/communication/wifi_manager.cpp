@@ -102,7 +102,10 @@ bool WiFiManager::connectToNetwork() {
         }
         if (mqttClient.isConnected()) {
             mqttClient.disconnect();
-            LOG_I(TAG, "MQTT disconnected before WiFi handover");
+            // [AUT-745] rssi tags this as the "planned handover" trigger — distinct
+            // from the WiFi-loss safety net in communication_task.cpp and from
+            // WiFiManager::disconnect() below.
+            LOG_I(TAG, String("[AUT-745] MQTT disconnected before WiFi handover rssi=") + String(WiFi.RSSI()));
         }
         WiFi.disconnect(true);
         delay(100);
@@ -216,7 +219,8 @@ String WiFiManager::getWiFiStatusMessage(wl_status_t status) {
 bool WiFiManager::disconnect() {
     if (mqttClient.isConnected()) {
         mqttClient.disconnect();
-        LOG_I(TAG, "MQTT disconnected before WiFi disconnect");
+        // [AUT-745] rssi tags this as the explicit WiFiManager::disconnect() trigger.
+        LOG_I(TAG, String("[AUT-745] MQTT disconnected before WiFi disconnect rssi=") + String(WiFi.RSSI()));
     }
     if (WiFi.status() == WL_CONNECTED) {
         WiFi.disconnect(true);

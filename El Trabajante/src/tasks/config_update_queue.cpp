@@ -120,12 +120,20 @@ static bool storeSlotPayload(uint8_t idx, const char* payload) {
     }
     size_t len = strlen(payload);
     if (len >= CONFIG_PAYLOAD_MAX_LEN) {
+        LOG_E(CFG_Q_TAG, String("[CONFIG] cfg_pending payload too large slot=") + String(idx) +
+              " len=" + String(len) + " max=" + String(CONFIG_PAYLOAD_MAX_LEN));
         return false;
     }
     clearSlotPayloadKeys(idx);
     String mkey = slotKey(idx, "plm");
     if (len <= CFG_PENDING_NVS_STRING_SAFE) {
-        if (!s_config_pending_prefs.putString(slotKey(idx, "payload").c_str(), payload)) {
+        // Suppress raw Preferences.cpp serial error — structured LOG_E below replaces it.
+        esp_log_level_set("Preferences", ESP_LOG_NONE);
+        bool put_ok = s_config_pending_prefs.putString(slotKey(idx, "payload").c_str(), payload);
+        esp_log_level_set("Preferences", ESP_LOG_WARN);
+        if (!put_ok) {
+            LOG_E(CFG_Q_TAG, String("[CONFIG] cfg_pending putString failed slot=") + String(idx) +
+                  " len=" + String(len) + " free_entries=" + String(s_config_pending_prefs.freeEntries()));
             return false;
         }
         s_config_pending_prefs.putUChar(mkey.c_str(), 0);
@@ -133,8 +141,9 @@ static bool storeSlotPayload(uint8_t idx, const char* payload) {
     }
     size_t written = s_config_pending_prefs.putBytes(slotKey(idx, "plb").c_str(), payload, len);
     if (written != len) {
-        LOG_E(CFG_Q_TAG, String("[CONFIG] cfg_pending putBytes failed len=") + String(len) +
-                             " written=" + String(written));
+        LOG_E(CFG_Q_TAG, String("[CONFIG] cfg_pending putBytes failed slot=") + String(idx) +
+              " len=" + String(len) + " written=" + String(written) +
+              " free_entries=" + String(s_config_pending_prefs.freeEntries()));
         clearSlotPayloadKeys(idx);
         return false;
     }
@@ -263,7 +272,9 @@ static void persistPendingIntent(const ConfigUpdateRequest& req) {
     }
 
     if (!storeSlotPayload(insert, req.json_payload)) {
-        LOG_E(CFG_Q_TAG, "[CONFIG] cfg_pending storeSlotPayload failed — replay may lose this intent");
+        LOG_E(CFG_Q_TAG, String("[CONFIG] cfg_pending storeSlotPayload failed slot=") + String(insert) +
+              " len=" + String(strlen(req.json_payload)) + " corr=" + req.metadata.correlation_id +
+              " — replay may lose this intent");
     }
     s_config_pending_prefs.putString(slotKey(insert, "intent").c_str(), req.metadata.intent_id);
     s_config_pending_prefs.putString(slotKey(insert, "corr").c_str(), req.metadata.correlation_id);
@@ -311,7 +322,8 @@ static void removePendingIntentById(const char* intent_id) {
         s_config_pending_prefs.putUChar("count", 0);
         for (uint8_t i = 0; i < restored; i++) {
             if (!storeSlotPayload(i, entries[i].json_payload)) {
-                LOG_E(CFG_Q_TAG, "[CONFIG] cfg_pending compaction storeSlotPayload failed at slot " + String(i));
+                LOG_E(CFG_Q_TAG, String("[CONFIG] cfg_pending compaction storeSlotPayload failed slot=") + String(i) +
+                      " len=" + String(strlen(entries[i].json_payload)) + " corr=" + entries[i].metadata.correlation_id);
             }
             s_config_pending_prefs.putString(slotKey(i, "intent").c_str(), entries[i].metadata.intent_id);
             s_config_pending_prefs.putString(slotKey(i, "corr").c_str(), entries[i].metadata.correlation_id);

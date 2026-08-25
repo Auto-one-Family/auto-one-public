@@ -340,6 +340,15 @@ private:
     bool manual_reconnect_suspended_;
     int pending_session_announce_msg_id_;
     unsigned long last_runtime_critical_publish_ms_;
+
+    // [AUT-745] Last-disconnect diagnostics — captured in MQTT_EVENT_DISCONNECTED,
+    // surfaced once via the next successful heartbeat's runtime_telemetry so the
+    // "Connected-but-Silent" defect (silence after CONNACK, broker-side keepalive
+    // kill) is visible server-side even without physical Serial access.
+    char last_disconnect_reason_[20];
+    int8_t last_disconnect_rssi_;
+    bool last_disconnect_wifi_connected_;
+    bool last_disconnect_pending_report_;
 #endif
 
     static MQTTClient* instance_;

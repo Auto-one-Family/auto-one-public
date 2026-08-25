@@ -21,6 +21,7 @@
 #include <WiFi.h>
 #include <sdkconfig.h>
 #include <esp_system.h>
+#include <esp_heap_caps.h>
 #include <atomic>
 #include <cstring>
 #include <errno.h>
@@ -142,11 +143,32 @@ static constexpr uint32_t POST_RECONNECT_TRANSPORT_SETTLE_MS = 2000;
 // Runtime tuning is driven by stress logs (queue/drain/direct publish durations).
 static constexpr int MQTT_CLIENT_NETWORK_TIMEOUT_MS = 1500;
 
-// [AUT-656-D] Reduced from 14336 (AUT-569): firmware growth since AUT-569 has shrunk the
-// max_alloc floor after esp_mqtt_client_init(). 12288 = ~2 KB above the AUT-569 measured
-// stack-usage baseline (10240) and ~2 KB below the estimated current floor (~14324 B).
-// Runtime verify: [AUT-656-D5] log in connect() reports max_alloc after init().
-static constexpr int MQTT_CLIENT_TASK_STACK = 12288;
+// [AUT-656-D/AUT-1075] task_stack must track the post-init max_alloc floor — a fixed
+// 12288 collided with max_alloc=12276 (12 B short). Runtime value: g_mqtt_runtime_task_stack.
+static constexpr int MQTT_CLIENT_TASK_STACK_MIN      = 10240;  // AUT-569 measured stack usage
+static constexpr int MQTT_CLIENT_TASK_STACK_CEILING  = 12288;
+static constexpr int MQTT_CLIENT_TASK_STACK_TCB_BYTES    = 512;
+static constexpr int MQTT_CLIENT_TASK_STACK_SAFETY_BYTES = 1024;
+
+static int g_mqtt_runtime_task_stack = MQTT_CLIENT_TASK_STACK_CEILING;
+
+static int computeMqttTaskStackFromMaxAlloc(size_t max_alloc) {
+    const int budget = static_cast<int>(max_alloc)
+                     - MQTT_CLIENT_TASK_STACK_TCB_BYTES
+                     - MQTT_CLIENT_TASK_STACK_SAFETY_BYTES;
+    if (budget < MQTT_CLIENT_TASK_STACK_MIN) {
+        return MQTT_CLIENT_TASK_STACK_MIN;
+    }
+    if (budget > MQTT_CLIENT_TASK_STACK_CEILING) {
+        return MQTT_CLIENT_TASK_STACK_CEILING;
+    }
+    return budget;
+}
+
+static bool mqttTaskStackPreflightOk(int task_stack) {
+    const size_t max_alloc = heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT);
+    return max_alloc >= static_cast<size_t>(task_stack + MQTT_CLIENT_TASK_STACK_TCB_BYTES);
+}
 
 static bool shouldLogAdmissionCorrelation(const String& topic) {
     return topic.indexOf("/command") != -1 ||
@@ -229,6 +251,33 @@ static void logAdmissionCorrelationBlockedPublish(const String& topic,
 extern KaiserZone g_kaiser;
 extern SystemConfig g_system_config;
 extern uint32_t getEmergencyRejectedNoTokenCount();
+
+// Apply fields that esp_mqtt_set_config() would zero-reset if omitted (AUT-656-B).
+// Must include LWT — a partial struct clobbers will registration (AUT-1075-LWT).
+static void applyMqttRuntimeConfig(esp_mqtt_client_handle_t client, int task_stack) {
+    if (client == nullptr) {
+        return;
+    }
+    time_t will_ts = timeManager.getUnixTimestamp();
+    char lw_msg[160];
+    snprintf(lw_msg, sizeof(lw_msg),
+             "{\"status\":\"offline\",\"esp_id\":\"%s\","
+             "\"reason\":\"unexpected_disconnect\",\"timestamp\":%lu}",
+             g_system_config.esp_id.c_str(), (unsigned long)will_ts);
+    String lw_topic = String(TopicBuilder::buildSystemHeartbeatTopic());
+    lw_topic.replace("/heartbeat", "/will");
+
+    esp_mqtt_client_config_t cfg = {};
+    cfg.disable_auto_reconnect = true;
+    cfg.network_timeout_ms     = MQTT_CLIENT_NETWORK_TIMEOUT_MS;
+    cfg.task_stack             = task_stack;
+    cfg.task_prio              = 3;
+    cfg.lwt_topic              = lw_topic.c_str();
+    cfg.lwt_msg                = lw_msg;
+    cfg.lwt_qos                = 1;
+    cfg.lwt_retain             = 1;
+    esp_mqtt_set_config(client, &cfg);
+}
 
 static String g_boot_sequence_id;
 static uint8_t g_boot_reset_reason = 0;
@@ -340,6 +389,10 @@ MQTTClient::MQTTClient()
       manual_reconnect_suspended_(false),
       pending_session_announce_msg_id_(-1),
       last_runtime_critical_publish_ms_(0UL),
+      last_disconnect_reason_{0},
+      last_disconnect_rssi_(0),
+      last_disconnect_wifi_connected_(false),
+      last_disconnect_pending_report_(false),
 #endif
       publish_seq_(0),
       safe_publish_retry_count_(0),
@@ -479,8 +532,10 @@ bool MQTTClient::connect(const MQTTConfig& config) {
         mqtt_cfg.password = config.password.c_str();
     }
 
-    // [AUT-569/AUT-656-D] task_stack: see MQTT_CLIENT_TASK_STACK constant above.
-    mqtt_cfg.task_stack = MQTT_CLIENT_TASK_STACK;
+    // [AUT-569/AUT-1075] task_stack: derived from max_alloc floor, not a fixed constant.
+    g_mqtt_runtime_task_stack = computeMqttTaskStackFromMaxAlloc(
+        heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT));
+    mqtt_cfg.task_stack = g_mqtt_runtime_task_stack;
     mqtt_cfg.task_prio = 3;
 
     // AUT-54: Override IDF default network_timeout_ms (10s). Field logs showed write-path
@@ -495,9 +550,12 @@ bool MQTTClient::connect(const MQTTConfig& config) {
     }
 
     mqtt_client_ = esp_mqtt_client_init(&mqtt_cfg);
+    g_mqtt_runtime_task_stack = computeMqttTaskStackFromMaxAlloc(
+        heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT));
+    applyMqttRuntimeConfig(mqtt_client_, g_mqtt_runtime_task_stack);
     LOG_W(TAG, String("[AUT-656-D5] max_alloc_after_init=") +
                String((int)heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT)) +
-               " task_stack=" + String(MQTT_CLIENT_TASK_STACK));
+               " task_stack=" + String(g_mqtt_runtime_task_stack));
     if (mqtt_client_ == nullptr) {
         LOG_E(TAG, "esp_mqtt_client_init() failed — nullptr returned");
         errorTracker.logCommunicationError(ERROR_MQTT_INIT_FAILED, "esp_mqtt_client_init failed");
@@ -522,17 +580,28 @@ bool MQTTClient::connect(const MQTTConfig& config) {
     esp_mqtt_client_register_event(mqtt_client_, MQTT_EVENT_ANY, mqtt_event_handler, this);
 
     // Start client — NON-BLOCKING. Connection happens in background MQTT task.
-    esp_err_t err = esp_mqtt_client_start(mqtt_client_);
-    // [AUT-569] After hard-reset, heap can be persistently fragmented (max_alloc ~16372 B
-    // when stack was 16384 B). With stack now at 14336 B, xTaskCreate succeeds immediately
-    // in most cases. These retries guard against transient contiguous-block shortfalls that
-    // resolve within ~1 s after lwIP PCB GC runs.
-    for (int retry = 0; retry < 3 && err != ESP_OK; ++retry) {
+    esp_err_t err = ESP_FAIL;
+    // [AUT-569/AUT-1075] Preflight max_alloc before start; retry after lwIP PCB GC.
+    for (int retry = 0; retry < 3; ++retry) {
+        g_mqtt_runtime_task_stack = computeMqttTaskStackFromMaxAlloc(
+            heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT));
+        applyMqttRuntimeConfig(mqtt_client_, g_mqtt_runtime_task_stack);
+        if (!mqttTaskStackPreflightOk(g_mqtt_runtime_task_stack)) {
+            LOG_W(TAG, String("[AUT-1075] start preflight blocked retry ") + String(retry + 1) +
+                       " max_alloc=" + String((int)heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT)) +
+                       " task_stack=" + String(g_mqtt_runtime_task_stack));
+            vTaskDelay(pdMS_TO_TICKS(500));
+            continue;
+        }
+        err = esp_mqtt_client_start(mqtt_client_);
+        if (err == ESP_OK) {
+            break;
+        }
         LOG_W(TAG, String("[AUT-569] esp_mqtt_client_start retry ") + String(retry + 1) +
                        " heap=" + String((int)heap_caps_get_free_size(MALLOC_CAP_DEFAULT)) +
-                       " max_alloc=" + String((int)heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT)));
+                       " max_alloc=" + String((int)heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT)) +
+                       " task_stack=" + String(g_mqtt_runtime_task_stack));
         vTaskDelay(pdMS_TO_TICKS(500));
-        err = esp_mqtt_client_start(mqtt_client_);
     }
     if (err != ESP_OK) {
         LOG_E(TAG, String("esp_mqtt_client_start() failed: ") + esp_err_to_name(err));
@@ -1490,7 +1559,7 @@ void MQTTClient::processManagedReconnect_() {
     if (managed_reconnect_attempts_ > 5) {
         /* AUT-539/AUT-555 — Hard-Reset: destroy+reinit instead of stop+start.
          *
-         * Root cause of a multi-hour post-disconnect silence on a field device:
+         * Root cause of the 4+ hour post-disconnect silence on a field device:
          *
          *   The previous code called esp_mqtt_client_stop() + esp_mqtt_client_start()
          *   after 5 failed soft-reconnects. This reused the existing MQTT client handle
@@ -2193,6 +2262,16 @@ void MQTTClient::publishHeartbeat(bool force) {
         payload += "\"wifi_circuit_breaker_open\":" + String(wifi_cb_open ? "true" : "false") + ",";
         payload += "\"network_degraded\":" + String(network_degraded ? "true" : "false") + ",";
     }
+    // [AUT-745] One-shot report of the previous disconnect's diagnosis — reaches
+    // the server DB even when nobody has physical Serial access to the device,
+    // which was the exact blind spot during the 2026-07-28 Klima Dante incident.
+    if (last_disconnect_pending_report_) {
+        payload += "\"last_disconnect_reason\":\"" + String(last_disconnect_reason_) + "\",";
+        payload += "\"last_disconnect_rssi\":" + String(last_disconnect_rssi_) + ",";
+        payload += "\"last_disconnect_wifi_connected\":" +
+                   String(last_disconnect_wifi_connected_ ? "true" : "false") + ",";
+        last_disconnect_pending_report_ = false;
+    }
 #ifndef ENABLE_METRICS_SPLIT
     payload += "\"persistence_drift_count\":" +
                String(offlineModeManager.getPersistenceDriftCount()) + ",";
@@ -2237,7 +2316,14 @@ void MQTTClient::publishHeartbeat(bool force) {
                    " reg_confirmed=" + String(registration_confirmed_ ? 1 : 0) +
                    " wifi_connected=" + String(WiFi.isConnected() ? 1 : 0) +
                    " rssi=" + String(WiFi.RSSI()) +
-                   " ack_age_ms=" + String(ack_age_ms));
+                   " ack_age_ms=" + String(ack_age_ms) +
+                   // [AUT-745] Distinguishes WHY a heartbeat failed (CB open / queue-shed /
+                   // outbox-full / transport-error / none) instead of just ok=0 — needed to
+                   // tell Kandidat-D (Circuit-Breaker still OPEN post-reconnect) apart from
+                   // Kandidat-B/C (silent transport failure) at the exact failure moment.
+                   " fail_reason=" + String((int)last_publish_failure_reason_) +
+                   " cb_state=" + String((int)circuit_breaker_.getState()) +
+                   " cb_failures=" + String(circuit_breaker_.getFailureCount()));
     // #endregion
     if (!hb_ok) {
         LOG_W(TAG, "Heartbeat publish failed (topic=" + heartbeat_topic + ")");
@@ -2399,34 +2485,7 @@ void MQTTClient::mqtt_event_handler(void* args, esp_event_base_t base,
 
         case MQTT_EVENT_BEFORE_CONNECT: {
             // AUT-593: Refresh LWT timestamp before every MQTT CONNECT packet.
-            // Fires for both esp_mqtt_client_reconnect() and connect() — replaces
-            // AUT-592's connect()-on-every-attempt approach.
-            time_t will_ts = timeManager.getUnixTimestamp();
-            char lw_msg[160];
-            snprintf(lw_msg, sizeof(lw_msg),
-                     "{\"status\":\"offline\",\"esp_id\":\"%s\","
-                     "\"reason\":\"unexpected_disconnect\",\"timestamp\":%lu}",
-                     g_system_config.esp_id.c_str(), (unsigned long)will_ts);
-            String lw_topic = String(TopicBuilder::buildSystemHeartbeatTopic());
-            lw_topic.replace("/heartbeat", "/will");
-            esp_mqtt_client_config_t lwt_cfg = {};
-            // [AUT-656-B] esp_mqtt_set_config() resets every integer field to its IDF
-            // hardcoded default when the value is 0. A zero-init struct therefore clobbers
-            // all fields not explicitly set here. Enumerate ALL zero-checked fields from
-            // vendor/esp-mqtt-idf447/src/mqtt_client.c esp_mqtt_set_config():
-            //   network_timeout_ms (0 → 10000ms)  task_stack (0 → MQTT_TASK_STACK)
-            //   task_prio (0 → MQTT_TASK_PRIORITY)  message_retransmit_timeout (0 → 1000ms)
-            //   reconnect_timeout_ms (always set to MQTT_RECON_DEFAULT_MS when 0)
-            // Set all of them to match the values used in connect().
-            lwt_cfg.disable_auto_reconnect    = true;
-            lwt_cfg.network_timeout_ms        = MQTT_CLIENT_NETWORK_TIMEOUT_MS;  // 1500ms (AUT-54)
-            lwt_cfg.task_stack                = MQTT_CLIENT_TASK_STACK;           // AUT-569/AUT-656-D
-            lwt_cfg.task_prio                 = 3;
-            lwt_cfg.lwt_topic                 = lw_topic.c_str();
-            lwt_cfg.lwt_msg                   = lw_msg;
-            lwt_cfg.lwt_qos                   = 1;
-            lwt_cfg.lwt_retain                = 1;
-            esp_mqtt_set_config(event->client, &lwt_cfg);
+            applyMqttRuntimeConfig(event->client, g_mqtt_runtime_task_stack);
             break;
         }
 
@@ -2434,6 +2493,12 @@ void MQTTClient::mqtt_event_handler(void* args, esp_event_base_t base,
             LOG_I(TAG, "╔════════════════════════════════════════╗");
             LOG_I(TAG, "║  MQTT_EVENT_CONNECTED                 ║");
             LOG_I(TAG, "╚════════════════════════════════════════╝");
+            // [AUT-745] Symmetric to the [INC-EA5484] disconnect marker below — gives
+            // a RSSI-at-connect baseline to diff against RSSI-at-disconnect for the
+            // "Connected-but-Silent" defect (silence after CONNACK, no local error seen).
+            LOG_I(TAG, String("[AUT-745] connect marker uptime_ms=") + String(millis()) +
+                       " wifi_rssi=" + String(WiFi.RSSI()) +
+                       " wifi_connected=" + String(WiFi.isConnected() ? "true" : "false"));
             // session_present=1 means the broker has a saved session from a prior
             // connection (clean_session=false). The broker will replay all pending
             // QoS-1 PUBREC/PUBCOMP state → OUTBOX fills immediately on reconnect.
@@ -2581,6 +2646,35 @@ void MQTTClient::mqtt_event_handler(void* args, esp_event_base_t base,
                        " last_errno=" + String(self->last_transport_errno_) +
                        " wifi_connected=" + String(WiFi.isConnected() ? "true" : "false"));
             // #endregion
+
+            // [AUT-745] Classify disconnect cause from counters that are ALREADY
+            // reliably populated at this point (no guessing at event->error_handle,
+            // which is only guaranteed valid in MQTT_EVENT_ERROR, not here).
+            // If none of the local transport-error counters fired before this
+            // DISCONNECTED, that is precisely the "Connected-but-Silent" fingerprint:
+            // the local stack believed every write succeeded until the broker's
+            // keepalive timeout killed the session server-side (AUT-745 DEFECT-2).
+            {
+                const char* reason_tag = "keepalive_silent";
+                if (self->transport_write_timeout_count_ > 0) {
+                    reason_tag = "write_timeout";
+                } else if (self->tcp_transport_error_count_ > 0) {
+                    reason_tag = "tcp_error";
+                } else if (self->tls_connect_timeout_count_ > 0) {
+                    reason_tag = "tls_timeout";
+                } else if (self->last_transport_errno_ != 0) {
+                    reason_tag = "errno";
+                }
+                strncpy(self->last_disconnect_reason_, reason_tag,
+                        sizeof(self->last_disconnect_reason_) - 1);
+                self->last_disconnect_reason_[sizeof(self->last_disconnect_reason_) - 1] = '\0';
+                self->last_disconnect_rssi_ = (int8_t)WiFi.RSSI();
+                self->last_disconnect_wifi_connected_ = WiFi.isConnected();
+                self->last_disconnect_pending_report_ = true;
+                LOG_W(TAG, String("[AUT-745] disconnect classified reason=") + reason_tag +
+                           " rssi=" + String(self->last_disconnect_rssi_) +
+                           " wifi_connected=" + String(self->last_disconnect_wifi_connected_ ? "true" : "false"));
+            }
 
             // Circuit Breaker: disconnect counts as failure
             self->circuit_breaker_.recordFailure();

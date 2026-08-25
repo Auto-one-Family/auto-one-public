@@ -475,22 +475,15 @@ bool I2CBusManager::readAds1115SingleEnded(uint8_t address, uint8_t channel,
         }
     }
 
-    // Poll OS bit (config[15]) until conversion done. 128 SPS ~ 7.8 ms; the
-    // bounded timeout never blocks indefinitely, and delay(1) yields to the
-    // RTOS (feeds the idle watchdog) — far below the inter-sample delay used by
-    // the analog median sampler, so the safety regulation path is not starved.
-    static constexpr uint32_t ADS1115_CONVERSION_TIMEOUT_MS = 25;
+    // Single bounded wait: 128 SPS -> 7.8 ms conversion; 10 ms margin covers it.
+    static constexpr uint32_t ADS1115_SINGLE_WAIT_MS = 10;
+    vTaskDelay(pdMS_TO_TICKS(ADS1115_SINGLE_WAIT_MS));
     uint8_t cfg_read[2] = {0, 0};
-    const uint32_t start_ms = millis();
     bool ready = false;
-    while ((millis() - start_ms) < ADS1115_CONVERSION_TIMEOUT_MS) {
-        if (readRaw(address, ADS1115_REG_CONFIG, cfg_read, 2)) {
-            if (cfg_read[0] & 0x80) {  // OS bit set -> conversion complete
-                ready = true;
-                break;
-            }
+    if (readRaw(address, ADS1115_REG_CONFIG, cfg_read, 2)) {
+        if (cfg_read[0] & 0x80) {  // OS bit set -> conversion complete
+            ready = true;
         }
-        delay(1);
     }
     if (!ready) {
         LOG_W(TAG, "ADS1115: conversion timeout at 0x" + String(address, HEX) +

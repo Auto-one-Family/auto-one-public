@@ -196,7 +196,8 @@ static const SensorCapability FLOW_CAP = {
     .is_pulse           = true,
 };
 
-// Digital level switch (XKC-Y25-NPN, NPN Open-Collector, Active-Low)
+// Digital level switch (e.g. XKC-Y26S-PNP or NPN open-collector variants) —
+// polarity is configurable (SensorConfig.polarity), default ACTIVE_LOW (NPN)
 static const SensorCapability LIQUID_LEVEL_CAP = {
     .server_sensor_type = "liquid_level",
     .device_type        = "liquid_level",

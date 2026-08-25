@@ -25,7 +25,7 @@ struct SensorCapability {
     bool is_multi_value;             // Provides multiple values?
     bool is_i2c;                     // Is I2C sensor?
     bool is_uart;                    // Is UART sensor (e.g. MH-Z19 CO2)?
-    bool is_digital;                 // true = GPIO digitalRead (Active-Low), no ADC, no bus
+    bool is_digital;                 // true = GPIO digitalRead (polarity-configurable, see SensorConfig.polarity), no ADC, no bus
     bool is_pulse;                   // true = pulse-counting via ISR (e.g. FS300A flow sensor)
 };
 

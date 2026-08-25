@@ -32,6 +32,17 @@ namespace AdcSourceCode {
     constexpr uint8_t ADS1115  = 1;  // External 16-bit I2C ADC
 }
 
+// ============================================
+// DIGITAL SENSOR POLARITY (liquid_level) — compact encoding
+// ============================================
+// active_low  (default): NPN open-collector, LOW = detected → raw=1 (unchanged
+//             behavior for existing liquid_level configs without this field).
+// active_high: PNP, HIGH = detected → raw=1 (e.g. XKC-Y26S-PNP).
+namespace SensorPolarityCode {
+    constexpr uint8_t ACTIVE_LOW  = 0;  // NPN open-collector (default)
+    constexpr uint8_t ACTIVE_HIGH = 1;  // PNP (e.g. XKC-Y26S-PNP)
+}
+
 // ADS1115 PGA full-scale range <-> config-register bits [11:9] (also our compact
 // storage code). Default bits 1 = +-4.096V. Unknown strings fall back to default.
 inline uint8_t ads1115PgaBitsFromString(const String& s) {
@@ -70,8 +81,8 @@ struct SensorConfig {
   // AUT-555: QoS level used when publishing sensor readings to the MQTT broker.
   //
   // Background: AUT-54 switched ALL sensor publishes to QoS-0 because the IDF OUTBOX
-  // would fill up under WiFi jitter, causing write-timeout disconnects
-  // (especially with simultaneous actuator traffic). QoS-0 = fire-and-forget, no PUBACK
+  // would fill up under WiFi jitter, causing write-timeout disconnects (especially
+  // with simultaneous actuator traffic). QoS-0 = fire-and-forget, no PUBACK
   // required, so stalled OUTBOX no longer blocks the send path.
   //
   // Problem: sensors referenced in a cross_esp_logic rule MUST deliver their reading for
@@ -131,6 +142,15 @@ struct SensorConfig {
   uint8_t adc_source = AdcSourceCode::INTERNAL;  // 0=internal, 1=ads1115
   uint8_t adc_channel = 255;                     // ADS1115 channel 0-3 (255=unset)
   uint8_t pga_gain = 1;                          // ADS1115 PGA bits (0-5); 1 = +-4.096V
+
+  // ============================================
+  // DIGITAL SENSOR POLARITY (liquid_level)
+  // ============================================
+  // active_low (default) = NPN open-collector, LOW=detected → raw=1 (unchanged
+  // behavior for pre-existing configs). active_high = PNP, HIGH=detected → raw=1
+  // (e.g. XKC-Y26S-PNP). Also drives pin mode (see readRawDigital): active_high
+  // uses INPUT (external pull-down assumed), active_low uses INPUT_PULLUP.
+  uint8_t polarity = SensorPolarityCode::ACTIVE_LOW;
 
   // ============================================
   // UART SUPPORT (MH-Z19 / SEN0220 CO2, etc.)

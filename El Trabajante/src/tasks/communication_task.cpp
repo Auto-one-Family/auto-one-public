@@ -165,7 +165,13 @@ static void enforceMqttDisconnectOnWifiLoss() {
         const unsigned long now = millis();
         if (last_forced_disconnect_ms == 0UL || (now - last_forced_disconnect_ms) > 2000UL) {
             last_forced_disconnect_ms = now;
-            LOG_W(COMM_TAG, "[COMM] WiFi down while MQTT connected -> force MQTT transport detach");
+            // [AUT-745] rssi/wifi_status disambiguate this trigger (genuine WiFi drop,
+            // caught within ~2s) from the two mqttClient.disconnect() call sites in
+            // wifi_manager.cpp (planned handover / explicit WiFiManager::disconnect()) —
+            // all three previously logged an identical generic message.
+            LOG_W(COMM_TAG, String("[AUT-745] WiFi down while MQTT connected -> force MQTT transport detach") +
+                             " wifi_status=" + String((int)WiFi.status()) +
+                             " rssi_last=" + String(WiFi.RSSI()));
             mqttClient.disconnect();
         }
         return;

@@ -1602,6 +1602,7 @@ static void buildActuatorKey(char* buffer, size_t buffer_size, uint8_t index, co
 #define NVS_ACT_FSOD       "act_%d_fsod"    // max 15 chars NVS limit
 #define NVS_ACT_FSOD_OVR   "act_%d_fsod_o"
 #define NVS_ACT_MAXRT      "act_%d_maxrt"   // act_0_maxrt = 13 chars ✅ — AUT-727: max_runtime cap (seconds)
+#define NVS_ACT_CD         "act_%d_cd"      // act_0_cd = 8 chars ✅ — AUT-1019: cooldown cap (seconds)
 
 // Legacy keys (deprecated, some >15 chars - kept for migration only)
 #define NVS_ACT_COUNT_OLD      "actuator_count"       // 14 chars ✅ (was OK)
@@ -1641,6 +1642,7 @@ static void buildActuatorKey(char* buffer, size_t buffer_size, uint8_t index, co
 #define NVS_SEN_ADCSRC     "sen_%d_adcsrc"   // ADS1115: adc_source string; sen_99_adcsrc = 13 chars ✅
 #define NVS_SEN_ADCCH      "sen_%d_adcch"    // ADS1115: adc_channel 0-3 (255=unset); 13 chars ✅
 #define NVS_SEN_PGA        "sen_%d_pga"      // ADS1115: pga_gain string; sen_99_pga = 11 chars ✅
+#define NVS_SEN_POL        "sen_%d_pol"      // polarity: 0=active_low, 1=active_high; sen_99_pol = 10 chars ✅
 
 // Legacy keys (deprecated, some >15 chars - kept for migration only)
 // NOTE: Old keys "sensor_%d_*" were OK for small indices but:
@@ -2009,6 +2011,10 @@ bool ConfigManager::saveSensorConfig(const SensorConfig& config) {
   snprintf(key, sizeof(key), NVS_SEN_PGA, index);
   success &= storageManager.putUInt8(key, config.pga_gain);
 
+  // Digital sensor polarity (liquid_level): 0=active_low (default), 1=active_high
+  snprintf(key, sizeof(key), NVS_SEN_POL, index);
+  success &= storageManager.putUInt8(key, config.polarity);
+
   // Update count if new sensor (use new key only!)
   if (existing_index < 0) {
     success &= storageManager.putUInt8(NVS_SEN_COUNT, sensor_count + 1);
@@ -2210,6 +2216,10 @@ bool ConfigManager::loadSensorConfig(SensorConfig sensors[], uint8_t max_sensors
     config.adc_channel = storageManager.getUInt8(new_key, 255);
     snprintf(new_key, sizeof(new_key), NVS_SEN_PGA, i);
     config.pga_gain = storageManager.getUInt8(new_key, 1);
+
+    // Digital sensor polarity (liquid_level); default = active_low (pre-feature entries)
+    snprintf(new_key, sizeof(new_key), NVS_SEN_POL, i);
+    config.polarity = storageManager.getUInt8(new_key, SensorPolarityCode::ACTIVE_LOW);
 
     // Reset runtime fields
     config.last_raw_value = 0;
@@ -2617,6 +2627,11 @@ bool ConfigManager::saveActuatorConfig(const ActuatorConfig actuators[], uint8_t
     success &= storageManager.putULong(key,
         static_cast<unsigned long>(config.runtime_protection.max_runtime_ms / 1000UL));
 
+    // AUT-1019: persist cooldown cap in seconds (0 = key absent → keep struct default 30s on load)
+    snprintf(key, sizeof(key), NVS_ACT_CD, i);
+    success &= storageManager.putULong(key,
+        static_cast<unsigned long>(config.runtime_protection.cooldown_ms / 1000UL));
+
     if (!success) {
       LOG_E(TAG, "ConfigManager: Failed to save actuator " + String(i));
     }
@@ -2758,6 +2773,13 @@ bool ConfigManager::loadActuatorConfig(ActuatorConfig actuators[], uint8_t max_a
     unsigned long maxrt_s = storageManager.getULong(new_key, 0UL);
     if (maxrt_s > 0UL) {
       config.runtime_protection.max_runtime_ms = maxrt_s * 1000UL;
+    }
+
+    // AUT-1019: restore cooldown cap; 0 = key absent → keep struct default (30000UL = 30s)
+    snprintf(new_key, sizeof(new_key), NVS_ACT_CD, i);
+    unsigned long cd_s = storageManager.getULong(new_key, 0UL);
+    if (cd_s > 0UL) {
+      config.runtime_protection.cooldown_ms = cd_s * 1000UL;
     }
 
     // Validate & Store

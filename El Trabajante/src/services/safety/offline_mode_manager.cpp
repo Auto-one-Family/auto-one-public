@@ -5,6 +5,7 @@
 #include <cstring>
 #include <nvs.h>
 #include "../../utils/logger.h"
+#include "../../utils/base64_helpers.h"
 #include "../../services/config/storage_manager.h"
 #include "../../services/sensor/sensor_manager.h"
 #include "../../services/actuator/actuator_manager.h"
@@ -39,10 +40,14 @@ static void logAuthorityCounters(OfflineModeManager* mgr,
 
 // One-shot / edge flags for evaluateOfflineRules — reset when server pushes new offline_rules
 static bool     s_offline_first_eval        = true;
-static uint8_t  s_eval_disabled_logged      = 0;
-static uint8_t  s_eval_override_logged      = 0;
-static uint8_t  s_eval_cal_inactive_logged  = 0;
-static uint8_t  s_eval_time_skip_logged     = 0;
+// AUT-1143 Pflicht-Vorarbeit: uint8_t (1u << i) truncated bei Regel-Index i>=8
+// (Zuweisung an eine uint8_t-Variable verwirft Bits >=8) -> stiller Logging-Bug
+// (Regel 9+ debounced nicht, spammt den Log alle ~500ms). Erweitert auf uint16_t,
+// deckt Index 0..15 (passend zu ESP32-S3 MAX_OFFLINE_RULES=16).
+static uint16_t s_eval_disabled_logged      = 0;
+static uint16_t s_eval_override_logged      = 0;
+static uint16_t s_eval_cal_inactive_logged  = 0;
+static uint16_t s_eval_time_skip_logged     = 0;
 static bool     s_eval_prev_nan[MAX_OFFLINE_RULES] = {false};
 static uint16_t s_rule_max_on_seconds[MAX_OFFLINE_RULES] = {0};
 static unsigned long s_timewindow_on_deadline_ms[MAX_OFFLINE_RULES] = {0};
@@ -355,6 +360,18 @@ bool OfflineModeManager::validateServerAckContract(uint32_t incoming_handover_ep
         mode == OfflineMode::OFFLINE_ACTIVE ||
         mode == OfflineMode::ADOPTING) {
         if (active_handover_epoch_ == 0) {
+            // AUT-745: OFFLINE_ACTIVE can be entered by checkServerAckTimeout() (P1,
+            // application-layer ACK-staleness heuristic) without any real MQTT transport
+            // disconnect — onReconnect(), the only place that raises active_handover_epoch_
+            // above 0, then never runs, since no real MQTT_EVENT_CONNECTED will ever follow.
+            // A well-formed ACK arriving on a live session in that state IS reconnect
+            // evidence (same principle as the INC-EA5484 fix above onMqttConnectCallback()).
+            // RECONNECTING/ADOPTING cannot reach epoch==0 through any real transition (both
+            // are only entered via onReconnect()/enterAdoptingMode(), which always leave
+            // epoch >= 1) — keep the fail-closed reject for those two.
+            if (mode == OfflineMode::OFFLINE_ACTIVE) {
+                return true;
+            }
             if (reject_code != nullptr) {
                 *reject_code = "MISSING_ACTIVE_SESSION_EPOCH";
             }
@@ -384,6 +401,14 @@ void OfflineModeManager::onServerAckReceived(uint32_t incoming_handover_epoch) {
             onServerAckContractMismatch("MISSING_HANDOVER_EPOCH");
             return;
         }
+
+        if (mode == OfflineMode::OFFLINE_ACTIVE && active_handover_epoch_ == 0) {
+            // AUT-745: arm the handover exactly as a real transport reconnect would
+            // (see onReconnect()) — validateServerAckContract() already let this ACK
+            // through for the same reason. Reuses the existing transition; no new state.
+            onReconnect();
+        }
+
         uint32_t expected_epoch = active_handover_epoch_;
         uint32_t effective_incoming_epoch = incoming_handover_epoch;
 
@@ -826,7 +851,13 @@ void OfflineModeManager::evaluateOfflineRules() {
             // AUT-726 (raw==0→NaN) and requiresCalibration(); 0.0f here would
             // indicate a non-calibration sensor (e.g. DS18B20) reading exactly 0°C,
             // which is below greenhouse operating range and treated as suspect.
-            if (!isnan(val) && val != 0.0f) warmup_valid_samples_[i]++;
+            // AUT-1307: liquid_level dry == 0.0f is a valid digital sample — count it.
+            // Exception is strictly sensor_value_type=="liquid_level"; all others unchanged.
+            const bool is_liquid_level =
+                (strcmp(rule.sensor_value_type, "liquid_level") == 0);
+            if (!isnan(val) && (is_liquid_level || val != 0.0f)) {
+                warmup_valid_samples_[i]++;
+            }
             if (warmup_valid_samples_[i] < OFFLINE_WARMUP_VALID_SAMPLES) {
                 LOG_D(TAG, String("[SAFETY-P4] Rule ") + String(i) +
                            ": warmup gate active (" + String(warmup_valid_samples_[i]) +
@@ -945,10 +976,84 @@ void OfflineModeManager::evaluateOfflineRules() {
 // CONFIG
 // ============================================
 
+// AUT-1141 L1: applies a packed-encoding offline_rules config-push payload
+// ({"encoding":"packed","count":N,"blob":"<base64>"}). Mirrors the tail of
+// the JsonArray path (server_override reset, max_on_seconds cache, eval-log
+// reset, NVS save, logging) so both encodings drive identical firmware state.
+bool OfflineModeManager::_applyPackedOfflineRules(JsonObject packed) {
+    const char* encoding = packed["encoding"] | "";
+    if (strcmp(encoding, "packed") != 0) {
+        LOG_E(TAG, String("[CONFIG] offline_rules: unsupported object encoding '") +
+                   String(encoding) + "'");
+        return false;
+    }
+
+    uint32_t count32 = packed["count"] | 0UL;
+    if (count32 > MAX_OFFLINE_RULES) {
+        LOG_W(TAG, String("[CONFIG] offline_rules (packed): ") + String(count32) +
+                   " in payload, using first " + String(MAX_OFFLINE_RULES) + " (MAX_OFFLINE_RULES)");
+        count32 = MAX_OFFLINE_RULES;
+    }
+    const uint8_t count = static_cast<uint8_t>(count32);
+
+    memset(s_rule_max_on_seconds, 0, sizeof(s_rule_max_on_seconds));
+
+    if (count == 0) {
+        // Explicit empty set → clear all rules (mirrors the JsonArray path).
+        offline_rule_count_ = 0;
+        if (storageManager.beginNamespace("offline", false)) {
+            storageManager.clearNamespace();
+            storageManager.endNamespace();
+        }
+        resetOfflineEvalLogState();
+        LOG_I(TAG, "[CONFIG] Received 0 offline rules (packed) — cleared NVS");
+        return true;
+    }
+
+    const char* blob_b64 = packed["blob"] | "";
+    uint8_t blob[MAX_OFFLINE_RULES * sizeof(OfflineRule) + 1];
+    const size_t decoded_size = Base64::decode(blob_b64, blob, sizeof(blob));
+    if (decoded_size == 0) {
+        LOG_E(TAG, "[CONFIG] offline_rules (packed): base64 decode failed");
+        return false;
+    }
+
+    if (!_decodeOfflineRuleBlobV5(blob, decoded_size, count)) {
+        return false;
+    }
+
+    // server_override is transient — a config push never carries an override;
+    // max_on_seconds cache mirrors the persisted struct field (JsonArray path
+    // parity, see parseOfflineRules tail below).
+    for (uint8_t i = 0; i < offline_rule_count_; i++) {
+        offline_rules_[i].server_override = false;
+        s_rule_max_on_seconds[i] = offline_rules_[i].max_on_seconds;
+    }
+
+    LOG_I(TAG, String("[CONFIG] Config push: ") + String(offline_rule_count_) +
+               " offline rules (packed)");
+    for (uint8_t i = 0; i < offline_rule_count_; i++) {
+        LOG_I(TAG, formatOfflineRuleDetail(i, offline_rules_[i]));
+    }
+    LOG_I(TAG, "[CONFIG] offline_rules config push applied (packed)");
+
+    resetOfflineEvalLogState();
+    return saveOfflineRulesToNVS();
+}
+
 bool OfflineModeManager::parseOfflineRules(JsonObject obj) {
     if (!obj.containsKey("offline_rules")) {
         // Field absent — keep existing rules
         return true;
+    }
+
+    // AUT-1141 L1: packed-struct wire encoding, per-device server dispatch.
+    // obj["offline_rules"] is a JsonObject {"encoding":"packed","count":N,
+    // "blob":"<base64>"} instead of the legacy JsonArray — only sent to
+    // firmware the server has identified as packed-capable. Decodes via the
+    // same blob->struct path the NVS ofr_blob load uses (_decodeOfflineRuleBlobV5).
+    if (obj["offline_rules"].is<JsonObject>()) {
+        return _applyPackedOfflineRules(obj["offline_rules"].as<JsonObject>());
     }
 
     JsonArray rules = obj["offline_rules"].as<JsonArray>();
@@ -1528,6 +1633,36 @@ void OfflineModeManager::deactivateOfflineMode() {
     }
 
     LOG_I(TAG, "[SAFETY-P4] state ADOPTING→ONLINE (adoption settled, no reconnect reset)");
+}
+
+// AUT-1141 L1: CRC8-verified blob -> offline_rules_[] decode for the current
+// (v5) wire layout. Used by the packed config-push path (parseOfflineRules)
+// — same struct, same CRC8 primitive as the NVS ofr_blob (saveOfflineRulesToNVS
+// / loadOfflineRulesFromNVS ver>=5 branch) so there is exactly one byte-layout
+// truth, not a second parser.
+bool OfflineModeManager::_decodeOfflineRuleBlobV5(const uint8_t* blob, size_t blob_size, uint8_t count) {
+    if (count > MAX_OFFLINE_RULES) {
+        LOG_E(TAG, String("[CONFIG] offline_rules blob: count ") + String(count) +
+                   " exceeds MAX_OFFLINE_RULES (" + String(MAX_OFFLINE_RULES) + ")");
+        return false;
+    }
+    const size_t rules_size = static_cast<size_t>(count) * sizeof(OfflineRule);
+    if (blob_size != rules_size + 1) {
+        LOG_E(TAG, String("[CONFIG] offline_rules blob: size mismatch expected=") +
+                   String(rules_size + 1) + " actual=" + String(blob_size));
+        return false;
+    }
+    const uint8_t stored_crc = blob[rules_size];
+    const uint8_t calc_crc   = crc8(blob, rules_size);
+    if (calc_crc != stored_crc) {
+        LOG_E(TAG, String("[CONFIG] offline_rules blob: CRC8 mismatch (stored=") +
+                   String(stored_crc) + " calc=" + String(calc_crc) + ")");
+        return false;
+    }
+    memset(offline_rules_, 0, sizeof(offline_rules_));
+    memcpy(offline_rules_, blob, rules_size);
+    offline_rule_count_ = count;
+    return true;
 }
 
 bool OfflineModeManager::saveOfflineRulesToNVS() {

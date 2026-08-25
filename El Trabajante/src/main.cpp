@@ -4244,6 +4244,13 @@ bool parseAndConfigureSensorWithTracking(const JsonObjectConst& sensor_obj, Conf
   JsonHelpers::extractString(sensor_obj, "pga_gain", pga_gain_str, "4.096");
   config.pga_gain = ads1115PgaBitsFromString(pga_gain_str);
 
+  // Digital sensor polarity (liquid_level): "active_high" (PNP) or "active_low" (NPN, default)
+  String polarity_str;
+  JsonHelpers::extractString(sensor_obj, "polarity", polarity_str, "active_low");
+  polarity_str.toLowerCase();
+  config.polarity = (polarity_str == "active_high") ? SensorPolarityCode::ACTIVE_HIGH
+                                                     : SensorPolarityCode::ACTIVE_LOW;
+
   int uart_rx = 255;
   int uart_tx = 255;
   int uart_baud = 9600;
@@ -4508,13 +4515,31 @@ SensorCommandExecutionResult handleSensorCommand(const String& topic, const Stri
       }
     }
 
+    // AUT-1013 (B3): optional command discriminators for ADS1115 multi-sensor gpio=0.
+    // Additive/optional — absent for legacy callers/servers. Follows the same optional-field
+    // pattern as sample_count/sample_delay_ms/timeout_ms above. Empty sensor_type + channel<0
+    // means "no discriminator": firmware then applies the legacy single-slot fallback for a
+    // unique gpio, or returns AMBIGUOUS_SENSOR when the gpio is shared (see triggerManualMeasurement).
+    String sensor_type = doc["sensor_type"] | "";
+    int adc_channel = -1;
+    if (!doc["adc_channel"].isNull()) {
+      int requested_channel = doc["adc_channel"].as<int>();
+      // ADS1115 single-ended channels are 0-3; anything else is treated as unset.
+      if (requested_channel >= 0 && requested_channel <= 3) {
+        adc_channel = requested_channel;
+      }
+    }
+
     LOG_I(TAG, "Manual measurement requested for GPIO " + String(gpio) +
                    " (timeout_ms=" + String(timeout_ms) +
                    ", sample_count=" + String(sample_count) +
-                   ", sample_delay_ms=" + String(sample_delay_ms) + ")");
+                   ", sample_delay_ms=" + String(sample_delay_ms) +
+                   ", sensor_type=" + (sensor_type.length() > 0 ? sensor_type : String("<none>")) +
+                   ", adc_channel=" + (adc_channel >= 0 ? String(adc_channel) : String("<none>")) + ")");
 
     ManualMeasurementResult measurement =
-        sensorManager.triggerManualMeasurement(gpio, timeout_ms, sample_count, sample_delay_ms);
+        sensorManager.triggerManualMeasurement(gpio, timeout_ms, sample_count, sample_delay_ms,
+                                               sensor_type, adc_channel);
     bool success = measurement.measurement_ok && measurement.publish_ok && !measurement.timeout_reached;
 
     // Send response with request_id and intent metadata (E-P4)
@@ -4531,6 +4556,11 @@ SensorCommandExecutionResult handleSensorCommand(const String& topic, const Stri
       response["reason_code"] = measurement.reason_code;
       response["quality"] = measurement.quality;
       response["sensor_type"] = measurement.sensor_type;
+      // AUT-1013: report the physical ADS1115 channel that was measured (255 = unset/internal
+      // ADC → omit) so the server return-path can confirm the correct channel was addressed.
+      if (measurement.adc_channel != 255) {
+        response["adc_channel"] = measurement.adc_channel;
+      }
       response["raw"] = measurement.raw_value;
       response["ts"] = timeManager.getUnixTimestamp();
       response["seq"] = mqttClient.getNextSeq();

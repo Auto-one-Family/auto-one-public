@@ -104,8 +104,13 @@ void ValveActuator::end() {
   }
 
   stopMovement();
-  gpio_manager_->releasePin(direction_pin_);
-  gpio_manager_->releasePin(enable_pin_);
+  // AUT-1006 follow-up: hold both pins actively driven at the same OFF level this
+  // driver already uses everywhere else (begin(), emergencyStop()) instead of
+  // releasing to high-impedance INPUT_PULLUP. Valve has no inverted_logic concept
+  // (H-bridge direction/enable, not a relay level flag) — LOW/LOW is hardcoded here,
+  // matching the driver's own convention, not a reused polarity formula.
+  gpio_manager_->releasePin(direction_pin_, LOW);
+  gpio_manager_->releasePin(enable_pin_, LOW);
   direction_pin_ = 255;
   enable_pin_ = 255;
   initialized_ = false;

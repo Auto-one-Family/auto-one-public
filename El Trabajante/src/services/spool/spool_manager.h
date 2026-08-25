@@ -34,6 +34,13 @@ static constexpr uint8_t kBatchFlushSize   = 10;
 static constexpr size_t  kMaxSpoolBytes    = 512UL * 1024UL;          // 512 KB (WROOM)
 #endif
 
+// AUT-882: streaming compaction + persisted flush cursor (replaces the
+// unbounded RAM-String compaction that silently truncated large spools).
+static const char* kSpoolTempPath          = "/spool/readings.tmp";   // compaction scratch
+static constexpr size_t kFlushHeapGuardBytes = 20UL * 1024UL;         // pause flush below this free heap
+static const char* kSpoolNvsNamespace      = "spool";                 // NVS namespace
+static const char* kSpoolNvsCursorKey      = "flush_off";             // persisted byte offset (spool_flush_off)
+
 
 // ============================================
 // SpoolManager CLASS
@@ -92,15 +99,30 @@ private:
     uint32_t pending_count_  = 0;
     uint32_t dropped_count_  = 0;
 
+    // AUT-882: byte offset of the already-published prefix, persisted in NVS.
+    // A mid-drain reboot resumes here instead of re-streaming (and truncating)
+    // the whole file in a RAM String. Always sits on a line boundary.
+    size_t   flush_offset_   = 0;
+
     // Build compact JSON line for one SensorReading
     String buildJsonLine(const SensorReading& reading) const;
 
-    // Estimate number of lines in spool file (O(n) scan)
-    uint32_t countLines() const;
+    // Count JSONL lines from a byte offset to EOF (O(n) scan). Default 0 = whole file.
+    uint32_t countLines(size_t from_offset = 0) const;
 
     // Drop the oldest line from the spool file.
     // Used to enforce kSpoolFillDropThreshold.
     void dropOldestLine();
+
+    // AUT-882: single shared, heap-bounded compaction path. Streams the spool
+    // file from byte `drop_before` to EOF into a temp file (one line at a time)
+    // and atomically renames it over the spool file; removes the spool file when
+    // nothing remains. Caller adjusts flush_offset_/counters relative to drop_before.
+    bool compactDroppingPrefix(size_t drop_before);
+
+    // AUT-882: persist / load the flush cursor (NVS namespace "spool", key "flush_off").
+    void persistFlushOffset();
+    size_t loadFlushOffset();
 
     // Ensure /spool/ directory exists on LittleFS
     void ensureSpoolDir();

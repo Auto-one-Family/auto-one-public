@@ -26,9 +26,16 @@ struct GPIOPinInfo {
     char component_name[32];    // Component name ("DS18B20", "Pump1", etc.)
     uint8_t mode;               // Pin mode (INPUT, OUTPUT, INPUT_PULLUP)
     bool in_safe_mode;          // Pin is in safe mode (INPUT_PULLUP)
-    
+    // AUT-1024: true for active_high-polarity digital sensors (e.g. liquid_level
+    // PNP, XKC-Y26S). Safe-mode/release must use INPUT_PULLDOWN for these instead of
+    // INPUT_PULLUP, mirroring the normal measurement path's pin-mode choice
+    // (sensor_manager.cpp) — otherwise a false-positive "detected" state is
+    // possible while the pin is released/in safe-mode (a sourcing PNP sensor floats
+    // instead of reading a defined LOW without a pull-down).
+    bool active_high_digital;
+
     // Constructor to ensure null-termination
-    GPIOPinInfo() : pin(255), mode(INPUT), in_safe_mode(true) {
+    GPIOPinInfo() : pin(255), mode(INPUT), in_safe_mode(true), active_high_digital(false) {
         owner[0] = '\0';
         component_name[0] = '\0';
     }
@@ -71,11 +78,27 @@ public:
     // Returns false if pin is reserved, already in use, or invalid
     // owner: Component type requesting the pin ("sensor", "actuator")
     // component_name: Specific component name for debugging
-    bool requestPin(uint8_t gpio, const char* owner, const char* component_name);
+    // active_high_digital: true for active_high-polarity digital sensors (AUT-1024) —
+    // remembered for this pin so releasePin()/enableSafeModeForAllPins() release to
+    // INPUT_PULLDOWN instead of INPUT_PULLUP. Defaults to false (unchanged behavior for
+    // all other callers: actuators, buses, active_low/analog sensors).
+    bool requestPin(uint8_t gpio, const char* owner, const char* component_name,
+                     bool active_high_digital = false);
+
+    // AUT-1024: Update the active_high_digital polarity flag for an already-registered
+    // pin, without releasing/re-requesting it. Runtime sensor config updates (polarity
+    // changed via config push while the sensor stays registered) don't go through
+    // requestPin() again — this keeps safe-mode/release behavior in sync regardless.
+    // No-op if the pin is not currently registered.
+    void updatePinPolarity(uint8_t gpio, bool active_high_digital);
 
     // Release a GPIO pin back to safe mode
-    // Returns pin to INPUT_PULLUP state
-    bool releasePin(uint8_t gpio);
+    // Returns pin to INPUT_PULLUP state, UNLESS safe_level is given (AUT-1006):
+    // callers with a known inverted_logic-aware OFF level (actuators) pass HIGH/LOW
+    // to keep the pin ACTIVELY driven at that level instead of high-impedance —
+    // a weak internal pull-up does not guarantee OFF on active-low relay hardware.
+    // safe_level: HIGH, LOW, or -1 (default) for the original hi-Z release behavior.
+    bool releasePin(uint8_t gpio, int safe_level = -1);
 
     // Configure pin mode (INPUT, OUTPUT, INPUT_PULLUP)
     // Validates pin availability and hardware limitations

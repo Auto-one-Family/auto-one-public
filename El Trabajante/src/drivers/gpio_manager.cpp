@@ -164,7 +164,8 @@ void GPIOManager::initializeAllPinsToSafeMode() {
 // Source: PROJECT_ANALYSIS_REPORT.md Block 6
 // Implements comprehensive validation and conflict detection
 
-bool GPIOManager::requestPin(uint8_t gpio, const char* owner, const char* component_name) {
+bool GPIOManager::requestPin(uint8_t gpio, const char* owner, const char* component_name,
+                              bool active_high_digital) {
     if (owner == nullptr || owner[0] == '\0') {
         LOG_E(TAG, "GPIOManager: requestPin rejected (owner missing) for GPIO " + String(gpio));
         return false;
@@ -235,6 +236,7 @@ bool GPIOManager::requestPin(uint8_t gpio, const char* owner, const char* compon
             strncpy(pin_info.component_name, component_name, sizeof(pin_info.component_name) - 1);
             pin_info.component_name[sizeof(pin_info.component_name) - 1] = '\0';
             pin_info.in_safe_mode = false;
+            pin_info.active_high_digital = active_high_digital;
 
             LOG_I(TAG, "GPIOManager: Pin " + String(gpio) + " allocated to " + String(component_name));
             return true;
@@ -251,34 +253,77 @@ bool GPIOManager::requestPin(uint8_t gpio, const char* owner, const char* compon
 // ============================================
 // Returns pin to safe mode (INPUT_PULLUP)
 
-bool GPIOManager::releasePin(uint8_t gpio) {
+bool GPIOManager::releasePin(uint8_t gpio, int safe_level) {
     for (auto& pin_info : pins_) {
         if (pin_info.pin == gpio) {
             LOG_I(TAG, "Releasing GPIO " + String(gpio) + " (was: " + String(pin_info.owner) + "/" + String(pin_info.component_name) + ")");
 
-            // Return hardware pin to safe state via HAL
-            if (gpio_hal_) {
-                gpio_hal_->releasePin(gpio);
-            }
+            if (safe_level >= 0) {
+                // AUT-1006: keep the pin actively driven at the caller-supplied
+                // inverted_logic-aware OFF level instead of releasing to high-impedance.
+                if (gpio_hal_) {
+                    gpio_hal_->digitalWrite(gpio, safe_level == HIGH);
+                }
+                pin_info.mode = OUTPUT;
+                pin_info.in_safe_mode = false;
+                LOG_I(TAG, "Pin " + String(gpio) + " held at safe level " + String(safe_level == HIGH ? "HIGH" : "LOW") + " (not high-impedance)");
+            } else {
+                // AUT-1024 (+ 2026-07-02 field-test follow-up): active_high digital
+                // sensors (PNP, e.g. liquid_level XKC-Y26S) are "sourcing" — they float
+                // instead of reading a defined LOW when not detecting. Release to
+                // INPUT_PULLDOWN instead of INPUT_PULLUP, mirroring the pin-mode choice
+                // already used in the normal measurement path (sensor_manager.cpp),
+                // avoiding a false-positive "detected" state while the pin sits in
+                // hi-Z release/safe-mode. Plain INPUT (no pull at all) was tried first
+                // but left the pin floating/noise-prone; INPUT_PULLDOWN only pulls in
+                // the same direction any external pull-down would, so it can't create
+                // a resistive divider — a real PNP HIGH still overrides it fine.
+                uint8_t release_mode = pin_info.active_high_digital ? INPUT_PULLDOWN : INPUT_PULLUP;
 
-            // Verify safe mode
-            if (!verifyPinState(gpio, INPUT_PULLUP)) {
-                LOG_W(TAG, "Pin " + String(gpio) + " may not be in safe state after release");
+                if (gpio_hal_) {
+                    if (pin_info.active_high_digital) {
+                        gpio_hal_->pinMode(gpio, GPIOMode::GPIO_INPUT_PULLDOWN);
+                    } else {
+                        gpio_hal_->releasePin(gpio);
+                    }
+                }
+
+                // Verify safe mode
+                if (!verifyPinState(gpio, release_mode)) {
+                    LOG_W(TAG, "Pin " + String(gpio) + " may not be in safe state after release");
+                }
+
+                pin_info.mode = release_mode;
+                pin_info.in_safe_mode = true;
             }
 
             // Update tracking information
             pin_info.owner[0] = '\0';
             pin_info.component_name[0] = '\0';
-            pin_info.mode = INPUT_PULLUP;
-            pin_info.in_safe_mode = true;
+            pin_info.active_high_digital = false;
 
-            LOG_I(TAG, "GPIOManager: Pin " + String(gpio) + " released to safe mode");
+            LOG_I(TAG, "GPIOManager: Pin " + String(gpio) + " released" + (safe_level >= 0 ? " (safe level held)" : " to safe mode"));
             return true;
         }
     }
 
     LOG_W(TAG, "GPIO " + String(gpio) + " not found for release");
     return false;
+}
+
+// ============================================
+// PIN POLARITY UPDATE (AUT-1024)
+// ============================================
+// Keeps the safe-mode polarity flag in sync for pins whose sensor config was
+// updated in place (no release/re-request cycle).
+
+void GPIOManager::updatePinPolarity(uint8_t gpio, bool active_high_digital) {
+    for (auto& pin_info : pins_) {
+        if (pin_info.pin == gpio) {
+            pin_info.active_high_digital = active_high_digital;
+            return;
+        }
+    }
 }
 
 // ============================================
@@ -310,13 +355,22 @@ void GPIOManager::enableSafeModeForAllPins() {
             LOG_I(TAG, "Emergency: GPIO " + String(pin_info.pin) + " de-energized before safe-mode");
         }
 
+        // AUT-1024 (+ 2026-07-02 field-test follow-up): active_high digital sensors
+        // (PNP, sourcing) use INPUT_PULLDOWN instead of INPUT_PULLUP — mirrors the
+        // normal measurement path (sensor_manager.cpp), avoiding a false-positive
+        // "detected" state during emergency safe-mode (see releasePin() above for
+        // why INPUT_PULLDOWN and not plain INPUT).
+        GPIOMode emergency_mode = pin_info.active_high_digital ? GPIOMode::GPIO_INPUT_PULLDOWN
+                                                                : GPIOMode::GPIO_INPUT_PULLUP;
+        uint8_t emergency_mode_arduino = pin_info.active_high_digital ? INPUT_PULLDOWN : INPUT_PULLUP;
+
         // Now safe to change mode via HAL
         if (gpio_hal_) {
-            gpio_hal_->pinMode(pin_info.pin, GPIOMode::GPIO_INPUT_PULLUP);
+            gpio_hal_->pinMode(pin_info.pin, emergency_mode);
         }
 
         // Verify emergency safe mode
-        if (!verifyPinState(pin_info.pin, INPUT_PULLUP)) {
+        if (!verifyPinState(pin_info.pin, emergency_mode_arduino)) {
             LOG_W(TAG, "GPIO " + String(pin_info.pin) + " emergency safe-mode failed");
             warning_count++;
         }
@@ -325,7 +379,8 @@ void GPIOManager::enableSafeModeForAllPins() {
         pin_info.in_safe_mode = true;
         pin_info.owner[0] = '\0';
         pin_info.component_name[0] = '\0';
-        pin_info.mode = INPUT_PULLUP;
+        pin_info.active_high_digital = false;
+        pin_info.mode = emergency_mode_arduino;
     }
 
     if (de_energized_count > 0) {

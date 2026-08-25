@@ -8,6 +8,7 @@
 #include "../../models/actuator_types.h"
 #include "../../models/error_codes.h"
 #include "actuator_drivers/iactuator_driver.h"
+#include "actuator_drivers/pump_actuator.h"
 
 class GPIOManager;
 class ActuatorManagerTestHelper;
@@ -60,8 +61,12 @@ public:
   bool handleActuatorConfig(JsonArray actuators, const String& correlation_id = "");
   void publishActuatorStatus(uint8_t gpio);
   void publishAllActuatorStatus();
-  void publishActuatorResponse(const ActuatorCommand& command, bool success, const String& message);
-  void publishActuatorAlert(uint8_t gpio, const String& alert_type, const String& message);
+  // AUT-1020: optional denied_info carries structured rejection code/reason/limits (B4)
+  void publishActuatorResponse(const ActuatorCommand& command, bool success, const String& message,
+                               const PumpActuator::ActivationDeniedInfo* denied_info = nullptr);
+  // AUT-1020: optional limit_ms carries configured runtime cap for runtime_protection alerts (B4-Alert)
+  void publishActuatorAlert(uint8_t gpio, const String& alert_type, const String& message,
+                            unsigned long limit_ms = 0);
 
   bool isInitialized() const { return initialized_; }
 
@@ -96,7 +101,9 @@ private:
                                String& error_message,
                                ConfigErrorCode& error_code) const;
   String buildStatusPayload(const ActuatorStatus& status, const ActuatorConfig& config) const;
-  String buildResponsePayload(const ActuatorCommand& command, bool success, const String& message) const;
+  // AUT-1020: optional denied_info for structured code/details in failure response (B4)
+  String buildResponsePayload(const ActuatorCommand& command, bool success, const String& message,
+                              const PumpActuator::ActivationDeniedInfo* denied_info = nullptr) const;
   static void preserveSoftPolicyFromRegistered(ActuatorConfig& merged, const ActuatorConfig& policy);
   static void syncRegisteredConfigFromDriver(RegisteredActuator& slot);
   static void syncDriverSoftPolicyFromRegistered(RegisteredActuator& slot);

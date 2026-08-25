@@ -21,6 +21,16 @@ static const uint32_t SAFETY_TASK_STACK_BYTES = 12288;
 static const uint32_t SAFETY_TASK_STACK_SIZE = SAFETY_TASK_STACK_BYTES / sizeof(StackType_t);
 static const UBaseType_t SAFETY_TASK_PRIORITY = 5;
 static const BaseType_t SAFETY_TASK_CORE = 1;
+static constexpr uint32_t kP4CooperativeIntervalMs = 500;
+
+// Threshold below which slow cycles are not logged (raised from 250 ms to cover the expected
+// cooperative delay of moisture/soil probes: 2 × 200 ms = 400 ms < 1000 ms).
+// pH/EC probes still exceed this (29 × 100 ms = 2900 ms) and appear with cooperative_dominated=1.
+static constexpr unsigned long kSafetySlowWarnMs    = 1000UL;
+static constexpr unsigned long kSafetyLogDebounceMs = 2000UL;
+// Fraction of cycle time (%) spent in performAllMeasurements above which the cycle is
+// considered measurement-dominated (cooperative delay expected, not a real block).
+static constexpr uint32_t kSafetyCycleMeasurePct = 80UL;
 
 // Forward declaration — defined in main.cpp
 extern void checkServerAckTimeout();
@@ -61,6 +71,15 @@ void runSafetyCooperativeSlice() {
     processActuatorCommandQueue();
     if (actuatorManager.isInitialized()) {
         actuatorManager.processActuatorLoops();
+    }
+
+    if (offlineModeManager.isOfflineActive()) {
+        static uint32_t s_last_p4_cooperative_ms = 0;
+        const uint32_t now_ms = static_cast<uint32_t>(millis());
+        if (now_ms - s_last_p4_cooperative_ms >= kP4CooperativeIntervalMs) {
+            s_last_p4_cooperative_ms = now_ms;
+            offlineModeManager.evaluateOfflineRules();
+        }
     }
 
     #ifndef WOKWI_SIMULATION
@@ -108,9 +127,9 @@ void safetyTaskFunction(void* param) {
         const unsigned long safety_now_ms = millis();
         const unsigned long safety_loop_gap_ms = safety_now_ms - last_loop_ms;
         last_loop_ms = safety_now_ms;
-        if (safety_loop_gap_ms > 250UL) {
+        if (safety_loop_gap_ms > kSafetySlowWarnMs) {
             if (s_last_safety_gap_log_ms == 0UL ||
-                (safety_now_ms - s_last_safety_gap_log_ms) >= 2000UL) {
+                (safety_now_ms - s_last_safety_gap_log_ms) >= kSafetyLogDebounceMs) {
                 s_last_safety_gap_log_ms = safety_now_ms;
                 // #region agent log
                 LOG_W(SAFETY_TAG, String("[DBG5126ae] safety loop gap gap_ms=") +
@@ -124,7 +143,9 @@ void safetyTaskFunction(void* param) {
         // Notifications + actuator queue + runtime loops before blocking sensor work.
         runSafetyCooperativeSlice();
 
+        const unsigned long measurement_start_ms = millis();
         sensorManager.performAllMeasurements();
+        const unsigned long measurement_elapsed_ms = millis() - measurement_start_ms;
 
         // Drain commands that arrived during measurement (cooperative slices run inside reads).
         runSafetyCooperativeSlice();
@@ -141,16 +162,8 @@ void safetyTaskFunction(void* param) {
         // evaluateOfflineRules: apply local actuator rules every 5 s when offline.
         // Runs on Core 1 because offline rules directly control GPIO/actuators.
         offlineModeManager.checkDelayTimer();
-        {
-            static unsigned long last_offline_eval = 0;
-            static const unsigned long OFFLINE_EVAL_INTERVAL_MS = 5000;
-            if (offlineModeManager.isOfflineActive()) {
-                if (millis() - last_offline_eval > OFFLINE_EVAL_INTERVAL_MS) {
-                    last_offline_eval = millis();
-                    offlineModeManager.evaluateOfflineRules();
-                }
-            }
-        }
+        // evaluateOfflineRules is driven by runSafetyCooperativeSlice (500 ms guard, kP4CooperativeIntervalMs).
+        // The former 5 s main-loop path was redundant after AUT-955 and has been removed.
 
         // Log stack highwater mark every ~60s (6000 * 10ms = 60s)
         // uxTaskGetStackHighWaterMark returns free stack in words; Xtensa word = 4 bytes.
@@ -163,13 +176,17 @@ void safetyTaskFunction(void* param) {
         }
 
         const unsigned long safety_cycle_duration_ms = millis() - safety_cycle_start_ms;
-        if (safety_cycle_duration_ms > 250UL) {
+        if (safety_cycle_duration_ms > kSafetySlowWarnMs) {
             if (s_last_safety_cycle_slow_log_ms == 0UL ||
-                (millis() - s_last_safety_cycle_slow_log_ms) >= 2000UL) {
+                (millis() - s_last_safety_cycle_slow_log_ms) >= kSafetyLogDebounceMs) {
                 s_last_safety_cycle_slow_log_ms = millis();
+                const bool cooperative_dominated =
+                    (measurement_elapsed_ms * 100UL / safety_cycle_duration_ms) >= kSafetyCycleMeasurePct;
                 // #region agent log
                 LOG_W(SAFETY_TAG, String("[DBG5126ae] safety op cycle slow duration_ms=") +
                                   String(safety_cycle_duration_ms) +
+                                  " measurement_ms=" + String(measurement_elapsed_ms) +
+                                  " cooperative_dominated=" + String(cooperative_dominated ? 1 : 0) +
                                   " heap=" + String(ESP.getFreeHeap()));
                 // #endregion
             }

@@ -114,6 +114,11 @@ private:
     // NVS persistence helpers
     bool saveOfflineRulesToNVS();
     void _deleteOldIndividualKeys();  // One-shot migration: removes legacy ofr_{i}_* keys
+    // AUT-1141 L1: shared blob->struct decode (NVS ofr_blob load AND packed
+    // config-push both target this — one decoder, no second parser).
+    bool _decodeOfflineRuleBlobV5(const uint8_t* blob, size_t blob_size, uint8_t count);
+    // AUT-1141 L1: applies a packed-encoding offline_rules config-push payload.
+    bool _applyPackedOfflineRules(JsonObject packed);
     void activateOfflineMode();
     void enterAdoptingMode();
     void finalizeAdoptingMode();

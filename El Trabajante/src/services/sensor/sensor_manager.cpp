@@ -201,6 +201,10 @@ float computePopulationStdDev(const uint32_t* values, uint8_t count) {
 }
 
 static constexpr uint16_t kSafetyCooperativeDelayStepMs = 10;
+// Per-sensor measurement threshold: log when a single sensor takes longer than this.
+// Analog probes (ph/ec: ~2900 ms, moisture/soil: ~400 ms) routinely exceed it via cooperative
+// delay and are logged at DEBUG level. Non-analog sensors (I2C, OneWire) log at WARNING level.
+static constexpr unsigned long kSlowSensorMeasureWarnMs = 200UL;
 
 void delayWithSafetyCooperation(uint16_t delay_ms) {
     if (delay_ms == 0) {
@@ -627,6 +631,14 @@ bool SensorManager::configureSensor(const SensorConfig& config) {
         existing->consecutive_failures = 0;
         analog_warmup_count_[existing - sensors_] = 0;
 
+        // AUT-1024: this path updates the in-memory config without releasing/
+        // re-requesting the GPIO — keep GPIOManager's safe-mode polarity flag
+        // in sync in case polarity changed via this config push.
+        if (capability && capability->is_digital) {
+            gpio_manager_->updatePinPolarity(
+                existing->gpio, existing->polarity == SensorPolarityCode::ACTIVE_HIGH);
+        }
+
         if (isUartSensorConfig(merged, capability)) {
             if (!hasValidUartPinConfig(*existing)) {
                 LOG_E(TAG, "Sensor Manager: UART sensor missing uart_rx_pin/uart_tx_pin");
@@ -985,7 +997,14 @@ bool SensorManager::configureSensor(const SensorConfig& config) {
         }
 
         // Reserve GPIO
-        if (!gpio_manager_->requestPin(config.gpio, "sensor", config.sensor_name.c_str())) {
+        // AUT-1024: active_high digital sensors (PNP, e.g. liquid_level XKC-Y26S)
+        // need INPUT_PULLDOWN instead of INPUT_PULLUP on safe-mode/release — GPIOManager
+        // remembers this per-pin so it can mirror the same choice as the normal
+        // measurement path below (readRawDigital pin_mode selection).
+        bool active_high_digital = (capability && capability->is_digital &&
+                                     config.polarity == SensorPolarityCode::ACTIVE_HIGH);
+        if (!gpio_manager_->requestPin(config.gpio, "sensor", config.sensor_name.c_str(),
+                                        active_high_digital)) {
             LOG_E(TAG, "Sensor Manager: Failed to reserve GPIO " + String(config.gpio));
             errorTracker.trackError(ERROR_GPIO_RESERVED, ERROR_SEVERITY_ERROR,
                                    "Failed to reserve GPIO");
@@ -1218,7 +1237,8 @@ bool SensorManager::performMeasurement(uint8_t gpio, SensorReading& reading_out)
 }
 
 bool SensorManager::measureAnalogProbeMedian(SensorConfig* config, SensorReading& reading_out,
-                                             uint8_t sample_count, uint16_t sample_delay_ms) {
+                                             uint8_t sample_count, uint16_t sample_delay_ms,
+                                             bool bypass_sample_count_gate) {
     if (!initialized_ || !config) {
         reading_out.valid = false;
         reading_out.error_message = "Analog median measurement not possible";
@@ -1298,7 +1318,12 @@ bool SensorManager::measureAnalogProbeMedian(SensorConfig* config, SensorReading
         ptrdiff_t slot = config - sensors_;
         if (slot >= 0 && static_cast<uint8_t>(slot) < MAX_SENSORS) {
             uint8_t s = static_cast<uint8_t>(slot);
-            if (analog_warmup_count_[s] < ANALOG_WARMUP_MIN_SAMPLES) {
+            // AUT-1001: The sample-COUNT sub-gate is advanced only by the continuous loop, which
+            // skips on_demand/scheduled/paused sensors. The manual/on-demand path passes
+            // bypass_sample_count_gate=true so a valid calibration read is not blocked forever.
+            // The wall-clock boot-settle gate (AUT-738, below) still guards the boot transient.
+            if (!bypass_sample_count_gate &&
+                analog_warmup_count_[s] < ANALOG_WARMUP_MIN_SAMPLES) {
                 analog_warmup_count_[s]++;
                 if (analog_warmup_count_[s] < ANALOG_WARMUP_MIN_SAMPLES) {
                     LOG_I(TAG, "SensorManager: Analog warmup count=" +
@@ -1307,6 +1332,7 @@ bool SensorManager::measureAnalogProbeMedian(SensorConfig* config, SensorReading
                                String(config->gpio) + " (" + config->sensor_type + ")");
                     reading_out.valid = false;
                     reading_out.error_message = "Analog warmup in progress";
+                    reading_out.quality = "warming_up";
                     return false;
                 }
                 LOG_I(TAG, "SensorManager: Analog warmup count=" +
@@ -1324,6 +1350,7 @@ bool SensorManager::measureAnalogProbeMedian(SensorConfig* config, SensorReading
                            "ms — holding publish");
                 reading_out.valid = false;
                 reading_out.error_message = "Analog boot settling";
+                reading_out.quality = "warming_up";
                 return false;
             }
         }
@@ -1519,14 +1546,35 @@ bool SensorManager::performMeasurementForConfig(SensorConfig* config, SensorRead
             LOG_D(TAG, "SensorManager: UART CO2 raw PPM=" + String(ppm) +
                      " (GPIO slot " + String(gpio) + ")");
         } else if (capability->is_digital) {
-            uint32_t gpio_raw = readRawDigital(config->gpio);
-            // Active-Low: LOW (0) = liquid detected → logical 1
-            //             HIGH (1) = no liquid       → logical 0
-            raw_value = (gpio_raw == 0) ? 1U : 0U;
+            // Pin mode follows polarity. active_high (PNP, e.g. XKC-Y26S) sensors are
+            // "sourcing": they drive the line HIGH when detecting, but leave it floating
+            // (high-impedance) when NOT detecting — that needs a pull-DOWN to read a
+            // defined LOW in the idle state, not a pull-up. Field evidence (2026-07-02,
+            // AUT-1024 follow-up): plain INPUT (no internal pull at all, relying solely on
+            // an assumed external pull-down on the sensor cable/adapter) read a constant
+            // raw_gpio=1 on both liquid_level sensors even while dry — consistent with a
+            // floating pin picking up noise rather than a real "detected" signal. Using
+            // the ESP32's internal INPUT_PULLDOWN fixes this without needing any external
+            // resistor: it only pulls in the same direction any external pull-down would,
+            // so it cannot create a resistive divider (that risk is specific to pull-UP
+            // vs. pull-DOWN fighting each other), and a real PNP HIGH output easily
+            // overrides the weak internal pull-down. active_low (NPN, default) keeps the
+            // existing INPUT_PULLUP behavior (sinking sensor, floats HIGH when idle).
+            const bool is_active_high = (config->polarity == SensorPolarityCode::ACTIVE_HIGH);
+            uint8_t pin_mode = is_active_high ? INPUT_PULLDOWN : INPUT_PULLUP;
+            uint32_t gpio_raw = readRawDigital(config->gpio, pin_mode);
+            // active_low (default): LOW (0) = liquid detected → logical 1 (unchanged NPN behavior)
+            // active_high: HIGH (1) = liquid detected → logical 1 (PNP, e.g. XKC-Y26S-PNP)
+            const bool detected = is_active_high ? (gpio_raw != 0) : (gpio_raw == 0);
+            raw_value = detected ? 1U : 0U;
             reading_out.raw_mode = true;
             reading_out.quality = "good";
-            LOG_D(TAG, "SensorManager: Digital GPIO=" + String(config->gpio) +
-                     " raw=" + String(gpio_raw) + " logical=" + String(raw_value));
+            LOG_I(TAG, "SensorManager: Digital read GPIO=" + String(config->gpio) +
+                     " type=" + config->sensor_type +
+                     " pin_mode=" + String(is_active_high ? "INPUT_PULLDOWN" : "INPUT_PULLUP") +
+                     " polarity=" + String(is_active_high ? "active_high" : "active_low") +
+                     " raw_gpio=" + String(gpio_raw) +
+                     " logical=" + String(raw_value));
         } else if (capability->is_pulse) {
             // Pulse-counting sensor (FS300A flow and compatible): delegate to dedicated method.
             ptrdiff_t slot_ptr = config - sensors_;
@@ -2040,6 +2088,7 @@ void SensorManager::performAllMeasurements() {
         // waits its full interval before the next attempt (backoff).
         sensors_[i].last_reading = now;
 
+        const unsigned long sensor_measure_start_ms = millis();
         bool measurement_ok = false;
         bool skip_cb_for_warmup = false;
 
@@ -2083,6 +2132,17 @@ void SensorManager::performAllMeasurements() {
             // R20-P2: Use config-based method to avoid GPIO-only lookup (multi-sensor GPIO)
             LOG_D(TAG, "SensorManager: SINGLE-VALUE measurement START GPIO=" + String(sensors_[i].gpio));
             SensorReading reading;
+            // AUT-1010 F5: pre-fill identity + value defaults from the config slot.
+            // The warming_up early-returns (analog gates AUT-734/AUT-738, CO2 preheat)
+            // set only valid/quality/error_message; without this pre-fill the warmup
+            // publish below emits an unattributable MQTT packet with uninitialized
+            // gpio, sensor_type="" and stack-garbage raw/value fields.
+            reading.gpio = sensors_[i].gpio;
+            reading.sensor_type = getServerSensorType(sensors_[i].sensor_type);
+            reading.subzone_id = sensors_[i].subzone_id;
+            reading.raw_value = 0;
+            reading.processed_value = 0.0f;
+            reading.timestamp = millis();
             if (performMeasurementForConfig(&sensors_[i], reading)) {
                 LOG_D(TAG, "SensorManager: SINGLE-VALUE measurement OK, publishing");
                 publishSensorReading(reading);
@@ -2091,7 +2151,19 @@ void SensorManager::performAllMeasurements() {
                 LOG_D(TAG, "SensorManager: SINGLE-VALUE measurement FAILED");
                 if (reading.quality == "warming_up") {
                     skip_cb_for_warmup = true;
+                    publishSensorReading(reading);
                 }
+            }
+        }
+
+        const unsigned long sensor_elapsed_ms = millis() - sensor_measure_start_ms;
+        if (sensor_elapsed_ms > kSlowSensorMeasureWarnMs) {
+            if (isAnalogProbeSensorType(sensors_[i].sensor_type)) {
+                LOG_D(TAG, String("[PERF] sensor slow (cooperative) gpio=") + String(sensors_[i].gpio) +
+                      " type=" + sensors_[i].sensor_type + " elapsed_ms=" + String(sensor_elapsed_ms));
+            } else {
+                LOG_W(TAG, String("[PERF] sensor slow (check hardware) gpio=") + String(sensors_[i].gpio) +
+                      " type=" + sensors_[i].sensor_type + " elapsed_ms=" + String(sensor_elapsed_ms));
             }
         }
 
@@ -2149,7 +2221,9 @@ void SensorManager::setMeasurementInterval(unsigned long interval_ms) {
 // ============================================
 ManualMeasurementResult SensorManager::triggerManualMeasurement(uint8_t gpio, uint32_t timeout_ms,
                                                                 uint8_t sample_count,
-                                                                uint16_t sample_delay_ms) {
+                                                                uint16_t sample_delay_ms,
+                                                                const String& sensor_type,
+                                                                int adc_channel) {
     ManualMeasurementResult result;
     result.reason_code = "UNKNOWN";
 
@@ -2159,10 +2233,46 @@ ManualMeasurementResult SensorManager::triggerManualMeasurement(uint8_t gpio, ui
         return result;
     }
 
+    // AUT-1013 (B4): discriminator-aware sensor lookup. sensor_type/adc_channel are
+    // forwarded from the server measure command so a specific probe can be selected when
+    // several share one gpio (ADS1115 pH+EC both report gpio=0). Empty type AND channel<0
+    // means the command carried no discriminator.
+    bool has_discriminator = (sensor_type.length() > 0) || (adc_channel >= 0);
+    SensorConfig* config = findSensorConfig(gpio, "", 0, sensor_type, adc_channel);
+
+    // AUT-1013 (B4, Robin decision 2): AMBIGUOUS_SENSOR failure-mode. If NO discriminator
+    // was supplied but more than one sensor config is bound to this gpio, the legacy
+    // first-slot lookup would silently measure the wrong physical channel. Report the
+    // ambiguity instead of guessing. A single sensor on the gpio keeps the defined legacy
+    // fallback below (measure the only slot, no error) for old-server / missing-field compat.
+    if (!has_discriminator) {
+        uint8_t gpio_match_count = 0;
+        for (uint8_t i = 0; i < sensor_count_; i++) {
+            if (sensors_[i].gpio == gpio) gpio_match_count++;
+        }
+        // Multi-value sensors (SHT31/BMP280/BME280) intentionally store several configs on one
+        // gpio+i2c_address (sht31_temp + sht31_humidity) but are measured as a whole device by
+        // the is_multi_value branch below — selecting any of their slots yields the same complete
+        // result, so that is NOT a genuine ambiguity. Only refuse when the resolved sensor is a
+        // single-value type (the ADS1115 pH/EC case, where the chosen slot determines which
+        // physical channel is read). This preserves legacy on-demand SHT31 measurements.
+        const SensorCapability* resolved_capability =
+            config ? findSensorCapability(config->sensor_type) : nullptr;
+        bool config_is_multi_value = (resolved_capability && resolved_capability->is_multi_value);
+        if (gpio_match_count > 1 && !config_is_multi_value) {
+            LOG_W(TAG, "SensorManager: AMBIGUOUS measure command on GPIO " + String(gpio) +
+                           " — " + String(gpio_match_count) + " sensors share it and no "
+                           "sensor_type/adc_channel discriminator was supplied; refusing to "
+                           "guess (AUT-1013)");
+            result.reason_code = "AMBIGUOUS_SENSOR";
+            return result;
+        }
+    }
+
     // Find sensor configuration
-    SensorConfig* config = findSensorConfig(gpio);
     if (!config) {
-        LOG_E(TAG, "SensorManager: Sensor not found on GPIO " + String(gpio));
+        LOG_E(TAG, "SensorManager: Sensor not found on GPIO " + String(gpio) +
+                       (has_discriminator ? " for the requested sensor_type/adc_channel" : ""));
         result.reason_code = "SENSOR_NOT_FOUND";
         return result;
     }
@@ -2195,6 +2305,7 @@ ManualMeasurementResult SensorManager::triggerManualMeasurement(uint8_t gpio, ui
     LOG_I(TAG, "SensorManager: Manual measurement triggered for GPIO " + String(gpio) +
              " (mode: " + config->operating_mode + ", timeout: " + String(timeout_ms) + "ms)");
     result.sensor_type = config->sensor_type;
+    result.adc_channel = config->adc_channel;  // AUT-1013: report the physical channel measured
 
     {
         SensorArrayMutexLock sensor_lock;
@@ -2249,8 +2360,27 @@ ManualMeasurementResult SensorManager::triggerManualMeasurement(uint8_t gpio, ui
         // Single-value sensor
         SensorReading reading;
         if (isAnalogProbeSensorType(config->sensor_type)) {
+            // AUT-975/AUT-1001: The sample-count warmup counter (analog_warmup_count_) is advanced
+            // ONLY by the continuous read loop (performAllMeasurements), which skips on_demand/
+            // scheduled/paused sensors (see mode check ~line 1997). Gating the manual (calibration)
+            // path on that counter therefore blocked those sensors permanently with
+            // WARMUP_IN_PROGRESS. Use the mode-independent wall-clock boot-settle gate (AUT-738)
+            // instead — once it has elapsed the analog probe RC transient has settled for any mode.
+            unsigned long settle_elapsed = millis() - analog_settle_start_ms_;
+            if (settle_elapsed < ANALOG_BOOT_SETTLE_MS) {
+                LOG_I(TAG, "SensorManager: Manual measurement during analog boot-settle GPIO " +
+                           String(gpio) + " (" + String(settle_elapsed) + "/" +
+                           String(ANALOG_BOOT_SETTLE_MS) + "ms)");
+                result.reason_code = "WARMUP_IN_PROGRESS";
+                manual_measure_busy_[sensor_index] = false;  // AUT-303: release busy flag
+                return result;
+            }
             // AUT-441: Continuous and manual paths share exactly one median implementation.
-            if (!measureAnalogProbeMedian(config, reading, sample_count, sample_delay_ms)) {
+            // AUT-1001: bypass_sample_count_gate=true — the sample-count sub-gate is continuous-only
+            // and would otherwise block on_demand sensors (their counter never advances). The
+            // boot-settle gate above already provides the transient protection for the manual path.
+            if (!measureAnalogProbeMedian(config, reading, sample_count, sample_delay_ms,
+                                          /*bypass_sample_count_gate=*/true)) {
                 LOG_E(TAG, "SensorManager: Manual analog median measurement failed for GPIO " + String(gpio));
                 result.reason_code = "MEASUREMENT_FAILED";
                 manual_measure_busy_[sensor_index] = false;  // AUT-303: release busy flag
@@ -2380,14 +2510,16 @@ uint32_t SensorManager::acquireProbeRaw(SensorConfig* config) {
     return readRawAnalog(config->gpio);
 }
 
-uint32_t SensorManager::readRawDigital(uint8_t gpio) {
+uint32_t SensorManager::readRawDigital(uint8_t gpio, uint8_t pin_mode) {
     if (!initialized_) {
         return 0;
     }
-    
-    // Configure pin as digital input if needed
-    gpio_manager_->configurePinMode(gpio, INPUT_PULLUP);
-    
+
+    // Configure pin as digital input if needed (INPUT for active_high/PNP —
+    // no internal pull-up, relies on the sensor's external pull-down;
+    // INPUT_PULLUP for active_low/NPN — unchanged prior behavior)
+    gpio_manager_->configurePinMode(gpio, pin_mode);
+
     // Read digital value
     return digitalRead(gpio);
 }
@@ -2452,7 +2584,7 @@ String SensorManager::getSensorInfo(uint8_t gpio) const {
 // ============================================
 SensorConfig* SensorManager::findSensorConfig(uint8_t gpio,
     const String& onewire_address, uint8_t i2c_address,
-    const String& sensor_type) {
+    const String& sensor_type, int adc_channel) {
     for (uint8_t i = 0; i < sensor_count_; i++) {
         if (sensors_[i].gpio != gpio) continue;
 
@@ -2470,6 +2602,14 @@ SensorConfig* SensorManager::findSensorConfig(uint8_t gpio,
         // sht31_temp and sht31_humidity (same GPIO + same address) are not confused.
         if (sensor_type.length() > 0) {
             if (sensors_[i].sensor_type != sensor_type) continue;
+        }
+
+        // AUT-1013: ADS1115 channel disambiguation. When adc_channel >= 0 the caller
+        // supplied a channel discriminator (0-3); match it exactly so e.g. pH (ch1) and
+        // EC (ch0) sharing gpio=0 resolve to distinct slots. The stored field uses 255
+        // for "unset", which never equals a real 0-3 filter value.
+        if (adc_channel >= 0) {
+            if (sensors_[i].adc_channel != static_cast<uint8_t>(adc_channel)) continue;
         }
 
         return &sensors_[i];
@@ -2479,7 +2619,7 @@ SensorConfig* SensorManager::findSensorConfig(uint8_t gpio,
 
 const SensorConfig* SensorManager::findSensorConfig(uint8_t gpio,
     const String& onewire_address, uint8_t i2c_address,
-    const String& sensor_type) const {
+    const String& sensor_type, int adc_channel) const {
     for (uint8_t i = 0; i < sensor_count_; i++) {
         if (sensors_[i].gpio != gpio) continue;
 
@@ -2499,14 +2639,24 @@ const SensorConfig* SensorManager::findSensorConfig(uint8_t gpio,
             if (sensors_[i].sensor_type != sensor_type) continue;
         }
 
+        // AUT-1013: ADS1115 channel disambiguation (see non-const overload above).
+        if (adc_channel >= 0) {
+            if (sensors_[i].adc_channel != static_cast<uint8_t>(adc_channel)) continue;
+        }
+
         return &sensors_[i];
     }
     return nullptr;
 }
 
 bool SensorManager::publishSensorReading(const SensorReading& reading) {
-    // SAFETY-P4: Always update value cache regardless of MQTT connectivity
-    updateValueCache(reading.gpio, reading.sensor_type.c_str(), reading.processed_value);
+    // SAFETY-P4: Always update value cache regardless of MQTT connectivity.
+    // AUT-1010 F5: valid readings only — a warming_up reading carries no usable
+    // value, and caching it (e.g. 0.0 for ph) could false-trigger offline safety
+    // rules that read this cache via getSensorValue().
+    if (reading.valid) {
+        updateValueCache(reading.gpio, reading.sensor_type.c_str(), reading.processed_value);
+    }
 
     // AUT-714: Spool reading when MQTT is not available
     if (spoolManager.isEnabled() && (!mqtt_client_ || !mqtt_client_->isConnected())) {

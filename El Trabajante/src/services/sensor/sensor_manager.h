@@ -26,6 +26,10 @@ struct ManualMeasurementResult {
     String quality = "unknown";
     int32_t raw_value = 0;
     String sensor_type;
+    // AUT-1013: physical ADS1115 channel actually measured (255 = unset/internal ADC).
+    // Mirrors the adc_channel the normal sensor-data payload already carries, so the
+    // measure-command response is self-describing when several probes share gpio=0 (pH+EC).
+    uint8_t adc_channel = 255;
     uint8_t sample_count = 0;
     float adc_stddev = 0.0f;
     bool stable = false;
@@ -114,9 +118,15 @@ public:
     // ✅ Phase 2C: Trigger manual measurement for on-demand sensors
     // Returns full outcome contract projection for queue-worker mapping.
     // timeout_ms: Max duration before aborting (E-P3 Timeout-Guard, default 5s)
+    // AUT-1013: sensor_type/adc_channel are the optional command discriminators. They let
+    // this path select a specific sensor when several share one gpio (ADS1115 pH+EC on
+    // gpio=0). Empty sensor_type AND adc_channel < 0 means "no discriminator" — the legacy
+    // single-slot fallback applies for a unique gpio, otherwise AMBIGUOUS_SENSOR is returned.
     ManualMeasurementResult triggerManualMeasurement(uint8_t gpio, uint32_t timeout_ms = 5000,
                                                      uint8_t sample_count = 0,
-                                                     uint16_t sample_delay_ms = 0);
+                                                     uint16_t sample_delay_ms = 0,
+                                                     const String& sensor_type = "",
+                                                     int adc_channel = -1);
 
     // ============================================
     // RAW DATA READING METHODS (PHASE 4)
@@ -136,8 +146,10 @@ public:
     // adc_max selects the scale: 4095 (internal 12-bit) or 32767 (ADS1115 16-bit).
     static const char* validateAdcReading(uint32_t raw, uint8_t gpio, uint32_t adc_max = 4095);
     
-    // Read raw digital value
-    uint32_t readRawDigital(uint8_t gpio);
+    // Read raw digital value. pin_mode selects INPUT (no internal pull-up, for
+    // active_high/PNP sensors with an external pull-down) or INPUT_PULLUP
+    // (default, active_low/NPN open-collector — unchanged prior behavior).
+    uint32_t readRawDigital(uint8_t gpio, uint8_t pin_mode = INPUT_PULLUP);
     
     // Read raw I2C data
     bool readRawI2C(uint8_t gpio, uint8_t device_address, 
@@ -241,19 +253,28 @@ private:
     // Find sensor config by GPIO (+ optional address for multi-sensor GPIOs)
     // sensor_type: when non-empty, additionally matches sensor_type — used for I2C
     // multi-value sensors (e.g. SHT31 sht31_temp vs. sht31_humidity share GPIO+address).
+    // adc_channel: when >= 0, additionally matches the ADS1115 single-ended channel (0-3) —
+    // disambiguates multiple analog probes sharing gpio=0 (AUT-1013). The stored SensorConfig
+    // field uses 255 for "unset", so a caller default of -1 leaves this filter inactive.
     SensorConfig* findSensorConfig(uint8_t gpio,
         const String& onewire_address = "", uint8_t i2c_address = 0,
-        const String& sensor_type = "");
+        const String& sensor_type = "", int adc_channel = -1);
     const SensorConfig* findSensorConfig(uint8_t gpio,
         const String& onewire_address = "", uint8_t i2c_address = 0,
-        const String& sensor_type = "") const;
+        const String& sensor_type = "", int adc_channel = -1) const;
 
     // Internal: measurement with known config (avoids GPIO-only re-lookup for multi-sensor GPIOs)
     bool performMeasurementForConfig(SensorConfig* config, SensorReading& reading_out);
 
     // AUT-441: Canonical median-based analog probe measurement (shared by continuous + manual paths)
+    // AUT-1001: bypass_sample_count_gate lets the manual/on-demand path skip the sample-COUNT
+    // warmup sub-gate. That counter (analog_warmup_count_) is advanced ONLY by the continuous
+    // read loop (performAllMeasurements), which skips on_demand/scheduled/paused sensors — so for
+    // those sensors it never reaches ANALOG_WARMUP_MIN_SAMPLES and would block calibration forever.
+    // The wall-clock boot-settle gate (AUT-738) still runs and guards the boot transient for all modes.
     bool measureAnalogProbeMedian(SensorConfig* config, SensorReading& reading_out,
-                                  uint8_t sample_count = 0, uint16_t sample_delay_ms = 0);
+                                  uint8_t sample_count = 0, uint16_t sample_delay_ms = 0,
+                                  bool bypass_sample_count_gate = false);
 
     // Pulse-counting measurement for flow sensors (FS300A and compatible).
     // Reads the ISR-maintained counter atomically and resets it (publish-and-reset).

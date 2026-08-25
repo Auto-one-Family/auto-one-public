@@ -12,6 +12,15 @@ public:
     unsigned long cooldown_ms = 30000UL;           // 30s cooldown after cutoff
   };
 
+  // AUT-1020: Plain-data struct carrying rejection details from canActivate() to the manager.
+  // Mirrors RuntimeProtection layout in the same header — no new class, no interface change.
+  struct ActivationDeniedInfo {
+    const char* reason = nullptr;      // "cooldown_active" | "emergency_stop"
+    unsigned long limit_ms = 0;        // Configured limit that blocked activation
+    unsigned long remaining_ms = 0;    // Time remaining until block expires (0 = not applicable)
+    uint16_t error_code = 0;           // ERROR_ACTUATOR_COOLDOWN_ACTIVE (1054) etc.
+  };
+
   PumpActuator();
   ~PumpActuator() override;
 
@@ -33,8 +42,11 @@ public:
   void setRuntimeProtection(const RuntimeProtection& protection);
   /** Copy max_runtime (and related) from ActuatorConfig after soft-reconfig (R20-P11). */
   void syncRuntimeLimitsFromConfig(const ActuatorConfig& cfg);
-  bool canActivate() const;
+  // AUT-1020: const dropped — canActivate() sets last_denied_info_ (member-approach, B3)
+  bool canActivate();
   bool isRunning() const { return running_; }
+  // AUT-1020: Getter for denial info, read by manager after setBinary(false). Analog getStatus().
+  ActivationDeniedInfo getLastDeniedInfo() const { return last_denied_info_; }
 
 private:
   bool applyState(bool state, bool force);
@@ -56,6 +68,8 @@ private:
   unsigned long boot_settle_start_ms_;
 
   RuntimeProtection protection_;
+  // AUT-1020: set by canActivate() on rejection; read by manager via getLastDeniedInfo()
+  ActivationDeniedInfo last_denied_info_;
   GPIOManager* gpio_manager_;
 };
 
