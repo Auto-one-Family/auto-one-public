@@ -74,7 +74,7 @@ async def _add_history(
     command_type: str,
     value: float,
     timestamp: datetime,
-    issued_by: str = "user:robin",
+    issued_by: str = "user:operator",
     success: bool = True,
     metadata: dict | None = None,
     actuator_type: str = "pump",
@@ -154,7 +154,7 @@ class TestPairingEdgeCases:
         assert row.run_start_utc == t0
         assert row.run_end_utc == t1
         assert row.duration_seconds == 30
-        assert row.ausloeser == "manual:user:robin"
+        assert row.ausloeser == "manual:user:operator"
         assert row.notes == ""
         assert batch.open_runs_after == {}
 
@@ -204,7 +204,7 @@ class TestPairingEdgeCases:
         await _add_history(session, esp, gpio=18, command_type="set", value=1.0, timestamp=t0)
         await _add_history(
             session, esp, gpio=18, command_type="emergency_stop", value=0.0, timestamp=t1,
-            issued_by="emergency:robin",
+            issued_by="emergency:operator",
         )
         await session.commit()
 
@@ -263,9 +263,9 @@ class TestPairingEdgeCases:
             key: {
                 "start_id": str(uuid.uuid4()),
                 "start_ts": prior_start.isoformat(),
-                "issued_by": "user:robin",
+                "issued_by": "user:operator",
                 "value": 1.0,
-                "ausloeser": "manual:user:robin",
+                "ausloeser": "manual:user:operator",
                 "notes": "",
             }
         }

@@ -207,8 +207,14 @@ class TestSubzoneAssignmentAPI:
         assert "not found" in response.json()["error"]["message"].lower()
 
     @pytest.mark.asyncio
-    async def test_assign_subzone_no_zone(self, auth_headers: dict, test_esp_no_zone: ESPDevice):
-        """Test assignment fails when ESP has no zone assigned."""
+    async def test_assign_subzone_no_zone_creates_pending_preconfig(
+        self, auth_headers: dict, test_esp_no_zone: ESPDevice
+    ):
+        """AUT-1156: Assignment without zone succeeds as DB-only pre-config (200 OK).
+
+        Previously returned 400; now returns 200 with mqtt_sent=False because
+        subzone pre-configuration before zone assignment is the desired behavior.
+        """
         request_data = {
             "subzone_id": "test_subzone",
             "assigned_gpios": [4, 5],
@@ -221,8 +227,10 @@ class TestSubzoneAssignmentAPI:
                 headers=auth_headers,
             )
 
-        assert response.status_code == 400
-        assert "zone" in response.json()["error"]["message"].lower()
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["mqtt_sent"] is False
 
     @pytest.mark.asyncio
     async def test_assign_subzone_invalid_gpio(

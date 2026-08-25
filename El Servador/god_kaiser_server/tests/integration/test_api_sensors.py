@@ -6,12 +6,12 @@ Tests: Sensor endpoints (config CRUD, data query)
 """
 
 import pytest
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from httpx import AsyncClient, ASGITransport
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.security import create_access_token, get_password_hash
-from src.db.models.sensor import SensorConfig
+from src.db.models.sensor import SensorConfig, SensorData
 from src.db.models.esp import ESPDevice
 from src.db.models.subzone import SubzoneConfig
 from src.db.models.user import User
@@ -273,6 +273,106 @@ class TestQueryData:
         assert data["success"] is True
         assert "readings" in data
         assert "count" in data
+
+    @pytest.mark.asyncio
+    async def test_query_sensor_data_omits_warming_up_zero(
+        self,
+        auth_headers: dict,
+        db_session: AsyncSession,
+        test_sensor: SensorConfig,
+        test_esp: ESPDevice,
+    ):
+        """AUT-723 E3: persisted warming_up (raw=0) must not appear as pH 0.00."""
+        now = datetime.now(timezone.utc)
+        db_session.add(
+            SensorData(
+                esp_id=test_esp.id,
+                gpio=test_sensor.gpio,
+                sensor_type="ph",
+                raw_value=0.0,
+                processed_value=None,
+                unit="pH",
+                processing_mode="raw",
+                quality="warming_up",
+                timestamp=now,
+            )
+        )
+        db_session.add(
+            SensorData(
+                esp_id=test_esp.id,
+                gpio=test_sensor.gpio,
+                sensor_type="ph",
+                raw_value=2150.0,
+                processed_value=6.8,
+                unit="pH",
+                processing_mode="pi_enhanced",
+                quality="good",
+                timestamp=now.replace(microsecond=0) - timedelta(minutes=1),
+            )
+        )
+        await db_session.commit()
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get(
+                "/api/v1/sensors/data",
+                params={
+                    "esp_id": test_esp.device_id,
+                    "gpio": test_sensor.gpio,
+                    "sensor_type": "ph",
+                    "resolution": "raw",
+                },
+                headers=auth_headers,
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        qualities = [r.get("quality") for r in data["readings"]]
+        assert "warming_up" not in qualities
+        assert all(r.get("raw_value") != 0.0 or r.get("processed_value") is not None for r in data["readings"])
+        assert any(r.get("processed_value") == 6.8 for r in data["readings"])
+
+    @pytest.mark.asyncio
+    async def test_query_sensor_data_explicit_warming_up_filter(
+        self,
+        auth_headers: dict,
+        db_session: AsyncSession,
+        test_sensor: SensorConfig,
+        test_esp: ESPDevice,
+    ):
+        """Explicit ?quality=warming_up still returns those rows (diagnostics)."""
+        db_session.add(
+            SensorData(
+                esp_id=test_esp.id,
+                gpio=test_sensor.gpio,
+                sensor_type="ph",
+                raw_value=0.0,
+                processed_value=None,
+                unit="pH",
+                processing_mode="raw",
+                quality="warming_up",
+                timestamp=datetime.now(timezone.utc),
+            )
+        )
+        await db_session.commit()
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get(
+                "/api/v1/sensors/data",
+                params={
+                    "esp_id": test_esp.device_id,
+                    "gpio": test_sensor.gpio,
+                    "quality": "warming_up",
+                    "resolution": "raw",
+                },
+                headers=auth_headers,
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        # Mapping still omits warming_up from chart series (no numeric Y).
+        assert data["count"] == 0
+        assert data["readings"] == []
 
 
 class TestSensorStats:

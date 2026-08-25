@@ -420,6 +420,44 @@ class TestSensorHandlerProcessing:
         assert saved_data[0].processing_mode == "local"
 
     @pytest.mark.asyncio
+    async def test_handle_sensor_data_warming_up_does_not_persist(
+        self,
+        test_session: AsyncSession,
+        sample_esp_device: ESPDevice,
+        sample_sensor_config: SensorConfig,
+    ):
+        """AUT-723 E3: warming_up ingest is not persisted as a numeric chart Y."""
+        handler = SensorDataHandler()
+        handler.publisher = MagicMock()
+        handler._update_last_seen_throttled = AsyncMock()
+
+        topic = "kaiser/god/esp/ESP_12AB34CD/sensor/34/data"
+        payload = {
+            "ts": int(time.time()),
+            "esp_id": "ESP_12AB34CD",
+            "gpio": 34,
+            "sensor_type": "ph",
+            "raw": 0,
+            "value": 0.0,
+            "unit": "pH",
+            "quality": "warming_up",
+            "raw_mode": True,
+        }
+
+        @asynccontextmanager
+        async def mock_resilient_session():
+            yield test_session
+
+        with patch("src.mqtt.handlers.sensor_handler.resilient_session", mock_resilient_session):
+            result = await handler.handle_sensor_data(topic, payload)
+
+        assert result is True
+
+        sensor_repo = SensorRepository(test_session)
+        saved_data = await sensor_repo.get_latest_data(sample_esp_device.id, 34)
+        assert saved_data == []
+
+    @pytest.mark.asyncio
     async def test_handle_sensor_data_unknown_esp(self, test_session: AsyncSession):
         """Handle sensor data from unknown ESP device."""
         handler = SensorDataHandler()
@@ -596,7 +634,7 @@ class TestActuatorHandlerProcessing:
         actuator_repo = ActuatorRepository(test_session)
         state = await actuator_repo.get_state(sample_esp_device.id, 18)
         assert state is not None
-        assert state.current_value == 255
+        assert state.current_value == 1.0
         assert state.state == "on"
 
     @pytest.mark.asyncio

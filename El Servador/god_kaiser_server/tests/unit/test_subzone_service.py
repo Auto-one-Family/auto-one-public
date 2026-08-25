@@ -27,6 +27,7 @@ from unittest.mock import MagicMock, AsyncMock, patch
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.db.models.esp import ESPDevice
+from src.db.models.sensor import SensorConfig
 from src.db.models.subzone import SubzoneConfig
 from src.db.repositories import ESPRepository
 from src.db.repositories.subzone_repo import SubzoneRepository
@@ -125,16 +126,55 @@ class TestSubzoneAssignmentValidation:
             )
 
     @pytest.mark.asyncio
-    async def test_assign_subzone_no_zone(
-        self, subzone_service: SubzoneService, esp_no_zone: ESPDevice
+    async def test_assign_subzone_no_zone_succeeds_as_pending(
+        self,
+        subzone_service: SubzoneService,
+        esp_no_zone: ESPDevice,
+        db_session: AsyncSession,
     ):
-        """Test assignment fails when ESP has no zone assigned."""
-        with pytest.raises(ValueError, match="has no zone assigned"):
-            await subzone_service.assign_subzone(
-                device_id=esp_no_zone.device_id,
-                subzone_id="test_subzone",
-                assigned_gpios=[4, 5],
-            )
+        """AUT-1156: Subzone creation without zone succeeds as DB-only pre-config."""
+        response = await subzone_service.assign_subzone(
+            device_id=esp_no_zone.device_id,
+            subzone_id="pending_subzone",
+            assigned_gpios=[4, 5],
+        )
+
+        assert response.success is True
+        assert response.mqtt_sent is False  # no MQTT — no zone yet
+        assert response.mqtt_topic == ""
+
+        # Subzone stored in DB with parent_zone_id=None
+        subzone = await subzone_service.get_subzone(esp_no_zone.device_id, "pending_subzone")
+        assert subzone is not None
+        assert subzone.parent_zone_id is None
+
+    @pytest.mark.asyncio
+    async def test_assign_subzone_explicit_zone_without_esp_zone(
+        self,
+        subzone_service: SubzoneService,
+        esp_no_zone: ESPDevice,
+        db_session: AsyncSession,
+    ):
+        """AUT-1156: Explicit parent_zone_id accepted even if ESP has no zone yet.
+
+        When parent_zone_id is explicitly provided, MQTT IS attempted (actual_parent_zone_id
+        is not None, so the DB-only pre-config path is not taken).  This allows pre-wiring
+        a subzone to a future zone before the ESP-zone assignment is complete.
+        """
+        response = await subzone_service.assign_subzone(
+            device_id=esp_no_zone.device_id,
+            subzone_id="future_subzone",
+            assigned_gpios=[6, 7],
+            parent_zone_id="greenhouse_zone_future",
+        )
+
+        assert response.success is True
+        # MQTT IS sent — actual_parent_zone_id = "greenhouse_zone_future" (not None)
+        assert response.mqtt_sent is True
+
+        subzone = await subzone_service.get_subzone(esp_no_zone.device_id, "future_subzone")
+        assert subzone is not None
+        assert subzone.parent_zone_id == "greenhouse_zone_future"
 
     @pytest.mark.asyncio
     async def test_assign_subzone_zone_mismatch(
@@ -191,6 +231,177 @@ class TestSubzoneAssignmentValidation:
         subzone = await subzone_service.get_subzone(esp_with_zone.device_id, "climate_control")
         assert subzone is not None
         assert subzone.parent_zone_id == esp_with_zone.zone_id
+
+    @pytest.mark.asyncio
+    async def test_assign_subzone_inherits_name_from_zone_sibling(
+        self,
+        subzone_service: SubzoneService,
+        esp_with_zone: ESPDevice,
+        db_session: AsyncSession,
+    ):
+        """Sensor create passes name=None — inherit Klarname from zone sibling (Topf 1)."""
+        sibling = ESPDevice(
+            device_id="ESP_SIBLING_TOPF",
+            name="Sibling",
+            ip_address="192.168.1.201",
+            mac_address="AA:BB:CC:DD:EE:11",
+            firmware_version="1.0.0",
+            hardware_type="ESP32_WROOM",
+            status="online",
+            zone_id=esp_with_zone.zone_id,
+            zone_name=esp_with_zone.zone_name,
+            master_zone_id=esp_with_zone.master_zone_id,
+            capabilities={"max_sensors": 20, "max_actuators": 12},
+        )
+        db_session.add(sibling)
+        db_session.add(
+            SubzoneConfig(
+                esp_id=sibling.device_id,
+                subzone_id="topf_1",
+                subzone_name="Topf 1",
+                parent_zone_id=esp_with_zone.zone_id,
+                assigned_gpios=[],
+                safe_mode_active=True,
+            )
+        )
+        await db_session.flush()
+
+        await subzone_service.assign_subzone(
+            device_id=esp_with_zone.device_id,
+            subzone_id="topf_1",
+            assigned_gpios=[0],
+            subzone_name=None,
+            parent_zone_id=esp_with_zone.zone_id,
+        )
+
+        created = await subzone_service.get_subzone(esp_with_zone.device_id, "topf_1")
+        assert created is not None
+        assert created.subzone_name == "Topf 1"
+
+    @pytest.mark.asyncio
+    async def test_assign_subzone_heals_auto_name_from_zone_sibling(
+        self,
+        subzone_service: SubzoneService,
+        esp_with_zone: ESPDevice,
+        db_session: AsyncSession,
+    ):
+        """Re-assign with name=None heals existing 'Subzone N' from zone sibling."""
+        sibling = ESPDevice(
+            device_id="ESP_SIBLING_HEAL",
+            name="Sibling Heal",
+            ip_address="192.168.1.202",
+            mac_address="AA:BB:CC:DD:EE:12",
+            firmware_version="1.0.0",
+            hardware_type="ESP32_WROOM",
+            status="online",
+            zone_id=esp_with_zone.zone_id,
+            zone_name=esp_with_zone.zone_name,
+            master_zone_id=esp_with_zone.master_zone_id,
+            capabilities={"max_sensors": 20, "max_actuators": 12},
+        )
+        db_session.add(sibling)
+        db_session.add(
+            SubzoneConfig(
+                esp_id=sibling.device_id,
+                subzone_id="topf_2",
+                subzone_name="Topf 2",
+                parent_zone_id=esp_with_zone.zone_id,
+                assigned_gpios=[],
+                safe_mode_active=True,
+            )
+        )
+        db_session.add(
+            SubzoneConfig(
+                esp_id=esp_with_zone.device_id,
+                subzone_id="topf_2",
+                subzone_name="Subzone 2",
+                parent_zone_id=esp_with_zone.zone_id,
+                assigned_gpios=[],
+                safe_mode_active=True,
+            )
+        )
+        await db_session.flush()
+
+        await subzone_service.assign_subzone(
+            device_id=esp_with_zone.device_id,
+            subzone_id="topf_2",
+            assigned_gpios=[0],
+            subzone_name=None,
+            parent_zone_id=esp_with_zone.zone_id,
+        )
+
+        healed = await subzone_service.get_subzone(esp_with_zone.device_id, "topf_2")
+        assert healed is not None
+        assert healed.subzone_name == "Topf 2"
+        assert healed.assigned_gpios == [0]
+
+    @pytest.mark.asyncio
+    async def test_assign_subzone_stores_optional_position_label(
+        self,
+        subzone_service: SubzoneService,
+        esp_with_zone: ESPDevice,
+    ):
+        """AUT-1241: optional position_label is persisted and returned."""
+        response = await subzone_service.assign_subzone(
+            device_id=esp_with_zone.device_id,
+            subzone_id="klima_reihe_2",
+            assigned_gpios=[4],
+            subzone_name="Klima Reihe 2",
+            position_label="Reihe 2, oberes Regal",
+        )
+        assert response.success is True
+
+        subzone = await subzone_service.get_subzone(
+            esp_with_zone.device_id, "klima_reihe_2"
+        )
+        assert subzone is not None
+        assert subzone.position_label == "Reihe 2, oberes Regal"
+
+    @pytest.mark.asyncio
+    async def test_assign_subzone_without_position_label_remains_null(
+        self,
+        subzone_service: SubzoneService,
+        esp_with_zone: ESPDevice,
+    ):
+        """AUT-1241: omitting position_label leaves the field null (optional)."""
+        await subzone_service.assign_subzone(
+            device_id=esp_with_zone.device_id,
+            subzone_id="klima_ohne_pos",
+            assigned_gpios=[5],
+            subzone_name="Klima ohne Position",
+        )
+        subzone = await subzone_service.get_subzone(
+            esp_with_zone.device_id, "klima_ohne_pos"
+        )
+        assert subzone is not None
+        assert subzone.position_label is None
+
+    @pytest.mark.asyncio
+    async def test_assign_subzone_omitted_position_label_does_not_clear(
+        self,
+        subzone_service: SubzoneService,
+        esp_with_zone: ESPDevice,
+    ):
+        """AUT-1241: re-assign without position_label keeps the existing value."""
+        await subzone_service.assign_subzone(
+            device_id=esp_with_zone.device_id,
+            subzone_id="klima_keep_pos",
+            assigned_gpios=[6],
+            subzone_name="Klima Keep",
+            position_label="Tisch links",
+        )
+        await subzone_service.assign_subzone(
+            device_id=esp_with_zone.device_id,
+            subzone_id="klima_keep_pos",
+            assigned_gpios=[6],
+            subzone_name="Klima Keep",
+            # position_label omitted → must not clear
+        )
+        subzone = await subzone_service.get_subzone(
+            esp_with_zone.device_id, "klima_keep_pos"
+        )
+        assert subzone is not None
+        assert subzone.position_label == "Tisch links"
 
 
 # =============================================================================
@@ -730,3 +941,440 @@ class TestSubzoneRepository:
         total = await subzone_repo.count_gpios_by_esp(esp_with_zone.device_id)
 
         assert total == 5
+
+
+# =============================================================================
+# Test: Sensor-Subzone n:m Assignment (AUT-1155)
+# =============================================================================
+
+
+class TestSensorSubzoneAssignment:
+    """Tests for n:m sensor→subzone assignment (AUT-1155 [B1])."""
+
+    @pytest_asyncio.fixture
+    async def subzone_with_gpios(
+        self, db_session: AsyncSession, esp_with_zone: ESPDevice
+    ) -> "SubzoneConfig":
+        """Create a subzone to use as assignment target."""
+        from src.db.models.subzone import SubzoneConfig
+
+        sz = SubzoneConfig(
+            esp_id=esp_with_zone.device_id,
+            subzone_id="assign_test_subzone",
+            subzone_name="Assignment Test Subzone",
+            parent_zone_id=esp_with_zone.zone_id,
+            assigned_gpios=[10, 11],
+            safe_mode_active=True,
+        )
+        db_session.add(sz)
+        await db_session.flush()
+        await db_session.refresh(sz)
+        return sz
+
+    @pytest_asyncio.fixture
+    async def sensor_config(
+        self, db_session: AsyncSession, esp_with_zone: ESPDevice
+    ) -> "SensorConfig":
+        """Create a sensor config for assignment tests."""
+        import uuid as _uuid
+
+        from src.db.models.sensor import SensorConfig
+
+        sc = SensorConfig(
+            id=_uuid.uuid4(),
+            esp_id=esp_with_zone.id,
+            gpio=10,
+            sensor_type="ph",
+            sensor_name="Test pH Sensor",
+        )
+        db_session.add(sc)
+        await db_session.flush()
+        await db_session.refresh(sc)
+        return sc
+
+    @pytest.mark.asyncio
+    async def test_assign_sensor_to_subzone_success(
+        self,
+        subzone_service: SubzoneService,
+        db_session: AsyncSession,
+        esp_with_zone: ESPDevice,
+        subzone_with_gpios,
+        sensor_config,
+    ):
+        """Assign a sensor to a subzone — happy path."""
+        result = await subzone_service.assign_sensor_to_subzone(
+            esp_id=esp_with_zone.device_id,
+            subzone_id=subzone_with_gpios.subzone_id,
+            sensor_config_id=str(sensor_config.id),
+            assigned_by=None,
+        )
+
+        assert result.sensor_config_id == str(sensor_config.id)
+        assert result.subzone_config_id == str(subzone_with_gpios.id)
+        assert result.id is not None
+        assert result.assigned_at is not None
+
+    @pytest.mark.asyncio
+    async def test_assign_sensor_duplicate_raises(
+        self,
+        subzone_service: SubzoneService,
+        db_session: AsyncSession,
+        esp_with_zone: ESPDevice,
+        subzone_with_gpios,
+        sensor_config,
+    ):
+        """Second assignment of the same sensor to the same subzone raises ValueError."""
+        await subzone_service.assign_sensor_to_subzone(
+            esp_id=esp_with_zone.device_id,
+            subzone_id=subzone_with_gpios.subzone_id,
+            sensor_config_id=str(sensor_config.id),
+        )
+        await db_session.commit()
+
+        with pytest.raises(ValueError, match="already assigned"):
+            await subzone_service.assign_sensor_to_subzone(
+                esp_id=esp_with_zone.device_id,
+                subzone_id=subzone_with_gpios.subzone_id,
+                sensor_config_id=str(sensor_config.id),
+            )
+
+    @pytest.mark.asyncio
+    async def test_assign_sensor_subzone_not_found(
+        self,
+        subzone_service: SubzoneService,
+        esp_with_zone: ESPDevice,
+        sensor_config,
+    ):
+        """Assignment fails when subzone does not exist."""
+        with pytest.raises(ValueError, match="not found"):
+            await subzone_service.assign_sensor_to_subzone(
+                esp_id=esp_with_zone.device_id,
+                subzone_id="nonexistent_subzone",
+                sensor_config_id=str(sensor_config.id),
+            )
+
+    @pytest.mark.asyncio
+    async def test_assign_sensor_invalid_uuid_raises(
+        self,
+        subzone_service: SubzoneService,
+        esp_with_zone: ESPDevice,
+        subzone_with_gpios,
+    ):
+        """Assignment with malformed UUID raises ValueError."""
+        with pytest.raises(ValueError, match="Invalid sensor_config_id format"):
+            await subzone_service.assign_sensor_to_subzone(
+                esp_id=esp_with_zone.device_id,
+                subzone_id=subzone_with_gpios.subzone_id,
+                sensor_config_id="not-a-uuid",
+            )
+
+    @pytest.mark.asyncio
+    async def test_assign_sensor_not_found_raises(
+        self,
+        subzone_service: SubzoneService,
+        esp_with_zone: ESPDevice,
+        subzone_with_gpios,
+    ):
+        """Assignment with nonexistent sensor_config_id raises ValueError."""
+        import uuid as _uuid
+
+        with pytest.raises(ValueError, match="not found"):
+            await subzone_service.assign_sensor_to_subzone(
+                esp_id=esp_with_zone.device_id,
+                subzone_id=subzone_with_gpios.subzone_id,
+                sensor_config_id=str(_uuid.uuid4()),  # random UUID, not in DB
+            )
+
+    @pytest.mark.asyncio
+    async def test_remove_sensor_from_subzone_success(
+        self,
+        subzone_service: SubzoneService,
+        db_session: AsyncSession,
+        esp_with_zone: ESPDevice,
+        subzone_with_gpios,
+        sensor_config,
+    ):
+        """Remove an existing sensor→subzone assignment."""
+        await subzone_service.assign_sensor_to_subzone(
+            esp_id=esp_with_zone.device_id,
+            subzone_id=subzone_with_gpios.subzone_id,
+            sensor_config_id=str(sensor_config.id),
+        )
+        await db_session.flush()
+
+        deleted = await subzone_service.remove_sensor_from_subzone(
+            esp_id=esp_with_zone.device_id,
+            subzone_id=subzone_with_gpios.subzone_id,
+            sensor_config_id=str(sensor_config.id),
+        )
+
+        assert deleted is True
+
+    @pytest.mark.asyncio
+    async def test_remove_sensor_not_assigned_returns_false(
+        self,
+        subzone_service: SubzoneService,
+        esp_with_zone: ESPDevice,
+        subzone_with_gpios,
+        sensor_config,
+    ):
+        """Removing a non-existent assignment returns False (not an error)."""
+        deleted = await subzone_service.remove_sensor_from_subzone(
+            esp_id=esp_with_zone.device_id,
+            subzone_id=subzone_with_gpios.subzone_id,
+            sensor_config_id=str(sensor_config.id),
+        )
+
+        assert deleted is False
+
+    @pytest.mark.asyncio
+    async def test_get_subzone_sensor_assignments_empty(
+        self,
+        subzone_service: SubzoneService,
+        esp_with_zone: ESPDevice,
+        subzone_with_gpios,
+    ):
+        """Listing assignments for a fresh subzone returns empty list."""
+        response = await subzone_service.get_subzone_sensor_assignments(
+            esp_id=esp_with_zone.device_id,
+            subzone_id=subzone_with_gpios.subzone_id,
+        )
+
+        assert response.success is True
+        assert response.assignments == []
+        assert response.total_count == 0
+        assert response.esp_id == esp_with_zone.device_id
+        assert response.subzone_id == subzone_with_gpios.subzone_id
+
+    @pytest.mark.asyncio
+    async def test_get_subzone_sensor_assignments_populated(
+        self,
+        subzone_service: SubzoneService,
+        db_session: AsyncSession,
+        esp_with_zone: ESPDevice,
+        subzone_with_gpios,
+        sensor_config,
+    ):
+        """Listing assignments returns all assigned sensors."""
+        await subzone_service.assign_sensor_to_subzone(
+            esp_id=esp_with_zone.device_id,
+            subzone_id=subzone_with_gpios.subzone_id,
+            sensor_config_id=str(sensor_config.id),
+        )
+        await db_session.flush()
+
+        response = await subzone_service.get_subzone_sensor_assignments(
+            esp_id=esp_with_zone.device_id,
+            subzone_id=subzone_with_gpios.subzone_id,
+        )
+
+        assert response.total_count == 1
+        assert response.assignments[0].sensor_config_id == str(sensor_config.id)
+
+    @pytest.mark.asyncio
+    async def test_get_subzone_sensor_assignments_subzone_not_found(
+        self,
+        subzone_service: SubzoneService,
+        esp_with_zone: ESPDevice,
+    ):
+        """Listing assignments for a nonexistent subzone raises ValueError."""
+        with pytest.raises(ValueError, match="not found"):
+            await subzone_service.get_subzone_sensor_assignments(
+                esp_id=esp_with_zone.device_id,
+                subzone_id="ghost_subzone",
+            )
+
+    @pytest.mark.asyncio
+    async def test_sensor_assignment_n_to_m(
+        self,
+        subzone_service: SubzoneService,
+        db_session: AsyncSession,
+        esp_with_zone: ESPDevice,
+        sensor_config,
+    ):
+        """One sensor can be assigned to multiple subzones (n:m)."""
+        import uuid as _uuid
+
+        from src.db.models.subzone import SubzoneConfig
+
+        # Create two subzones
+        sz_a = SubzoneConfig(
+            esp_id=esp_with_zone.device_id,
+            subzone_id="nm_subzone_a",
+            subzone_name="NM Subzone A",
+            parent_zone_id=esp_with_zone.zone_id,
+            assigned_gpios=[12],
+            safe_mode_active=True,
+        )
+        sz_b = SubzoneConfig(
+            esp_id=esp_with_zone.device_id,
+            subzone_id="nm_subzone_b",
+            subzone_name="NM Subzone B",
+            parent_zone_id=esp_with_zone.zone_id,
+            assigned_gpios=[13],
+            safe_mode_active=True,
+        )
+        db_session.add(sz_a)
+        db_session.add(sz_b)
+        await db_session.flush()
+
+        # Assign same sensor to both subzones
+        info_a = await subzone_service.assign_sensor_to_subzone(
+            esp_id=esp_with_zone.device_id,
+            subzone_id="nm_subzone_a",
+            sensor_config_id=str(sensor_config.id),
+        )
+        await db_session.flush()
+
+        info_b = await subzone_service.assign_sensor_to_subzone(
+            esp_id=esp_with_zone.device_id,
+            subzone_id="nm_subzone_b",
+            sensor_config_id=str(sensor_config.id),
+        )
+        await db_session.flush()
+
+        assert info_a.sensor_config_id == str(sensor_config.id)
+        assert info_b.sensor_config_id == str(sensor_config.id)
+        assert info_a.subzone_config_id != info_b.subzone_config_id
+
+        # Verify both assignments exist via query
+        resp_a = await subzone_service.get_subzone_sensor_assignments(
+            esp_id=esp_with_zone.device_id,
+            subzone_id="nm_subzone_a",
+        )
+        resp_b = await subzone_service.get_subzone_sensor_assignments(
+            esp_id=esp_with_zone.device_id,
+            subzone_id="nm_subzone_b",
+        )
+        assert resp_a.total_count == 1
+        assert resp_b.total_count == 1
+
+
+# =============================================================================
+# Test: Actuator-Subzone n:m Assignment (Verortung)
+# =============================================================================
+
+
+class TestActuatorSubzoneAssignment:
+    """Tests for n:m actuator→subzone assignment (Verortung only)."""
+
+    @pytest_asyncio.fixture
+    async def subzone_with_gpios(
+        self, db_session: AsyncSession, esp_with_zone: ESPDevice
+    ) -> "SubzoneConfig":
+        from src.db.models.subzone import SubzoneConfig
+
+        sz = SubzoneConfig(
+            esp_id=esp_with_zone.device_id,
+            subzone_id="act_assign_test_subzone",
+            subzone_name="Actuator Assignment Test",
+            parent_zone_id=esp_with_zone.zone_id,
+            assigned_gpios=[25],
+            safe_mode_active=True,
+        )
+        db_session.add(sz)
+        await db_session.flush()
+        await db_session.refresh(sz)
+        return sz
+
+    @pytest_asyncio.fixture
+    async def actuator_config(
+        self, db_session: AsyncSession, esp_with_zone: ESPDevice
+    ) -> "ActuatorConfig":
+        import uuid as _uuid
+
+        from src.db.models.actuator import ActuatorConfig
+
+        ac = ActuatorConfig(
+            id=_uuid.uuid4(),
+            esp_id=esp_with_zone.id,
+            gpio=25,
+            actuator_type="pump",
+            actuator_name="Test Pump",
+        )
+        db_session.add(ac)
+        await db_session.flush()
+        await db_session.refresh(ac)
+        return ac
+
+    @pytest.mark.asyncio
+    async def test_assign_actuator_to_subzone_success(
+        self,
+        subzone_service: SubzoneService,
+        esp_with_zone: ESPDevice,
+        subzone_with_gpios,
+        actuator_config,
+    ):
+        result = await subzone_service.assign_actuator_to_subzone(
+            esp_id=esp_with_zone.device_id,
+            subzone_id=subzone_with_gpios.subzone_id,
+            actuator_config_id=str(actuator_config.id),
+            assigned_by=None,
+        )
+
+        assert result.actuator_config_id == str(actuator_config.id)
+        assert result.subzone_config_id == str(subzone_with_gpios.id)
+        assert result.id is not None
+
+    @pytest.mark.asyncio
+    async def test_assign_actuator_duplicate_raises(
+        self,
+        subzone_service: SubzoneService,
+        db_session: AsyncSession,
+        esp_with_zone: ESPDevice,
+        subzone_with_gpios,
+        actuator_config,
+    ):
+        await subzone_service.assign_actuator_to_subzone(
+            esp_id=esp_with_zone.device_id,
+            subzone_id=subzone_with_gpios.subzone_id,
+            actuator_config_id=str(actuator_config.id),
+        )
+        await db_session.commit()
+
+        with pytest.raises(ValueError, match="already assigned"):
+            await subzone_service.assign_actuator_to_subzone(
+                esp_id=esp_with_zone.device_id,
+                subzone_id=subzone_with_gpios.subzone_id,
+                actuator_config_id=str(actuator_config.id),
+            )
+
+    @pytest.mark.asyncio
+    async def test_remove_actuator_from_subzone(
+        self,
+        subzone_service: SubzoneService,
+        esp_with_zone: ESPDevice,
+        subzone_with_gpios,
+        actuator_config,
+    ):
+        await subzone_service.assign_actuator_to_subzone(
+            esp_id=esp_with_zone.device_id,
+            subzone_id=subzone_with_gpios.subzone_id,
+            actuator_config_id=str(actuator_config.id),
+        )
+        deleted = await subzone_service.remove_actuator_from_subzone(
+            esp_id=esp_with_zone.device_id,
+            subzone_id=subzone_with_gpios.subzone_id,
+            actuator_config_id=str(actuator_config.id),
+        )
+        assert deleted is True
+
+        resp = await subzone_service.get_subzone_actuator_assignments(
+            esp_id=esp_with_zone.device_id,
+            subzone_id=subzone_with_gpios.subzone_id,
+        )
+        assert resp.total_count == 0
+
+    @pytest.mark.asyncio
+    async def test_assign_actuator_invalid_uuid_raises(
+        self,
+        subzone_service: SubzoneService,
+        esp_with_zone: ESPDevice,
+        subzone_with_gpios,
+    ):
+        with pytest.raises(ValueError, match="Invalid actuator_config_id format"):
+            await subzone_service.assign_actuator_to_subzone(
+                esp_id=esp_with_zone.device_id,
+                subzone_id=subzone_with_gpios.subzone_id,
+                actuator_config_id="not-a-uuid",
+            )

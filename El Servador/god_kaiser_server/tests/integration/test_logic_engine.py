@@ -612,7 +612,7 @@ class TestB1FlagPropagation:
         mock_rule.trigger_conditions = [
             {
                 "type": "hysteresis",
-                "esp_id": "ESP_DEV01",
+                "esp_id": "ESP_EA5484",
                 "gpio": 0,
                 "sensor_type": "sht31_humidity",
                 "activate_below": 50,
@@ -628,7 +628,7 @@ class TestB1FlagPropagation:
         mock_rule.actions = [
             {
                 "type": "actuator_command",
-                "esp_id": "ESP_DEV01",
+                "esp_id": "ESP_EA5484",
                 "gpio": 1,
                 "command": "ON",
                 "value": 1.0,
@@ -646,7 +646,7 @@ class TestB1FlagPropagation:
 
         # Trigger with value > deactivate_above (75 > 60)
         trigger_data = {
-            "esp_id": "ESP_DEV01",
+            "esp_id": "ESP_EA5484",
             "gpio": 0,
             "sensor_type": "sht31_humidity",
             "value": 75.0,
@@ -1070,15 +1070,8 @@ class TestBumplessTransfer:
         ]
         assert len(off_calls) >= 1, "OFF must be sent when active hysteresis thresholds change"
 
-    @pytest.mark.asyncio
-    async def test_cooldown_bypassed_for_rule_update_trigger(
-        self, logic_engine: LogicEngine, mock_logic_repo, mock_actuator_service
-    ):
-        """Rule-update triggers must bypass the cooldown check so the new
-        configuration takes effect immediately even if the rule just fired."""
-        from datetime import timedelta
-
-        rule_id = uuid.uuid4()
+    @staticmethod
+    def _make_cooldown_rule(rule_id):
         mock_rule = MagicMock()
         mock_rule.id = rule_id
         mock_rule.rule_name = "CooldownTestRule"
@@ -1104,6 +1097,19 @@ class TestBumplessTransfer:
                 "duration": 0,
             }
         ]
+        return mock_rule
+
+    @pytest.mark.asyncio
+    async def test_cooldown_bypassed_when_force_true(
+        self, logic_engine: LogicEngine, mock_logic_repo, mock_actuator_service
+    ):
+        """AUT-1135 (A4): a rule_update trigger with force=True (action/condition
+        actually changed) must bypass the cooldown check so the new configuration
+        takes effect immediately even if the rule just fired."""
+        from datetime import timedelta
+
+        rule_id = uuid.uuid4()
+        mock_rule = self._make_cooldown_rule(rule_id)
 
         # Simulate last execution 30s ago (within cooldown window)
         last_exec = MagicMock()
@@ -1112,10 +1118,11 @@ class TestBumplessTransfer:
         mock_logic_repo.log_execution = AsyncMock()
         mock_logic_repo.session = _logic_repo_session_mock_online_esp()
 
-        # Sensor value matches condition (should trigger ON if cooldown is bypassed)
+        # Sensor value matches condition (should trigger ON since force=True bypasses cooldown)
         trigger_data = {
             "type": "rule_update",
             "rule_id": str(rule_id),
+            "force": True,
             "esp_id": "ESP_001",
             "gpio": 4,
             "sensor_type": "humidity",
@@ -1132,7 +1139,47 @@ class TestBumplessTransfer:
             for call in mock_actuator_service.send_command.call_args_list
             if call[1].get("command") == "ON"
         ]
-        assert len(on_calls) >= 1, "rule_update trigger must bypass cooldown and execute actions"
+        assert len(on_calls) >= 1, "force=True rule_update trigger must bypass cooldown"
+
+    @pytest.mark.asyncio
+    async def test_cooldown_not_bypassed_without_force(
+        self, logic_engine: LogicEngine, mock_logic_repo, mock_actuator_service
+    ):
+        """AUT-1135 (A4) regression: a rule_update trigger WITHOUT force (e.g. only
+        cooldown_seconds/settle_seconds/max_executions_per_hour changed, no actual
+        condition/action change) must NOT bypass a currently running cooldown —
+        the previous behavior reset the cooldown on every save, which let a pH-Minus
+        dosing rule re-fire immediately after an operator merely lowered cooldown_seconds
+        (AUT-1135 live incident)."""
+        from datetime import timedelta
+
+        rule_id = uuid.uuid4()
+        mock_rule = self._make_cooldown_rule(rule_id)
+
+        last_exec = MagicMock()
+        last_exec.timestamp = datetime.now(timezone.utc) - timedelta(seconds=30)
+        mock_logic_repo.get_last_execution = AsyncMock(return_value=last_exec)
+        mock_logic_repo.log_execution = AsyncMock()
+        mock_logic_repo.session = _logic_repo_session_mock_online_esp()
+
+        trigger_data = {
+            "type": "rule_update",
+            "rule_id": str(rule_id),
+            # no "force" key — timer-only update
+            "esp_id": "ESP_001",
+            "gpio": 4,
+            "sensor_type": "humidity",
+            "value": 65.0,
+            "timestamp": int(datetime.now(timezone.utc).timestamp()),
+        }
+
+        await logic_engine._evaluate_rule(mock_rule, trigger_data, mock_logic_repo)
+
+        mock_actuator_service.send_command.assert_not_called()
+        skip_call = mock_logic_repo.log_execution.call_args
+        assert skip_call is not None
+        assert skip_call.kwargs["error_message"].startswith("cooldown_active:")
+        assert skip_call.kwargs["is_skip"] is True
 
 
 class TestCompoundPostReEvalOFFGuard:
@@ -1548,3 +1595,209 @@ class TestTimerSchedulerOFF:
         assert (
             len(off_calls) == 0
         ), "No OFF spam when last execution was > 120s ago (rule is long-inactive)"
+
+
+class TestAUT1115SettleWindow:
+    """AUT-1115 (S5): settle_after_rule_id/settle_seconds delay evaluation until
+    the settle window since the OTHER rule's last execution has elapsed."""
+
+    def _make_rule(self, rule_id, settle_after_rule_id=None, settle_seconds=None):
+        mock_rule = MagicMock()
+        mock_rule.id = rule_id
+        mock_rule.rule_name = "SettleTestRule"
+        mock_rule.priority = 1
+        mock_rule.logic_operator = "AND"
+        mock_rule.cooldown_seconds = None
+        mock_rule.max_executions_per_hour = None
+        mock_rule.settle_after_rule_id = settle_after_rule_id
+        mock_rule.settle_seconds = settle_seconds
+        mock_rule.trigger_conditions = {
+            "type": "sensor",
+            "esp_id": "ESP_001",
+            "gpio": 4,
+            "sensor_type": "ec",
+            "operator": ">",
+            "value": 2.0,
+        }
+        mock_rule.actions = [
+            {
+                "type": "actuator_command",
+                "esp_id": "ESP_001",
+                "gpio": 5,
+                "command": "ON",
+                "value": 1.0,
+                "duration": 0,
+            }
+        ]
+        return mock_rule
+
+    @pytest.mark.asyncio
+    async def test_settle_window_blocks_evaluation_when_recent(
+        self, logic_engine: LogicEngine, mock_logic_repo, mock_actuator_service
+    ):
+        """settle_after_rule_id's last execution was 30s ago, settle_seconds=600
+        → rule must be skipped (no actuator call), skip logged as 'settling:...'."""
+        from datetime import timedelta
+
+        rule_id = uuid.uuid4()
+        settle_after_id = uuid.uuid4()
+        mock_rule = self._make_rule(
+            rule_id, settle_after_rule_id=settle_after_id, settle_seconds=600
+        )
+
+        last_exec = MagicMock()
+        last_exec.timestamp = datetime.now(timezone.utc) - timedelta(seconds=30)
+        mock_logic_repo.get_last_execution = AsyncMock(return_value=last_exec)
+        mock_logic_repo.log_execution = AsyncMock()
+        mock_logic_repo.session = _logic_repo_session_mock_online_esp()
+
+        trigger_data = {
+            "type": "sensor",
+            "esp_id": "ESP_001",
+            "gpio": 4,
+            "sensor_type": "ec",
+            "value": 2.5,
+            "timestamp": int(datetime.now(timezone.utc).timestamp()),
+        }
+
+        await logic_engine._evaluate_rule(mock_rule, trigger_data, mock_logic_repo)
+
+        mock_actuator_service.send_command.assert_not_called()
+        mock_logic_repo.get_last_execution.assert_awaited_with(settle_after_id)
+        skip_call = mock_logic_repo.log_execution.call_args
+        assert skip_call is not None
+        assert skip_call.kwargs["error_message"].startswith("settling:")
+
+    @pytest.mark.asyncio
+    async def test_settle_window_elapsed_allows_evaluation(
+        self, logic_engine: LogicEngine, mock_logic_repo, mock_actuator_service
+    ):
+        """settle_after_rule_id's last execution was 700s ago, settle_seconds=600
+        → settle window has elapsed, rule executes normally."""
+        from datetime import timedelta
+
+        rule_id = uuid.uuid4()
+        settle_after_id = uuid.uuid4()
+        mock_rule = self._make_rule(
+            rule_id, settle_after_rule_id=settle_after_id, settle_seconds=600
+        )
+
+        last_exec = MagicMock()
+        last_exec.timestamp = datetime.now(timezone.utc) - timedelta(seconds=700)
+        mock_logic_repo.get_last_execution = AsyncMock(return_value=last_exec)
+        mock_logic_repo.log_execution = AsyncMock()
+        mock_logic_repo.session = _logic_repo_session_mock_online_esp()
+
+        trigger_data = {
+            "type": "sensor",
+            "esp_id": "ESP_001",
+            "gpio": 4,
+            "sensor_type": "ec",
+            "value": 2.5,
+            "timestamp": int(datetime.now(timezone.utc).timestamp()),
+        }
+
+        await logic_engine._evaluate_rule(mock_rule, trigger_data, mock_logic_repo)
+
+        mock_actuator_service.send_command.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_settle_bypassed_when_force_true(
+        self, logic_engine: LogicEngine, mock_logic_repo, mock_actuator_service
+    ):
+        """AUT-1135 (A4): a rule_update trigger with force=True (action/condition
+        actually changed) must bypass a currently running settle window — mirrors
+        test_cooldown_bypassed_when_force_true for the settle gate."""
+        from datetime import timedelta
+
+        rule_id = uuid.uuid4()
+        settle_after_id = uuid.uuid4()
+        mock_rule = self._make_rule(
+            rule_id, settle_after_rule_id=settle_after_id, settle_seconds=600
+        )
+
+        last_exec = MagicMock()
+        last_exec.timestamp = datetime.now(timezone.utc) - timedelta(seconds=30)
+        mock_logic_repo.get_last_execution = AsyncMock(return_value=last_exec)
+        mock_logic_repo.log_execution = AsyncMock()
+        mock_logic_repo.session = _logic_repo_session_mock_online_esp()
+
+        trigger_data = {
+            "type": "rule_update",
+            "force": True,
+            "esp_id": "ESP_001",
+            "gpio": 4,
+            "sensor_type": "ec",
+            "value": 2.5,
+            "timestamp": int(datetime.now(timezone.utc).timestamp()),
+        }
+
+        await logic_engine._evaluate_rule(mock_rule, trigger_data, mock_logic_repo)
+
+        mock_actuator_service.send_command.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_settle_not_bypassed_without_force(
+        self, logic_engine: LogicEngine, mock_logic_repo, mock_actuator_service
+    ):
+        """AUT-1135 (A4) regression: a rule_update trigger WITHOUT force must NOT
+        bypass a currently running settle window — a save that only touches timer
+        parameters must respect settle just like it must respect cooldown."""
+        from datetime import timedelta
+
+        rule_id = uuid.uuid4()
+        settle_after_id = uuid.uuid4()
+        mock_rule = self._make_rule(
+            rule_id, settle_after_rule_id=settle_after_id, settle_seconds=600
+        )
+
+        last_exec = MagicMock()
+        last_exec.timestamp = datetime.now(timezone.utc) - timedelta(seconds=30)
+        mock_logic_repo.get_last_execution = AsyncMock(return_value=last_exec)
+        mock_logic_repo.log_execution = AsyncMock()
+        mock_logic_repo.session = _logic_repo_session_mock_online_esp()
+
+        trigger_data = {
+            "type": "rule_update",
+            # no "force" key — timer-only update
+            "esp_id": "ESP_001",
+            "gpio": 4,
+            "sensor_type": "ec",
+            "value": 2.5,
+            "timestamp": int(datetime.now(timezone.utc).timestamp()),
+        }
+
+        await logic_engine._evaluate_rule(mock_rule, trigger_data, mock_logic_repo)
+
+        mock_actuator_service.send_command.assert_not_called()
+        skip_call = mock_logic_repo.log_execution.call_args
+        assert skip_call is not None
+        assert skip_call.kwargs["error_message"].startswith("settling:")
+        assert skip_call.kwargs["is_skip"] is True
+
+    @pytest.mark.asyncio
+    async def test_rule_without_settle_fields_unaffected(
+        self, logic_engine: LogicEngine, mock_logic_repo, mock_actuator_service
+    ):
+        """Regression: a rule with settle_after_rule_id=None/settle_seconds=None
+        behaves exactly as before — no settle lookup, executes normally."""
+        rule_id = uuid.uuid4()
+        mock_rule = self._make_rule(rule_id, settle_after_rule_id=None, settle_seconds=None)
+
+        mock_logic_repo.get_last_execution = AsyncMock(return_value=None)
+        mock_logic_repo.log_execution = AsyncMock()
+        mock_logic_repo.session = _logic_repo_session_mock_online_esp()
+
+        trigger_data = {
+            "type": "sensor",
+            "esp_id": "ESP_001",
+            "gpio": 4,
+            "sensor_type": "ec",
+            "value": 2.5,
+            "timestamp": int(datetime.now(timezone.utc).timestamp()),
+        }
+
+        await logic_engine._evaluate_rule(mock_rule, trigger_data, mock_logic_repo)
+
+        mock_actuator_service.send_command.assert_called()
+        mock_logic_repo.get_last_execution.assert_not_awaited()

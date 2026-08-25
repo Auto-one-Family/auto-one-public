@@ -411,4 +411,147 @@ async def test_preview_ec_fields_present_in_ec_measurement_event(db_session):
     assert "preview_ec_us_cm" in event_kwargs
     assert "preview_available" in event_kwargs
     assert "temperature_used" in event_kwargs
-    assert "temperature_default" in event_kwargs
+
+
+# ── AUT-1014 (B6): fallback hardening for the calibration-response session lookup ──
+
+
+@pytest.mark.asyncio
+async def test_fallback_accepts_single_session_with_type_match(db_session):
+    """AUT-1014: real single-sensor case still works via the fallback (no regression)."""
+    handler = CalibrationResponseHandler()
+    broadcast_mock = AsyncMock()
+
+    class _Session:
+        id = "session-fallback-ok"
+        sensor_type = "moisture"
+        is_terminal = False
+
+    @asynccontextmanager
+    async def _session_ctx():
+        yield db_session
+
+    with (
+        patch(
+            "src.mqtt.handlers.calibration_response_handler.resilient_session",
+            side_effect=_session_ctx,
+        ),
+        patch(
+            "src.mqtt.handlers.calibration_response_handler.CalibrationSessionRepository"
+        ) as repo_cls,
+        patch.object(handler, "_broadcast_calibration_event", broadcast_mock),
+    ):
+        repo_instance = repo_cls.return_value
+        repo_instance.get_active_session = AsyncMock(return_value=None)
+        repo_instance.get_sessions_for_sensor = AsyncMock(return_value=[_Session()])
+
+        topic = "kaiser/main/esp/ESP_TEST_001/sensor/4/response"
+        payload = {
+            "success": True,
+            "raw": 1234.5,
+            "quality": "good",
+            "sensor_type": "moisture",
+            "correlation_id": "corr-fallback-1",
+        }
+
+        result = await handler.handle_sensor_response(topic, payload)
+
+    assert result is True
+    assert broadcast_mock.await_args.args[0] == "calibration_measurement_received"
+    assert broadcast_mock.await_args.kwargs["session_id"] == "session-fallback-ok"
+
+
+@pytest.mark.asyncio
+async def test_fallback_rejects_multiple_active_sessions(db_session):
+    """AUT-1014: two concurrent sessions at the same gpio must not be silently guessed."""
+    handler = CalibrationResponseHandler()
+    broadcast_mock = AsyncMock()
+
+    class _PhSession:
+        id = "session-ph"
+        sensor_type = "ph"
+        is_terminal = False
+
+    class _EcSession:
+        id = "session-ec"
+        sensor_type = "ec"
+        is_terminal = False
+
+    @asynccontextmanager
+    async def _session_ctx():
+        yield db_session
+
+    with (
+        patch(
+            "src.mqtt.handlers.calibration_response_handler.resilient_session",
+            side_effect=_session_ctx,
+        ),
+        patch(
+            "src.mqtt.handlers.calibration_response_handler.CalibrationSessionRepository"
+        ) as repo_cls,
+        patch.object(handler, "_broadcast_calibration_event", broadcast_mock),
+    ):
+        repo_instance = repo_cls.return_value
+        repo_instance.get_active_session = AsyncMock(return_value=None)
+        repo_instance.get_sessions_for_sensor = AsyncMock(
+            return_value=[_PhSession(), _EcSession()]
+        )
+
+        topic = "kaiser/main/esp/ESP_TEST_001/sensor/0/response"
+        payload = {
+            "success": True,
+            "raw": 47.0,
+            "quality": "good",
+            "sensor_type": "ph",
+            "correlation_id": "corr-ambiguous-1",
+        }
+
+        result = await handler.handle_sensor_response(topic, payload)
+
+    assert result is True
+    assert broadcast_mock.await_args.args[0] == "calibration_measurement_failed"
+    assert "Mehrdeutige" in broadcast_mock.await_args.kwargs["error"]
+
+
+@pytest.mark.asyncio
+async def test_fallback_rejects_type_mismatch(db_session):
+    """AUT-1014: a single in-flight session of a different type must not be misassigned."""
+    handler = CalibrationResponseHandler()
+    broadcast_mock = AsyncMock()
+
+    class _EcSession:
+        id = "session-ec-only"
+        sensor_type = "ec"
+        is_terminal = False
+
+    @asynccontextmanager
+    async def _session_ctx():
+        yield db_session
+
+    with (
+        patch(
+            "src.mqtt.handlers.calibration_response_handler.resilient_session",
+            side_effect=_session_ctx,
+        ),
+        patch(
+            "src.mqtt.handlers.calibration_response_handler.CalibrationSessionRepository"
+        ) as repo_cls,
+        patch.object(handler, "_broadcast_calibration_event", broadcast_mock),
+    ):
+        repo_instance = repo_cls.return_value
+        repo_instance.get_active_session = AsyncMock(return_value=None)
+        repo_instance.get_sessions_for_sensor = AsyncMock(return_value=[_EcSession()])
+
+        topic = "kaiser/main/esp/ESP_TEST_001/sensor/0/response"
+        payload = {
+            "success": True,
+            "raw": 47.0,
+            "quality": "good",
+            "sensor_type": "ph",
+            "correlation_id": "corr-mismatch-1",
+        }
+
+        result = await handler.handle_sensor_response(topic, payload)
+
+    assert result is True
+    assert broadcast_mock.await_args.args[0] == "calibration_measurement_failed"

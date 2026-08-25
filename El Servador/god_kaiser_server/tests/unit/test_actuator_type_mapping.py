@@ -270,3 +270,26 @@ class TestEdgeCases:
 
         with pytest.raises(ValueError, match="Unknown actuator_type"):
             map_actuator_type_for_esp32("valve#1")
+
+
+class TestNormalizeActuatorStatusValue:
+    """PWM status scale: ESP uint8 0–255 → canonical 0.0–1.0 (AUT-927)."""
+
+    def test_uint8_pwm_maps_to_normalized_duty(self):
+        from src.schemas.actuator import normalize_actuator_status_value
+
+        assert normalize_actuator_status_value(255) == 1.0
+        assert normalize_actuator_status_value(128) == pytest.approx(128 / 255.0)
+        assert normalize_actuator_status_value(0) == 0.0
+
+    def test_already_normalized_passthrough(self):
+        from src.schemas.actuator import normalize_actuator_status_value
+
+        assert normalize_actuator_status_value(0.5) == 0.5
+        assert normalize_actuator_status_value(1.0) == 1.0
+
+    def test_clamps_out_of_range(self):
+        from src.schemas.actuator import normalize_actuator_status_value
+
+        assert normalize_actuator_status_value(300) == 1.0
+        assert normalize_actuator_status_value(-1) == 0.0

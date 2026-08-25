@@ -167,6 +167,7 @@ class TestSchemaIsCriticalField:
             priority=50,
             cooldown_seconds=60,
             is_critical=True,
+            rule_group="sonstiges",
             degraded_since=datetime(2026, 4, 22, tzinfo=timezone.utc),
             degraded_reason="target_esp_offline:ESP_AABB",
         )

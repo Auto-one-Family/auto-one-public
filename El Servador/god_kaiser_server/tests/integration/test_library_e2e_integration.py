@@ -368,13 +368,13 @@ class TestECRealProcessing:
         # EC_25C = EC_raw / 1.1 (10% lower)
         assert result_30c.value < result_25c.value
 
-    def test_unit_conversion_ms_cm(self, processor):
-        """Test unit conversion to mS/cm."""
+    def test_unit_ms_cm_capped_to_us_cm(self, processor):
+        """AUT-1350: legacy ms_cm request stays in µS/cm SSOT."""
         result = processor.process(raw_value=1860, params={"unit": "ms_cm"})
+        baseline = processor.process(raw_value=1860)
 
-        # 9090 µS/cm = 9.09 mS/cm
-        assert 8.0 <= result.value <= 10.0
-        assert result.unit == "mS/cm"
+        assert result.unit == "µS/cm"
+        assert result.value == pytest.approx(baseline.value, rel=0.01)
 
     def test_unit_conversion_ppm(self, processor):
         """Test unit conversion to ppm (TDS approximation)."""

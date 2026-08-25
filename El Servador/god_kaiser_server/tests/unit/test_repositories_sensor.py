@@ -10,6 +10,7 @@ import pytest
 import pytest_asyncio
 from sqlalchemy import text
 
+from src.db.models.enums import DataSource
 from src.db.repositories.sensor_repo import SensorRepository
 
 
@@ -425,6 +426,93 @@ class TestSensorRepositoryData:
         """Test retrieval with no data."""
         latest = await sensor_repo.get_latest_data(sample_esp_device.id, 34)
         assert len(latest) == 0
+
+    async def test_query_data_excludes_warming_up_by_default(
+        self, sensor_repo: SensorRepository, sample_esp_device
+    ):
+        """AUT-723 E3: default query_data omits warming_up (no numeric chart Y)."""
+        ts = datetime.now(timezone.utc)
+        await sensor_repo.save_data(
+            esp_id=sample_esp_device.id,
+            gpio=34,
+            sensor_type="ph",
+            raw_value=0.0,
+            processed_value=None,
+            unit="pH",
+            quality="warming_up",
+            timestamp=ts,
+        )
+        await sensor_repo.save_data(
+            esp_id=sample_esp_device.id,
+            gpio=34,
+            sensor_type="ph",
+            raw_value=2150.0,
+            processed_value=6.8,
+            unit="pH",
+            quality="good",
+            timestamp=ts + timedelta(seconds=1),
+        )
+
+        rows = await sensor_repo.query_data(
+            esp_id=sample_esp_device.id,
+            gpio=34,
+            sensor_type="ph",
+            start_time=ts - timedelta(minutes=1),
+            end_time=ts + timedelta(minutes=1),
+            resolution="raw",
+        )
+
+        assert len(rows) == 1
+        assert rows[0].quality == "good"
+        assert rows[0].processed_value == 6.8
+
+        warmup_only = await sensor_repo.query_data(
+            esp_id=sample_esp_device.id,
+            gpio=34,
+            quality="warming_up",
+            start_time=ts - timedelta(minutes=1),
+            end_time=ts + timedelta(minutes=1),
+            resolution="raw",
+        )
+        assert len(warmup_only) == 1
+        assert warmup_only[0].quality == "warming_up"
+
+    async def test_get_by_source_excludes_warming_up_before_limit(
+        self, sensor_repo: SensorRepository, sample_esp_device
+    ):
+        """AUT-723 E3: get_by_source must not fill the limit with warming_up rows."""
+        ts = datetime.now(timezone.utc)
+        await sensor_repo.save_data(
+            esp_id=sample_esp_device.id,
+            gpio=34,
+            sensor_type="ph",
+            raw_value=2150.0,
+            processed_value=6.8,
+            unit="pH",
+            quality="good",
+            timestamp=ts,
+        )
+        for i in range(3):
+            await sensor_repo.save_data(
+                esp_id=sample_esp_device.id,
+                gpio=34,
+                sensor_type="ph",
+                raw_value=0.0,
+                processed_value=None,
+                unit="pH",
+                quality="warming_up",
+                timestamp=ts + timedelta(seconds=i + 1),
+            )
+
+        rows = await sensor_repo.get_by_source(
+            DataSource.PRODUCTION,
+            limit=2,
+            esp_id=sample_esp_device.id,
+        )
+
+        assert len(rows) == 1
+        assert rows[0].quality == "good"
+        assert rows[0].processed_value == 6.8
 
     async def test_get_data_range_success(self, sensor_repo: SensorRepository, sample_esp_device):
         """Test retrieval of data within time range."""

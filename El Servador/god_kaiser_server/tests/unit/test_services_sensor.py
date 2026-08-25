@@ -11,6 +11,7 @@ Tests the SensorService business logic layer including:
 import pytest
 from unittest.mock import MagicMock, AsyncMock, patch
 
+from src.core.exceptions import MeasurementBusyError
 from src.services.sensor_service import SensorService
 
 
@@ -673,3 +674,100 @@ class TestSensorServiceTriggerMeasurementContract:
 
         assert result["success"] is True
         assert result["request_id"] == "rid-2"
+
+
+class TestSensorServiceMeasurementDiscriminator:
+    """AUT-1012 (B1+B5): command payload discriminator + channel-aware cooldown key."""
+
+    @pytest.mark.sensor
+    @pytest.mark.asyncio
+    async def test_trigger_measurement_command_params_include_sensor_type_and_adc_channel(self):
+        mock_esp = MagicMock(id=1, status="online")
+        mock_esp_repo = MagicMock()
+        mock_esp_repo.get_by_device_id = AsyncMock(return_value=mock_esp)
+
+        mock_sensor = MagicMock(enabled=True, sensor_type="ph", adc_channel=1)
+        mock_sensor_repo = MagicMock()
+        mock_sensor_repo.get_all_by_esp_and_gpio = AsyncMock(return_value=[mock_sensor])
+        mock_sensor_repo.session = MagicMock()
+
+        mock_publisher = MagicMock()
+        mock_publisher.publish_sensor_command = MagicMock(return_value=(True, "rid-disc-1"))
+
+        service = SensorService(
+            sensor_repo=mock_sensor_repo,
+            esp_repo=mock_esp_repo,
+            publisher=mock_publisher,
+        )
+
+        with patch("src.services.sensor_service.CommandContractRepository") as repo_cls:
+            repo_cls.return_value.record_intent_publish_sent = AsyncMock()
+            await service.trigger_measurement(esp_id="ESP_DISC001", gpio=0)
+
+        _, kwargs = mock_publisher.publish_sensor_command.call_args
+        assert kwargs["command_params"]["sensor_type"] == "ph"
+        assert kwargs["command_params"]["adc_channel"] == 1
+
+    @pytest.mark.sensor
+    @pytest.mark.asyncio
+    async def test_trigger_measurement_cooldown_is_per_sensor_type_not_shared(self):
+        """Co-located ADS1115 sensors (pH/EC) on the same gpio=0 must not share a cooldown."""
+        mock_esp = MagicMock(id=1, status="online")
+        mock_esp_repo = MagicMock()
+        mock_esp_repo.get_by_device_id = AsyncMock(return_value=mock_esp)
+
+        mock_ph_sensor = MagicMock(enabled=True, sensor_type="ph", adc_channel=1)
+        mock_ec_sensor = MagicMock(enabled=True, sensor_type="ec", adc_channel=0)
+        mock_sensor_repo = MagicMock()
+        mock_sensor_repo.get_all_by_esp_and_gpio = AsyncMock(
+            side_effect=[[mock_ph_sensor], [mock_ec_sensor]]
+        )
+        mock_sensor_repo.session = MagicMock()
+
+        mock_publisher = MagicMock()
+        mock_publisher.publish_sensor_command = MagicMock(
+            side_effect=[(True, "rid-ph"), (True, "rid-ec")]
+        )
+
+        service = SensorService(
+            sensor_repo=mock_sensor_repo,
+            esp_repo=mock_esp_repo,
+            publisher=mock_publisher,
+        )
+
+        with patch("src.services.sensor_service.CommandContractRepository") as repo_cls:
+            repo_cls.return_value.record_intent_publish_sent = AsyncMock()
+            ph_result = await service.trigger_measurement(esp_id="ESP_DISC002", gpio=0)
+            # Immediately triggering EC on the same gpio must NOT be rejected by pH's cooldown.
+            ec_result = await service.trigger_measurement(esp_id="ESP_DISC002", gpio=0)
+
+        assert ph_result["success"] is True
+        assert ec_result["success"] is True
+
+    @pytest.mark.sensor
+    @pytest.mark.asyncio
+    async def test_trigger_measurement_cooldown_still_rejects_same_sensor_rapid_fire(self):
+        """Regression: a single sensor triggered twice within the window is still rejected."""
+        mock_esp = MagicMock(id=1, status="online")
+        mock_esp_repo = MagicMock()
+        mock_esp_repo.get_by_device_id = AsyncMock(return_value=mock_esp)
+
+        mock_sensor = MagicMock(enabled=True, sensor_type="moisture", adc_channel=None)
+        mock_sensor_repo = MagicMock()
+        mock_sensor_repo.get_all_by_esp_and_gpio = AsyncMock(return_value=[mock_sensor])
+        mock_sensor_repo.session = MagicMock()
+
+        mock_publisher = MagicMock()
+        mock_publisher.publish_sensor_command = MagicMock(return_value=(True, "rid-once"))
+
+        service = SensorService(
+            sensor_repo=mock_sensor_repo,
+            esp_repo=mock_esp_repo,
+            publisher=mock_publisher,
+        )
+
+        with patch("src.services.sensor_service.CommandContractRepository") as repo_cls:
+            repo_cls.return_value.record_intent_publish_sent = AsyncMock()
+            await service.trigger_measurement(esp_id="ESP_DISC003", gpio=6)
+            with pytest.raises(MeasurementBusyError):
+                await service.trigger_measurement(esp_id="ESP_DISC003", gpio=6)

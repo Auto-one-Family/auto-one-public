@@ -989,3 +989,300 @@ class TestValidateOfflineRulesConsistency:
 
         assert len(result) == 1
         assert result[0]["sensor_gpio"] == ConfigPayloadBuilder.TIME_WINDOW_ONLY_SENSOR_GPIO
+
+
+# ---------------------------------------------------------------------------
+# AUT-1141 L1: packed-struct wire encoding for the offline_rules scope
+# ---------------------------------------------------------------------------
+
+
+class TestOfflineRulesPackedEncoding:
+    """Server-side struct.pack/CRC8/base64 encoder + per-device dispatch."""
+
+    def test_pack_offline_rule_produces_56_bytes_with_expected_field_layout(self):
+        import struct
+
+        from src.services.config_builder import OFFLINE_RULE_PACK_FORMAT_V5, _pack_offline_rule
+
+        rule = {
+            "actuator_gpio": 25,
+            "sensor_gpio": 4,
+            "sensor_value_type": "bme280_humidity",
+            "activate_below": 30.5,
+            "deactivate_above": 45.0,
+            "activate_above": 0.0,
+            "deactivate_below": 0.0,
+            "current_state_active": True,
+            "max_on_seconds": 120,
+            "cooldown_seconds": 30,
+            "time_filter": {
+                "enabled": True,
+                "start_hour": 22,
+                "start_minute": 0,
+                "end_hour": 6,
+                "end_minute": 30,
+                "days_of_week_mask": 0x7F,
+                "timezone": "Europe/Berlin",
+            },
+        }
+
+        packed = _pack_offline_rule(rule)
+
+        assert len(packed) == 56
+        fields = struct.unpack(OFFLINE_RULE_PACK_FORMAT_V5, packed)
+        (
+            enabled,
+            actuator_gpio,
+            sensor_gpio,
+            sensor_value_type,
+            activate_below,
+            deactivate_above,
+            activate_above,
+            deactivate_below,
+            is_active,
+            server_override,
+            time_filter_enabled,
+            start_hour,
+            start_minute,
+            end_hour,
+            end_minute,
+            days_of_week_mask,
+            timezone_mode,
+            max_on_seconds,
+            cooldown_seconds,
+        ) = fields
+
+        assert enabled == 1
+        assert actuator_gpio == 25
+        assert sensor_gpio == 4
+        assert sensor_value_type.split(b"\x00", 1)[0].decode() == "bme280_humidity"
+        assert activate_below == pytest.approx(30.5)
+        assert deactivate_above == pytest.approx(45.0)
+        assert activate_above == pytest.approx(0.0)
+        assert deactivate_below == pytest.approx(0.0)
+        assert is_active == 1
+        assert server_override == 0  # parseOfflineRules always forces this false
+        assert time_filter_enabled == 1
+        assert (start_hour, start_minute, end_hour, end_minute) == (22, 0, 6, 30)
+        assert days_of_week_mask == 0x7F
+        assert timezone_mode == 1  # Europe/Berlin -> OfflineRuleTimezone::EUROPE_BERLIN
+        assert max_on_seconds == 120
+        assert cooldown_seconds == 30
+
+    def test_pack_offline_rule_defaults_for_minimal_rule(self):
+        """A rule dict without time_filter/cooldown_seconds (today's server output,
+        see config_builder.py _extract_offline_rule) must still pack to 56 B with
+        firmware-matching zero-defaults, not raise."""
+        from src.services.config_builder import _pack_offline_rule
+
+        rule = {
+            "actuator_gpio": 12,
+            "sensor_gpio": 255,
+            "sensor_value_type": "temperature",
+            "activate_below": 0.0,
+            "deactivate_above": 0.0,
+            "activate_above": 0.0,
+            "deactivate_below": 0.0,
+            "current_state_active": False,
+            "max_on_seconds": 0,
+        }
+
+        packed = _pack_offline_rule(rule)
+        assert len(packed) == 56
+
+    def test_pack_offline_rule_oversized_sensor_value_type_disables_rule(self):
+        """Mirrors parseOfflineRules' defensive fallback (offline_mode_manager.cpp
+        parseOfflineRules): a sensor_value_type > 20 chars disables the rule
+        instead of corrupting the wire format or raising."""
+        import struct
+
+        from src.services.config_builder import OFFLINE_RULE_PACK_FORMAT_V5, _pack_offline_rule
+
+        rule = {
+            "actuator_gpio": 12,
+            "sensor_gpio": 4,
+            "sensor_value_type": "x" * 30,
+            "activate_below": 0.0,
+            "deactivate_above": 0.0,
+            "activate_above": 0.0,
+            "deactivate_below": 0.0,
+            "current_state_active": False,
+            "max_on_seconds": 0,
+        }
+
+        packed = _pack_offline_rule(rule)
+        assert len(packed) == 56
+        enabled = struct.unpack(OFFLINE_RULE_PACK_FORMAT_V5, packed)[0]
+        assert enabled == 0
+
+    def test_crc8_matches_known_reference_vectors(self):
+        """CRC-8/SMBUS (poly 0x07, init 0x00, no reflect/xor-out) — same
+        bit-for-bit algorithm as offline_mode_manager.cpp crc8() (verified by
+        independently computing these vectors, not by re-deriving the formula
+        under test)."""
+        from src.services.config_builder import _crc8_smbus
+
+        assert _crc8_smbus(b"") == 0x00
+        assert _crc8_smbus(b"\x01\x02\x03") == 0x48
+        assert _crc8_smbus(b"123456789") == 0xF4
+
+    def test_encode_offline_rules_packed_round_trip(self):
+        import base64
+        import struct
+
+        from src.services.config_builder import (
+            OFFLINE_RULE_PACK_FORMAT_V5,
+            _crc8_smbus,
+            _encode_offline_rules_packed,
+        )
+
+        rules = [
+            {
+                "actuator_gpio": 25,
+                "sensor_gpio": 4,
+                "sensor_value_type": "ds18b20",
+                "activate_below": 18.0,
+                "deactivate_above": 24.0,
+                "activate_above": 0.0,
+                "deactivate_below": 0.0,
+                "current_state_active": False,
+                "max_on_seconds": 0,
+            },
+            {
+                "actuator_gpio": 26,
+                "sensor_gpio": 5,
+                "sensor_value_type": "sht31_humidity",
+                "activate_below": 0.0,
+                "deactivate_above": 0.0,
+                "activate_above": 70.0,
+                "deactivate_below": 55.0,
+                "current_state_active": True,
+                "max_on_seconds": 300,
+                "cooldown_seconds": 60,
+            },
+        ]
+
+        encoded = _encode_offline_rules_packed(rules)
+
+        assert encoded["encoding"] == "packed"
+        assert encoded["count"] == 2
+        raw = base64.b64decode(encoded["blob"])
+        assert len(raw) == 2 * 56 + 1
+        body, trailer = raw[:-1], raw[-1]
+        assert _crc8_smbus(body) == trailer
+        # Wire size is a fraction of the ~214 B/rule JSON form (AUT-1139 §2).
+        assert len(encoded["blob"]) < 2 * 100
+
+        # Each 56 B record round-trips through the same format the firmware decodes.
+        first = struct.unpack(OFFLINE_RULE_PACK_FORMAT_V5, body[:56])
+        assert first[1] == 25 and first[2] == 4  # actuator_gpio, sensor_gpio
+
+    @pytest.mark.parametrize(
+        "hardware_type,firmware_version,expected",
+        [
+            ("MOCK_ESP32", None, "packed"),
+            ("MOCK_ESP32", "1.0.0", "packed"),
+            ("ESP32_WROOM", "4.0.0", "json"),
+            ("ESP32_WROOM", "4.1.0", "packed"),
+            ("ESP32_S3_DEVKITC1", "4.2.0", "packed"),
+            ("ESP32_S3_DEVKITC1", None, "json"),
+            ("XIAO_ESP32_C3", "3.9.9", "json"),
+            (None, None, "json"),
+        ],
+    )
+    def test_resolve_offline_rules_encoding_dispatch_matrix(
+        self, hardware_type, firmware_version, expected
+    ):
+        from src.services.config_builder import resolve_offline_rules_encoding
+
+        assert resolve_offline_rules_encoding(hardware_type, firmware_version) == expected
+
+    def test_resolve_offline_rules_encoding_guards_non_string_mock_attributes(self):
+        """_make_esp() fixtures across this test module leave hardware_type/
+        firmware_version as bare MagicMock attributes (no explicit string) —
+        the dispatch must fall back to 'json' instead of raising."""
+        from src.services.config_builder import resolve_offline_rules_encoding
+
+        mock_esp = MagicMock()
+        assert (
+            resolve_offline_rules_encoding(mock_esp.hardware_type, mock_esp.firmware_version)
+            == "json"
+        )
+
+
+# ---------------------------------------------------------------------------
+# AUT-1143: Board-differentiated resolve_max_offline_rules
+# ---------------------------------------------------------------------------
+
+
+class TestResolveMaxOfflineRules:
+    """Unit tests for resolve_max_offline_rules (AUT-1143)."""
+
+    @pytest.mark.parametrize(
+        "hardware_type,expected",
+        [
+            ("ESP32_WROOM", 8),
+            ("ESP32_S3_DEVKITC1", 16),
+            ("XIAO_ESP32_C3", 8),
+            ("MOCK_ESP32", 16),
+            (None, 8),
+            ("UNKNOWN_BOARD_XYZ", 8),
+        ],
+    )
+    def test_known_and_fallback_values(self, hardware_type, expected):
+        """Known board strings return their budgeted capacity; None and unknown
+        strings fall back to ConfigPayloadBuilder.MAX_OFFLINE_RULES (8)."""
+        from src.services.config_builder import resolve_max_offline_rules
+
+        assert resolve_max_offline_rules(hardware_type) == expected
+
+    def test_non_string_mock_object_returns_fallback(self):
+        """A bare MagicMock() object (not a string) — as produced by _make_esp()
+        in this test module — must trigger the isinstance guard and return 8."""
+        from src.services.config_builder import resolve_max_offline_rules
+
+        mock_obj = MagicMock()
+        assert resolve_max_offline_rules(mock_obj) == 8
+
+    def test_make_esp_fixture_produces_fallback(self):
+        """Regression: _make_esp() leaves hardware_type as a MagicMock attribute.
+        resolve_max_offline_rules must fall back to 8 (== ConfigPayloadBuilder.MAX_OFFLINE_RULES),
+        ensuring test_truncation_at_max_limit stays unaffected."""
+        from src.services.config_builder import resolve_max_offline_rules
+
+        esp = _make_esp(ESP_ID_A)
+        assert resolve_max_offline_rules(esp.hardware_type) == ConfigPayloadBuilder.MAX_OFFLINE_RULES
+
+
+class TestBuildOfflineRulesS3BoardDifferentiation:
+    """AUT-1143: End-to-end board differentiation inside _build_offline_rules."""
+
+    def _builder(self) -> ConfigPayloadBuilder:
+        return ConfigPayloadBuilder()
+
+    @pytest.mark.asyncio
+    async def test_s3_board_accepts_16_rules(self):
+        """ESP32_S3_DEVKITC1 with 20 candidate rules → result truncated to 16."""
+        builder = self._builder()
+        mock_logic_repo = AsyncMock()
+
+        rules = [
+            _make_rule(
+                rule_name=f"rule_{i}",
+                trigger_conditions=_heating_condition(ESP_ID_A, gpio=i + 10),
+                actions=[_actuator_action(ESP_ID_A, gpio=i + 30)],
+            )
+            for i in range(20)  # 20 rules > S3 budget (16) > WROOM budget (8)
+        ]
+        mock_logic_repo.get_enabled_rules = AsyncMock(return_value=rules)
+        builder.logic_repo = mock_logic_repo
+
+        esp = _make_esp(ESP_ID_A)
+        esp.hardware_type = "ESP32_S3_DEVKITC1"
+        mock_db = MagicMock()
+
+        result = await builder._build_offline_rules(mock_db, esp)
+
+        assert len(result) == 16, (
+            f"S3 board must accept up to 16 offline rules, got {len(result)}"
+        )

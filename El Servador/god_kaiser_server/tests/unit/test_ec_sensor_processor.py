@@ -80,18 +80,16 @@ class TestECSensorProcessor:
         # EC_compensated = EC_raw / 0.8 (should be higher)
         assert result_with_temp.value > result_no_temp.value
 
-    def test_process_unit_conversion_ms_cm(self, processor):
-        """Test unit conversion to mS/cm."""
+    def test_process_unit_ms_cm_capped_to_us_cm(self, processor):
+        """AUT-1350: legacy ms_cm request emits µS/cm SSOT (no /1000)."""
         calibration = {"slope": 5000, "offset": -2000}
         params = {"unit": "ms_cm"}
 
         result = processor.process(raw_value=1800, calibration=calibration, params=params)
-
-        # Should be in mS/cm (divided by 1000)
-        assert result.unit == "mS/cm"
-        # Value should be ~1000x smaller
         result_us_cm = processor.process(raw_value=1800, calibration=calibration)
-        assert result.value == pytest.approx(result_us_cm.value / 1000, rel=0.01)
+
+        assert result.unit == "µS/cm"
+        assert result.value == pytest.approx(result_us_cm.value, rel=0.01)
 
     def test_process_unit_conversion_ppm(self, processor):
         """Test unit conversion to ppm (TDS)."""
@@ -301,12 +299,12 @@ class TestECSensorProcessor:
         assert "error" in result.metadata
 
     def test_process_16bit_adc_type_in_calibration(self, processor):
-        """Test that ADC type from calibration is used."""
+        """Test that ADC type from calibration is used (ADS1115 PGA 4.096V via SSOT)."""
         calibration = {"slope": 5000, "offset": -2000, "adc_type": "16bit"}
         result = processor.process(raw_value=16000, calibration=calibration)
 
-        # Should use 16-bit voltage range (0-5V)
-        expected_voltage = (16000 / 32767) * 5.0
+        # ADS1115 PGA ±4.096V: raw * (4.096 / 32768) — SSOT via adc_normalization.raw_to_voltage()
+        expected_voltage = (16000 / 32768) * 4.096
         assert result.metadata["voltage"] == pytest.approx(expected_voltage, rel=0.01)
         assert result.metadata["adc_type"] == "16bit"
 

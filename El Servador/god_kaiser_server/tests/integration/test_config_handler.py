@@ -29,10 +29,14 @@ def mock_config_status_db_writes(request):
     """
     Keep handler-flow tests isolated from repository internals.
 
-    Dedicated persistence tests in TestFailureProcessing still exercise the real
-    _process_config_failures implementation.
+    Dedicated persistence tests in TestFailureProcessing and
+    TestConfigAppliedHistoryWrite still exercise the real
+    _process_config_failures / _mark_config_applied implementations.
     """
-    if "TestFailureProcessing" in request.node.nodeid:
+    if (
+        "TestFailureProcessing" in request.node.nodeid
+        or "TestConfigAppliedHistoryWrite" in request.node.nodeid
+    ):
         yield
         return
 
@@ -505,15 +509,114 @@ class TestFailureProcessing:
                     ) as mock_actuator_repo:
                         mock_actuator = MagicMock()
                         mock_actuator.id = 20
+                        mock_actuator.actuator_type = "pump"
                         mock_actuator_repo.return_value.get_by_esp_and_gpio = AsyncMock(
                             return_value=mock_actuator
                         )
                         mock_actuator_repo.return_value.update = AsyncMock()
+                        mock_actuator_repo.return_value.log_command = AsyncMock()
 
                         await handler._process_config_failures(esp_id, config_type, failures)
 
                         # Actuator should be updated with failed status
                         mock_actuator_repo.return_value.update.assert_called_once()
+
+                        # AUT-1132 (A2, Akzeptanzkriterium 3): failure must also be mirrored
+                        # into actuator_history so it's visible as a warning in the UI.
+                        mock_actuator_repo.return_value.log_command.assert_called_once()
+                        _, log_kwargs = mock_actuator_repo.return_value.log_command.call_args
+                        assert log_kwargs["command_type"] == "config_failed"
+                        assert log_kwargs["success"] is False
+                        assert log_kwargs["issued_by"] == "config_response"
+                        assert "INIT_FAILED" in log_kwargs["error_message"]
+
+
+class TestConfigAppliedHistoryWrite:
+    """AUT-1132 (A2): _mark_config_applied() mirrors a successful config ack
+    into actuator_history (command_type="config_applied") so the Sicherheits-
+    limit/Mindest-Pause confirmation becomes visible in
+    ActuatorActionTimeline.vue, which only reads actuator_history."""
+
+    @pytest.fixture
+    def handler(self):
+        return ConfigHandler()
+
+    @pytest.mark.asyncio
+    async def test_pending_actuator_gets_history_entry(self, handler):
+        """A pending actuator config transitions to 'applied' AND gets a
+        matching actuator_history entry."""
+        with patch("src.mqtt.handlers.config_handler.resilient_session") as mock_session:
+            mock_db = MagicMock()
+            mock_db.commit = AsyncMock()
+            mock_session.return_value.__aenter__ = AsyncMock(return_value=mock_db)
+            mock_session.return_value.__aexit__ = AsyncMock(return_value=None)
+
+            with patch("src.mqtt.handlers.config_handler.ESPRepository") as mock_esp_repo:
+                mock_esp = MagicMock()
+                mock_esp.id = 1
+                mock_esp_repo.return_value.get_by_device_id = AsyncMock(return_value=mock_esp)
+
+                with patch("src.mqtt.handlers.config_handler.SensorRepository"):
+                    with patch(
+                        "src.mqtt.handlers.config_handler.ActuatorRepository"
+                    ) as mock_actuator_repo:
+                        pending_actuator = MagicMock()
+                        pending_actuator.gpio = 11
+                        pending_actuator.actuator_type = "pump"
+                        pending_actuator.config_status = "pending"
+
+                        mock_actuator_repo.return_value.get_by_esp = AsyncMock(
+                            return_value=[pending_actuator]
+                        )
+                        mock_actuator_repo.return_value.log_command = AsyncMock()
+
+                        result = await handler._mark_config_applied("ESP_AEAE64", "actuator")
+
+                        assert result is True
+                        assert pending_actuator.config_status == "applied"
+                        mock_actuator_repo.return_value.log_command.assert_called_once()
+                        _, kwargs = mock_actuator_repo.return_value.log_command.call_args
+                        assert kwargs["esp_id"] == mock_esp.id
+                        assert kwargs["gpio"] == 11
+                        assert kwargs["actuator_type"] == "pump"
+                        assert kwargs["command_type"] == "config_applied"
+                        assert kwargs["success"] is True
+                        assert kwargs["issued_by"] == "config_response"
+
+    @pytest.mark.asyncio
+    async def test_already_applied_actuator_gets_no_duplicate_history_entry(self, handler):
+        """An actuator whose config_status is already 'applied' (e.g. a
+        replayed/duplicate ack) must NOT get a second history entry — only
+        pending→applied transitions are logged."""
+        with patch("src.mqtt.handlers.config_handler.resilient_session") as mock_session:
+            mock_db = MagicMock()
+            mock_db.commit = AsyncMock()
+            mock_session.return_value.__aenter__ = AsyncMock(return_value=mock_db)
+            mock_session.return_value.__aexit__ = AsyncMock(return_value=None)
+
+            with patch("src.mqtt.handlers.config_handler.ESPRepository") as mock_esp_repo:
+                mock_esp = MagicMock()
+                mock_esp.id = 1
+                mock_esp_repo.return_value.get_by_device_id = AsyncMock(return_value=mock_esp)
+
+                with patch("src.mqtt.handlers.config_handler.SensorRepository"):
+                    with patch(
+                        "src.mqtt.handlers.config_handler.ActuatorRepository"
+                    ) as mock_actuator_repo:
+                        already_applied = MagicMock()
+                        already_applied.gpio = 11
+                        already_applied.actuator_type = "pump"
+                        already_applied.config_status = "applied"
+
+                        mock_actuator_repo.return_value.get_by_esp = AsyncMock(
+                            return_value=[already_applied]
+                        )
+                        mock_actuator_repo.return_value.log_command = AsyncMock()
+
+                        result = await handler._mark_config_applied("ESP_AEAE64", "actuator")
+
+                        assert result is True
+                        mock_actuator_repo.return_value.log_command.assert_not_called()
 
 
 class TestCorrelationId:

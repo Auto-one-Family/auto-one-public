@@ -18,6 +18,16 @@ def test_seconds_to_ms_transform_preserves_unlimited_zero() -> None:
     assert transform(3600) == 3_600_000
 
 
+def test_cooldown_seconds_to_ms_transform_preserves_no_cooldown_zero() -> None:
+    """cooldown_seconds_to_ms uses 30s fallback for None; explicit 0 stays 0ms."""
+    engine = ConfigMappingEngine()
+    transform = engine.TRANSFORMS["cooldown_seconds_to_ms"]
+
+    assert transform(None) == 30_000
+    assert transform(0) == 0
+    assert transform(300) == 300_000
+
+
 def test_model_to_schema_response_preserves_zero_runtime_and_cooldown() -> None:
     """API response must not collapse explicit 0 values to null."""
     actuator = SimpleNamespace(
@@ -36,6 +46,7 @@ def test_model_to_schema_response_preserves_zero_runtime_and_cooldown() -> None:
         assigned_zones=[],
         assigned_subzones=[],
         fail_safe_on_disconnect=True,
+        flow_rate_ml_s=None,
         created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc),
     )

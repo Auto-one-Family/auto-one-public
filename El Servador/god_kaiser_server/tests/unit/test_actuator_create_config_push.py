@@ -35,6 +35,7 @@ def _make_mock_actuator(gpio: int = 5, actuator_type: str = "relay") -> MagicMoc
     actuator.esp_id = uuid.uuid4()
     actuator.gpio = gpio
     actuator.actuator_type = actuator_type
+    actuator.hardware_type = None
     actuator.actuator_name = "Test Pump"
     actuator.enabled = True
     actuator.safety_constraints = {}
@@ -45,6 +46,13 @@ def _make_mock_actuator(gpio: int = 5, actuator_type: str = "relay") -> MagicMoc
     actuator.device_scope = None
     actuator.assigned_zones = None
     actuator.assigned_subzones = None
+    actuator.fail_safe_on_disconnect = None
+    actuator.flow_rate_ml_s = None
+    actuator.concentration = None
+    actuator.dose_role = None
+    # AUT-1410 SR-1: soft stock identity (nullable display fields)
+    actuator.stock_recipe_ref = None
+    actuator.stock_prepared_at = None
     actuator.created_at = datetime.now(timezone.utc)
     actuator.updated_at = datetime.now(timezone.utc)
     return actuator

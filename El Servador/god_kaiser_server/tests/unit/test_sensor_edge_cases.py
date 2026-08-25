@@ -16,14 +16,16 @@ fail, and the dashboard shows blank/broken values. Each of these must
 be handled gracefully.
 """
 
+import logging
 import math
 import pytest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from src.sensors.sensor_libraries.active.ec_sensor import ECSensorProcessor
 from src.sensors.sensor_libraries.active.humidity import SHT31HumidityProcessor
 from src.sensors.sensor_libraries.active.ph_sensor import PHSensorProcessor
 from src.sensors.sensor_libraries.active.temperature import DS18B20Processor
+from src.mqtt.handlers.sensor_handler import SensorDataHandler
 
 # =============================================================================
 # DS18B20 Temperature Sensor Edge Cases
@@ -194,3 +196,124 @@ class TestCalibrationEdgeCases:
         except ValueError:
             # Acceptable — detecting inverted calibration is a safety feature
             pass
+
+
+# =============================================================================
+# AUT-948: adc_source SSOT — sensor_configs column overrides calibration_data
+# =============================================================================
+
+
+class TestAUT948AdcSourceSSoT:
+    """
+    AUT-948: sensor_configs.adc_source is the routing SSOT.
+    calibration_data.derived carries provenance only.
+    The inject block in _trigger_pi_enhanced_processing must overwrite the
+    calibration dict with the DB column value before calling processor.process().
+    """
+
+    @pytest.fixture
+    def handler(self):
+        return SensorDataHandler(publisher=MagicMock())
+
+    def _make_sensor_config(self, *, adc_source="internal", pga_gain=None, calibration_data=None):
+        cfg = MagicMock()
+        cfg.adc_source = adc_source
+        cfg.pga_gain = pga_gain
+        cfg.calibration_data = calibration_data
+        cfg.sensor_metadata = None
+        return cfg
+
+    def _make_loader_capturing(self, captured: dict):
+        """Return a mock loader whose processor captures the calibration dict."""
+
+        def fake_process(raw_value, calibration=None, params=None):
+            captured["calibration"] = dict(calibration) if calibration else {}
+            m = MagicMock()
+            m.value = 7.0
+            m.unit = "pH"
+            m.quality = "good"
+            m.metadata = {}
+            return m
+
+        mock_processor = MagicMock()
+        mock_processor.process.side_effect = fake_process
+        mock_loader = MagicMock()
+        mock_loader.get_processor.return_value = mock_processor
+        return mock_loader
+
+    async def test_ads1115_injected_when_calibration_has_no_descriptor(self, handler):
+        """B1 main case: calibration_data.derived has no adc_source → DB column 'ads1115' is used."""
+        cfg = self._make_sensor_config(
+            adc_source="ads1115",
+            pga_gain="4.096",
+            calibration_data={"derived": {"slope": 1.0, "offset": 0.0}},
+        )
+        captured: dict = {}
+        with (
+            patch("src.sensors.library_loader.get_library_loader", return_value=self._make_loader_capturing(captured)),
+            patch("src.sensors.sensor_type_registry.normalize_sensor_type", return_value="ph"),
+        ):
+            await handler._trigger_pi_enhanced_processing(
+                esp_id="ESP_TEST", gpio=1, sensor_type="ph",
+                raw_value=20000, sensor_config=cfg, raw_mode=True,
+            )
+
+        assert captured["calibration"]["adc_source"] == "ads1115"
+        assert captured["calibration"]["pga_gain"] == "4.096"
+
+    async def test_mismatch_logs_warning(self, handler, caplog):
+        """B4: calibration provenance='internal' vs DB column='ads1115' → [AUT-948] warning."""
+        cfg = self._make_sensor_config(
+            adc_source="ads1115",
+            pga_gain="4.096",
+            calibration_data={"derived": {"slope": 1.0, "offset": 0.0, "adc_source": "internal"}},
+        )
+        captured: dict = {}
+        with (
+            caplog.at_level(logging.WARNING),
+            patch("src.sensors.library_loader.get_library_loader", return_value=self._make_loader_capturing(captured)),
+            patch("src.sensors.sensor_type_registry.normalize_sensor_type", return_value="ph"),
+        ):
+            await handler._trigger_pi_enhanced_processing(
+                esp_id="ESP_TEST", gpio=1, sensor_type="ph",
+                raw_value=20000, sensor_config=cfg, raw_mode=True,
+            )
+
+        assert any("[AUT-948]" in r.message for r in caplog.records)
+        # Normierung läuft mit Spalten-SSOT weiter (kein Hard-Stop)
+        assert captured["calibration"]["adc_source"] == "ads1115"
+
+    async def test_no_warning_when_calibration_matches_db(self, handler, caplog):
+        """No [AUT-948] warning when calibration_data.derived and DB column agree."""
+        cfg = self._make_sensor_config(
+            adc_source="ads1115",
+            pga_gain="4.096",
+            calibration_data={"derived": {"slope": 1.0, "offset": 0.0, "adc_source": "ads1115"}},
+        )
+        captured: dict = {}
+        with (
+            caplog.at_level(logging.WARNING),
+            patch("src.sensors.library_loader.get_library_loader", return_value=self._make_loader_capturing(captured)),
+            patch("src.sensors.sensor_type_registry.normalize_sensor_type", return_value="ph"),
+        ):
+            await handler._trigger_pi_enhanced_processing(
+                esp_id="ESP_TEST", gpio=1, sensor_type="ph",
+                raw_value=20000, sensor_config=cfg, raw_mode=True,
+            )
+
+        assert not any("[AUT-948]" in r.message for r in caplog.records)
+
+    async def test_internal_sensor_no_regression(self, handler):
+        """Internal sensor, no calibration_data → proc_calibration carries adc_source='internal'."""
+        cfg = self._make_sensor_config(adc_source="internal", pga_gain=None, calibration_data=None)
+        captured: dict = {}
+        with (
+            patch("src.sensors.library_loader.get_library_loader", return_value=self._make_loader_capturing(captured)),
+            patch("src.sensors.sensor_type_registry.normalize_sensor_type", return_value="ph"),
+        ):
+            await handler._trigger_pi_enhanced_processing(
+                esp_id="ESP_TEST", gpio=2, sensor_type="ph",
+                raw_value=2048, sensor_config=cfg, raw_mode=True,
+            )
+
+        assert captured["calibration"]["adc_source"] == "internal"

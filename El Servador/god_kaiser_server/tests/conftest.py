@@ -42,6 +42,7 @@ from src.db.models import (  # noqa: F401, E402 - imports needed for SQLAlchemy 
     auth,
     command_contract,
     dashboard,
+    dashboard_assignment,  # n:m user assignments (AUT-1095)
     diagnostic,
     esp,
     esp_heartbeat,
@@ -49,11 +50,18 @@ from src.db.models import (  # noqa: F401, E402 - imports needed for SQLAlchemy 
     library,
     logic,
     notification,
+    nutrient_solution_batch,  # Tank ledger (AUT-1217)
+    plant,  # Plant + PlantCannabisExtension + PlantLifecycleEvent (AUT-222)
+    stock_mix_recipe,  # Stammlösungs-Rezeptur (AUT-1361 / P9)
     plugin,
     sensor,
+    sensor_subzone_assignment,  # n:m sensor-subzone junction (AUT-1155)
+    actuator_subzone_assignment,  # n:m actuator-subzone junction (Verortung)
     sensor_type_defaults,
     subzone,
     system,
+    tank,  # Nutrient tanks (AUT-1211 / AUT-1217)
+    tank_subzone_assignment,  # n:m tank-subzone junction (AUT-1211)
     user,
     zone,
 )

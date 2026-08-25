@@ -37,7 +37,7 @@ class TestInvalidateOfflineBackoff:
 
     def test_clears_existing_cache_entry(self, engine):
         """Cache entry is removed after invalidate_offline_backoff() is called."""
-        esp_id = "ESP_DEV01"
+        esp_id = "ESP_EA5484"
         engine._offline_esp_skip[esp_id] = datetime.now(timezone.utc) + timedelta(seconds=300)
 
         engine.invalidate_offline_backoff(esp_id)
@@ -67,7 +67,7 @@ class TestInvalidateOfflineBackoff:
 
     def test_repeated_calls_are_idempotent(self, engine):
         """Calling invalidate_offline_backoff() twice for the same esp_id is safe."""
-        esp_id = "ESP_DEV01"
+        esp_id = "ESP_EA5484"
         engine._offline_esp_skip[esp_id] = datetime.now(timezone.utc) + timedelta(seconds=30)
 
         engine.invalidate_offline_backoff(esp_id)
@@ -85,7 +85,7 @@ class TestOfflineBackoffTTL:
 
     def test_active_cache_entry_blocks_before_expiry(self, engine):
         """An entry that has not expired is still present in the cache dict."""
-        esp_id = "ESP_DEV01"
+        esp_id = "ESP_EA5484"
         skip_until = datetime.now(timezone.utc) + timedelta(seconds=_OFFLINE_BACKOFF_SECONDS)
         engine._offline_esp_skip[esp_id] = skip_until
 
@@ -94,7 +94,7 @@ class TestOfflineBackoffTTL:
 
     def test_expired_cache_entry_is_past(self, engine):
         """An entry set in the past is correctly detected as expired."""
-        esp_id = "ESP_DEV01"
+        esp_id = "ESP_EA5484"
         engine._offline_esp_skip[esp_id] = datetime.now(timezone.utc) - timedelta(seconds=1)
 
         assert datetime.now(timezone.utc) >= engine._offline_esp_skip[esp_id]

@@ -196,15 +196,15 @@ class TestWriteSecrets:
             "src.services.flash.secrets_service.get_secrets_dir",
             return_value=nested,
         ):
-            write_secrets("lab", _make_secrets())
+            write_secrets("pi-home", _make_secrets())
 
         assert nested.exists()
 
     def test_env_name_used_in_filename(self, tmp_path: Path) -> None:
         with _patch_secrets_dir(tmp_path):
-            path = write_secrets("field", _make_secrets())
+            path = write_secrets("pi-elbherb", _make_secrets())
 
-        assert path.name == "nvs_secrets.field.csv"
+        assert path.name == "nvs_secrets.pi-elbherb.csv"
 
     def test_overwrites_existing_csv(self, tmp_path: Path) -> None:
         with _patch_secrets_dir(tmp_path):
@@ -439,8 +439,8 @@ class TestWriteSecretsPartialUpdate:
 class TestNvsEnv:
     def test_all_valid_envs_exist(self) -> None:
         assert NvsEnv("dev-local") == NvsEnv.dev_local
-        assert NvsEnv("lab") == NvsEnv.lab
-        assert NvsEnv("field") == NvsEnv.field
+        assert NvsEnv("pi-home") == NvsEnv.pi_home
+        assert NvsEnv("pi-elbherb") == NvsEnv.pi_elbherb
 
     def test_invalid_env_raises_value_error(self) -> None:
         with pytest.raises(ValueError):

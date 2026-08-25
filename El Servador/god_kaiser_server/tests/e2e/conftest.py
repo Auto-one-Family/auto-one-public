@@ -299,7 +299,7 @@ class E2EAPIClient:
         self.session = session
         self._auth_token: Optional[str] = None
 
-    async def authenticate(self, username: str = "Robin", password: str = "Robin123!") -> bool:
+    async def authenticate(self, username: str = "admin", password: str = "Admin1234") -> bool:
         """
         Authenticate and store token.
 
@@ -702,7 +702,6 @@ async def api_client(
     # First call: authenticate and cache the token
     credentials_to_try = [
         ("admin", os.environ.get("E2E_TEST_PASSWORD", "")),  # Seeded admin user
-        ("Robin", "Robin123!"),  # Default admin
         ("admin", "Admin1234"),  # Fallback
     ]
 

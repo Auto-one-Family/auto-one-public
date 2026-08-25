@@ -21,6 +21,11 @@ from src.services.flash.device_scanner import (
     _VID_CH340,
     _VID_ESPRESSIF,
     _VID_SILABS,
+    HOST_DOCKER_DESKTOP,
+    HOST_LINUX,
+    HOST_NATIVE_MACOS,
+    HOST_NATIVE_WINDOWS,
+    detect_runtime_host,
     is_usb_scanning_supported,
     scan_usb_devices,
 )
@@ -250,3 +255,55 @@ class TestIsUsbScanningSupported:
         mock_dev.glob.return_value = []
         mock_path.return_value = mock_dev
         assert is_usb_scanning_supported() is False
+
+
+# =============================================================================
+# detect_runtime_host
+# =============================================================================
+
+
+class TestDetectRuntimeHost:
+    """Test host detection used for picking the correct degraded-mode guidance."""
+
+    @patch("src.services.flash.device_scanner.sys")
+    def test_windows_native(self, mock_sys: MagicMock) -> None:
+        mock_sys.platform = "win32"
+        assert detect_runtime_host() == HOST_NATIVE_WINDOWS
+
+    @patch("src.services.flash.device_scanner.sys")
+    def test_macos_native(self, mock_sys: MagicMock) -> None:
+        mock_sys.platform = "darwin"
+        assert detect_runtime_host() == HOST_NATIVE_MACOS
+
+    @pytest.mark.parametrize(
+        "kernel_release",
+        [
+            "5.15.167.4-microsoft-standard-WSL2",
+            "5.10.104-linuxkit",
+            "6.6.36.6-MICROSOFT-standard-WSL2",
+        ],
+    )
+    @patch("src.services.flash.device_scanner.platform")
+    @patch("src.services.flash.device_scanner.sys")
+    def test_linux_container_on_docker_desktop(
+        self, mock_sys: MagicMock, mock_platform: MagicMock, kernel_release: str
+    ) -> None:
+        mock_sys.platform = "linux"
+        mock_platform.uname.return_value.release = kernel_release
+        assert detect_runtime_host() == HOST_DOCKER_DESKTOP
+
+    @pytest.mark.parametrize(
+        "kernel_release",
+        [
+            "6.6.51+rpt-rpi-2712",  # Raspberry Pi OS
+            "5.15.0-91-generic",  # generic Linux host
+        ],
+    )
+    @patch("src.services.flash.device_scanner.platform")
+    @patch("src.services.flash.device_scanner.sys")
+    def test_linux_container_on_real_linux_host(
+        self, mock_sys: MagicMock, mock_platform: MagicMock, kernel_release: str
+    ) -> None:
+        mock_sys.platform = "linux"
+        mock_platform.uname.return_value.release = kernel_release
+        assert detect_runtime_host() == HOST_LINUX

@@ -504,7 +504,7 @@ async def test_send_command_serializes_manual_and_logic_on_same_gpio(
                 esp.device_id,
                 5,
                 "ON",
-                issued_by="user:robin",
+                issued_by="user:operator",
             )
         )
         await asyncio.wait_for(first_started.wait(), timeout=2.0)

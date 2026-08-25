@@ -2,7 +2,6 @@
 Unit Tests for GPIO Validation Service
 
 Phase: 2 (GPIO Validation)
-Author: KI-Agent (Claude)
 Created: 2026-01-08
 
 Tests:
