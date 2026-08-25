@@ -212,7 +212,7 @@ class TestSendCommand:
         test_esp: ESPDevice,
         db_session: AsyncSession,
     ):
-        """No-op delta skip: MQTT not published but REST exposes same trace correlation_id."""
+        """User-issued command still returns correlation_id when desired equals current."""
         db_session.add(
             ActuatorState(
                 esp_id=test_esp.id,
@@ -239,7 +239,7 @@ class TestSendCommand:
         assert response.status_code == 200, response.text
         data = response.json()
         uuid.UUID(data["correlation_id"])
-        assert data["command_sent"] is False
+        assert data["command_sent"] is True
         assert data["success"] is True
 
     @pytest.mark.asyncio

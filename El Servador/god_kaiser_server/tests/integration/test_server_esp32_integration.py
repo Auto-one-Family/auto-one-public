@@ -1171,6 +1171,7 @@ class TestHeartbeatHandlerProcessing:
         mock_contract_repo.upsert_terminal_event_authority = AsyncMock(
             return_value=(MagicMock(), False)
         )
+        mock_contract_repo.list_open_intents_for_esp = AsyncMock(return_value=[])
         mock_adoption_service = MagicMock()
         mock_adoption_service.clear_cycle = AsyncMock()
 
@@ -1219,7 +1220,10 @@ class TestHeartbeatHandlerProcessing:
                                         assert after_lwt is not None
                                         assert after_lwt.status == "offline"
                                         assert after_lwt.last_seen is not None
-                                        assert int(after_lwt.last_seen.timestamp()) == int(
+                                        after_seen = after_lwt.last_seen
+                                        if after_seen.tzinfo is None:
+                                            after_seen = after_seen.replace(tzinfo=timezone.utc)
+                                        assert int(after_seen.timestamp()) == int(
                                             previous_heartbeat_ts.timestamp()
                                         )
 
@@ -1243,7 +1247,10 @@ class TestHeartbeatHandlerProcessing:
         after_heartbeat = await esp_repo.get_by_device_id(sample_esp_device.device_id)
         assert after_heartbeat is not None
         assert after_heartbeat.status == "online"
-        hb_seen_ts = int(after_heartbeat.last_seen.timestamp())
+        hb_seen = after_heartbeat.last_seen
+        if hb_seen.tzinfo is None:
+            hb_seen = hb_seen.replace(tzinfo=timezone.utc)
+        hb_seen_ts = int(hb_seen.timestamp())
         assert hb_seen_ts >= heartbeat_ts
         assert hb_seen_ts <= heartbeat_ts + 30
 
@@ -1285,7 +1292,10 @@ class TestHeartbeatHandlerProcessing:
         assert device is not None
         assert device.status == "online"
         assert device.last_seen is not None
-        assert int(device.last_seen.timestamp()) >= int(before_hb.timestamp())
+        last_seen = device.last_seen
+        if last_seen.tzinfo is None:
+            last_seen = last_seen.replace(tzinfo=timezone.utc)
+        assert int(last_seen.timestamp()) >= int(before_hb.timestamp())
 
     @pytest.mark.asyncio
     async def test_long_offline_then_heartbeat_recovers_online_stably(
@@ -1391,7 +1401,9 @@ class TestPiEnhancedProcessing:
 
         # Mock the library loader to return a fake processor
         mock_processor = MagicMock()
-        mock_processor.process.return_value = MagicMock(value=7.2, unit="pH", quality="good")
+        mock_ph_result = MagicMock(value=7.2, unit="pH", quality="good")
+        mock_ph_result.metadata = {}
+        mock_processor.process.return_value = mock_ph_result
 
         # Mock at the location where it's imported in _trigger_pi_enhanced_processing
         with patch("src.mqtt.handlers.sensor_handler.resilient_session", mock_resilient_session):
@@ -1678,7 +1690,9 @@ class TestCompleteWorkflows:
 
         # Mock processor for pH
         mock_processor = MagicMock()
-        mock_processor.process.return_value = MagicMock(value=7.2, unit="pH", quality="good")
+        mock_ph_result = MagicMock(value=7.2, unit="pH", quality="good")
+        mock_ph_result.metadata = {}
+        mock_processor.process.return_value = mock_ph_result
 
         with patch("src.mqtt.handlers.sensor_handler.resilient_session", mock_resilient_session):
             with patch("src.sensors.library_loader.get_library_loader") as mock_loader:

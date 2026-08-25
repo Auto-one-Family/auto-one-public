@@ -345,7 +345,7 @@ class TestRateLimiting:
 
         # Rate limit is 3 per second in this fixture. Burst 10 of a non-bypass type.
         for i in range(10):
-            await manager.broadcast("sensor_data", {"esp_id": "ESP_1", "value": i})
+            await manager.broadcast("debug_event", {"esp_id": "ESP_1", "value": i})
 
         # Only the first 3 should actually reach the client.
         assert mock_websocket.send_json.call_count == 3
@@ -408,6 +408,9 @@ class TestRateLimiting:
         expected = {
             "sensor_data",
             "actuator_status",
+            "actuator_command",
+            "actuator_response",
+            "actuator_command_failed",
             "config_response_guard_replay",
             "device_discovered",
             "device_rediscovered",
