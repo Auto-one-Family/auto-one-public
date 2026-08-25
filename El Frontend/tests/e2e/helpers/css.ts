@@ -349,7 +349,7 @@ export const EXPECTED_TOKENS = {
   // Text hierarchy
   '--color-text-primary': '#eaeaf2',
   '--color-text-secondary': '#8585a0',
-  '--color-text-muted': '#484860',
+  '--color-text-muted': '#7e7e9a',
 
   // Accent
   '--color-accent': '#3b82f6',
@@ -419,7 +419,7 @@ export const TOKEN_RGB = {
   '--color-bg-quaternary': 'rgb(29, 29, 42)',
   '--color-text-primary': 'rgb(234, 234, 242)',
   '--color-text-secondary': 'rgb(133, 133, 160)',
-  '--color-text-muted': 'rgb(72, 72, 96)',
+  '--color-text-muted': 'rgb(126, 126, 154)',
   '--color-accent': 'rgb(59, 130, 246)',
   '--color-accent-bright': 'rgb(96, 165, 250)',
   '--color-success': 'rgb(52, 211, 153)',

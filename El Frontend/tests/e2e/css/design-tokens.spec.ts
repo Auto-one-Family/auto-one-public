@@ -111,7 +111,7 @@ test.describe('Design Token Verification', () => {
     })
 
     test('--color-text-muted has correct value', async ({ page }) => {
-      expect(await getDesignToken(page, '--color-text-muted')).toBe('#484860')
+      expect(await getDesignToken(page, '--color-text-muted')).toBe('#7e7e9a')
     })
 
     test('text colors get progressively dimmer', async ({ page }) => {

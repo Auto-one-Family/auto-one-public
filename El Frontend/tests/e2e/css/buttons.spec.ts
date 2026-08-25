@@ -25,15 +25,10 @@ test.describe('Button Styles', () => {
       await page.waitForLoadState('domcontentloaded')
     })
 
-    test('submit button has iridescent gradient background', async ({ page }) => {
+    test('submit button has accent background', async ({ page }) => {
       const btn = page.locator('button[type="submit"]')
       await expect(btn).toBeVisible()
-
-      // Primary buttons use gradient background from CSS
-      const bg = await btn.evaluate((el) =>
-        getComputedStyle(el).backgroundImage
-      )
-      expect(bg).toContain('linear-gradient')
+      await expect(btn).toHaveCSS('background-color', TOKEN_RGB['--color-accent'])
     })
 
     test('submit button has white text', async ({ page }) => {
@@ -92,7 +87,7 @@ test.describe('Button Styles', () => {
       await expect(btn).toHaveCSS('justify-content', 'center')
     })
 
-    test('.btn-primary has gradient and white text', async ({ page }) => {
+    test('.btn-primary has accent background and white text', async ({ page }) => {
       await page.evaluate(() => {
         const btn = document.createElement('button')
         btn.className = 'btn btn-primary'
@@ -103,9 +98,7 @@ test.describe('Button Styles', () => {
 
       const btn = page.locator('#test-btn-primary')
       await expect(btn).toHaveCSS('color', 'rgb(255, 255, 255)')
-
-      const bg = await btn.evaluate((el) => getComputedStyle(el).backgroundImage)
-      expect(bg).toContain('linear-gradient')
+      await expect(btn).toHaveCSS('background-color', TOKEN_RGB['--color-accent'])
     })
 
     test('.btn-secondary has tertiary background and border', async ({ page }) => {

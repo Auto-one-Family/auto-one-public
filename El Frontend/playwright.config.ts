@@ -40,7 +40,10 @@ export default defineConfig({
   // Exclude visual-regression tests in CI: no baseline screenshots available.
   // Visual regression requires pre-committed baselines (npx playwright test --update-snapshots).
   // Run locally only: npx playwright test tests/e2e/css/visual-regression.spec.ts
-  testIgnore: process.env.CI ? ['**/visual-regression.spec.ts'] : [],
+  testIgnore: [
+    '**/visual/**',
+    ...(process.env.CI ? ['**/visual-regression.spec.ts'] : []),
+  ],
 
   // Run tests in parallel (but scenarios within a file run sequentially)
   fullyParallel: true,

@@ -51,58 +51,6 @@ interface AuthResponse {
 }
 
 /**
- * Check if existing auth state is valid
- */
-function isAuthStateValid(): boolean {
-  try {
-    if (!fs.existsSync(AUTH_STATE_PATH)) {
-      return false
-    }
-
-    const state = JSON.parse(fs.readFileSync(AUTH_STATE_PATH, 'utf-8'))
-
-    // Check if localStorage has tokens
-    const origins = state.origins || []
-    const localStorageOrigin = origins.find(
-      (o: { origin: string }) => o.origin.includes('localhost')
-    )
-
-    if (!localStorageOrigin?.localStorage) {
-      return false
-    }
-
-    const accessToken = localStorageOrigin.localStorage.find(
-      (item: { name: string }) => item.name === TOKEN_KEY
-    )
-
-    if (!accessToken?.value) {
-      return false
-    }
-
-    // Check token expiration (JWT decode)
-    try {
-      const payload = JSON.parse(atob(accessToken.value.split('.')[1]))
-      const expMs = payload.exp * 1000
-      const bufferMs = 60000 // 1 minute buffer
-
-      if (Date.now() >= expMs - bufferMs) {
-        console.log('[Global Setup] Auth state expired')
-        return false
-      }
-    } catch {
-      console.log('[Global Setup] Could not decode token, re-authenticating')
-      return false
-    }
-
-    console.log('[Global Setup] Auth state is valid, skipping login')
-    return true
-  } catch (error) {
-    console.log('[Global Setup] Error checking auth state:', error)
-    return false
-  }
-}
-
-/**
  * Perform API login and get tokens
  */
 async function performLogin(baseURL: string): Promise<AuthTokens> {
@@ -175,12 +123,6 @@ async function globalSetup(config: FullConfig): Promise<void> {
 
   console.log('[Global Setup] Starting E2E authentication setup')
 
-  // Check if we can reuse existing auth state
-  if (isAuthStateValid()) {
-    return
-  }
-
-  // Perform login
   const tokens = await performLogin(baseURL)
 
   // Create browser to save storage state

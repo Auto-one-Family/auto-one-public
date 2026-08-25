@@ -174,7 +174,7 @@ test.describe('Typography System', () => {
       const color = await el.evaluate((element) =>
         getComputedStyle(element).color
       )
-      expect(color).toBe('rgb(72, 72, 96)')
+      expect(color).toBe('rgb(126, 126, 154)')
     })
 
     test('.text-mock uses purple color', async ({ page }) => {
@@ -252,7 +252,7 @@ test.describe('Typography System', () => {
       const color = await subtitle.evaluate((el) =>
         getComputedStyle(el).color
       )
-      expect(color).toBe('rgb(72, 72, 96)')
+      expect(color).toBe('rgb(126, 126, 154)')
     }
   })
 })
