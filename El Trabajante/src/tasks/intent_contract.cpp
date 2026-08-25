@@ -362,10 +362,12 @@ void processDeferredOutboxStatsPersist() {
     if (!s_outbox_stats_dirty) {
         return;
     }
+#ifndef MQTT_USE_PUBSUBCLIENT
     const PublishQueuePressureStats pq_stats = getPublishQueuePressureStats();
     if (pq_stats.fill_level >= PUBLISH_QUEUE_SHED_WATERMARK) {
         return;
     }
+#endif
     s_outbox_stats_dirty = false;
     persistOutboxStats();
 }

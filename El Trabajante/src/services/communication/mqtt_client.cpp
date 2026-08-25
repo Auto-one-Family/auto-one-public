@@ -252,6 +252,7 @@ extern KaiserZone g_kaiser;
 extern SystemConfig g_system_config;
 extern uint32_t getEmergencyRejectedNoTokenCount();
 
+#ifndef MQTT_USE_PUBSUBCLIENT
 // Apply fields that esp_mqtt_set_config() would zero-reset if omitted (AUT-656-B).
 // Must include LWT — a partial struct clobbers will registration (AUT-1075-LWT).
 static void applyMqttRuntimeConfig(esp_mqtt_client_handle_t client, int task_stack) {
@@ -278,6 +279,8 @@ static void applyMqttRuntimeConfig(esp_mqtt_client_handle_t client, int task_sta
     cfg.lwt_retain             = 1;
     esp_mqtt_set_config(client, &cfg);
 }
+
+#endif
 
 static String g_boot_sequence_id;
 static uint8_t g_boot_reset_reason = 0;
@@ -2262,6 +2265,7 @@ void MQTTClient::publishHeartbeat(bool force) {
         payload += "\"wifi_circuit_breaker_open\":" + String(wifi_cb_open ? "true" : "false") + ",";
         payload += "\"network_degraded\":" + String(network_degraded ? "true" : "false") + ",";
     }
+#ifndef MQTT_USE_PUBSUBCLIENT
     // [AUT-745] One-shot report of the previous disconnect's diagnosis — reaches
     // the server DB even when nobody has physical Serial access to the device,
     // which was the exact blind spot during the 2026-07-28 Klima Dante incident.
@@ -2272,6 +2276,7 @@ void MQTTClient::publishHeartbeat(bool force) {
                    String(last_disconnect_wifi_connected_ ? "true" : "false") + ",";
         last_disconnect_pending_report_ = false;
     }
+#endif
 #ifndef ENABLE_METRICS_SPLIT
     payload += "\"persistence_drift_count\":" +
                String(offlineModeManager.getPersistenceDriftCount()) + ",";
