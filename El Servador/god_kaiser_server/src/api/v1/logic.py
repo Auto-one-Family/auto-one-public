@@ -38,6 +38,8 @@ from ...schemas import (
     LogicRuleListResponse,
     LogicRuleResponse,
     LogicRuleUpdate,
+    RuleBulkQuickUpdateRequest,
+    RuleBulkQuickUpdateResponse,
     RuleTestRequest,
     RuleTestResponse,
     RuleToggleRequest,
@@ -76,12 +78,34 @@ def _build_rule_response(
         enabled=rule.enabled,
         priority=rule.priority,
         cooldown_seconds=rule.cooldown_seconds,
+        settle_after_rule_id=rule.settle_after_rule_id,
+        settle_seconds=rule.settle_seconds,
         max_executions_per_hour=rule.max_executions_per_hour,
+        max_executions_per_day=rule.max_executions_per_day,
+        max_dose_ml_per_day=rule.max_dose_ml_per_day,
         last_triggered=rule.last_triggered,
         execution_count=exec_count,
         last_execution_success=last_exec_success,
         is_critical=rule.is_critical,
         escalation_policy=rule.escalation_policy,
+        rule_metadata=rule.rule_metadata,
+        # AUT-1145 (S0): effective display group — explicit override if set,
+        # otherwise derived from the rule's mechanic. Single source of truth,
+        # never re-implemented in the frontend.
+        rule_group=LogicService.derive_rule_group(
+            rule.rule_group, rule.conditions, rule.actions, rule.rule_metadata
+        ),
+        # AUT-1232: Opt-in plan subscription (default False on existing rows)
+        follows_plan=getattr(rule, "follows_plan", False),
+        plan_zone_id=getattr(rule, "plan_zone_id", None),
+        plan_subzone_config_id=getattr(rule, "plan_subzone_config_id", None),
+        plan_domain=getattr(rule, "plan_domain", None),
+        plan_measure=getattr(rule, "plan_measure", None),
+        # AUT-1116/1117 (DP4/DP7): transient, non-blocking warnings set by
+        # LogicService.create_rule()/update_rule() (paired-rule deadband overlap,
+        # pi_enhanced trigger sensor) — not a DB column, defaults to [] for rules
+        # that never went through those checks.
+        warnings=getattr(rule, "rule_warnings", []),
         degraded_since=rule.degraded_since,
         degraded_reason=rule.degraded_reason,
         created_at=rule.created_at,
@@ -371,6 +395,74 @@ async def update_rule(
     )
 
     return _build_rule_response(rule, exec_count, last_exec.success if last_exec else None)
+
+
+# =============================================================================
+# Bulk Quick-Update (AUT-1145, S0 — Gruppenkarten-Schnellfeld)
+# =============================================================================
+
+
+@router.post(
+    "/rules/bulk-quick-update",
+    response_model=RuleBulkQuickUpdateResponse,
+    summary="Bulk quick-field update for grouped rule cards",
+    description=(
+        "Applies An/Aus, Schwellwert/Zielwert or Zeiten to a set of marked rules "
+        "in one call. THIN LOOP: every rule_id goes through the exact same "
+        "LogicService.update_rule() path as PUT /rules/{rule_id} (same validation, "
+        "same config-push) — but with force_reeval=False, so a running cooldown/"
+        "settle window is never bypassed (AUT-1135 Falle 2). priority and "
+        "cooldown_seconds are never touched here (editor-only, out of scope)."
+    ),
+)
+async def bulk_quick_update_rules(
+    request: RuleBulkQuickUpdateRequest,
+    db: DBSession,
+    current_user: OperatorUser,
+) -> RuleBulkQuickUpdateResponse:
+    """
+    Bulk quick-field update for the group-card Schnellfeld.
+
+    Args:
+        request: rule_ids + the (optional) An/Aus, Schwellwert, Zeiten fields
+        db: Database session
+        current_user: Operator or admin user
+
+    Returns:
+        Per-rule success/error results
+    """
+    logic_repo = LogicRepository(db)
+    logic_service = LogicService(logic_repo)
+
+    results = await logic_service.bulk_quick_update_rules(
+        request.ids,
+        active=request.active,
+        threshold_value=request.threshold_value,
+        hysteresis_on_value=request.hysteresis_on_value,
+        hysteresis_off_value=request.hysteresis_off_value,
+        start_hour=request.start_hour,
+        start_minute=request.start_minute,
+        end_hour=request.end_hour,
+        end_minute=request.end_minute,
+        days_of_week=request.days_of_week,
+    )
+
+    updated_ids = {r.rule_id for r in results if r.success}
+    if updated_ids:
+        esp_ids: set[str] = set()
+        for rule_id in updated_ids:
+            rule = await logic_repo.get_by_id(rule_id)
+            if rule:
+                esp_ids |= get_affected_esp_ids(rule)
+        await _push_config_to_affected_esps(db, esp_ids, context="logic rule bulk quick-update")
+
+    failed = [r for r in results if not r.success]
+    logger.info(
+        f"Logic rules bulk quick-update: {len(updated_ids)}/{len(request.ids)} succeeded "
+        f"by {current_user.username}" + (f", {len(failed)} failed" if failed else "")
+    )
+
+    return RuleBulkQuickUpdateResponse(results=results)
 
 
 # =============================================================================

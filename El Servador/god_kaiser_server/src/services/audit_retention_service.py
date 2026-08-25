@@ -662,6 +662,7 @@ class AuditRetentionService:
         DataSource.MOCK: timedelta(days=7),  # 7 days
         DataSource.SIMULATION: timedelta(days=30),  # 30 days
         DataSource.PRODUCTION: None,  # Never auto-delete
+        DataSource.BATCH: None,  # AUT-883: replayed real production data — never auto-delete
     }
 
     async def cleanup_test_sensor_data(

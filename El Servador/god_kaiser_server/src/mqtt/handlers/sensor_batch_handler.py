@@ -133,7 +133,7 @@ class SensorBatchHandler:
                 return True  # Not a fatal error — empty spool flush is valid
 
             total = len(readings)
-            BATCH_QUEUED_TOTAL.inc(total)
+            BATCH_QUEUED_TOTAL.labels(esp_id=esp_id_str).inc(total)
 
             replayed = 0
             skipped = 0
@@ -150,7 +150,7 @@ class SensorBatchHandler:
                         esp_id_str,
                         total,
                     )
-                    BATCH_SKIPPED_TOTAL.inc(total)
+                    BATCH_SKIPPED_TOTAL.labels(esp_id=esp_id_str).inc(total)
                     return True  # Unknown ESP — not a processing error
 
                 esp_uuid: uuid.UUID = esp_device.id
@@ -158,7 +158,7 @@ class SensorBatchHandler:
                 for reading in readings:
                     if not isinstance(reading, dict):
                         skipped += 1
-                        BATCH_SKIPPED_TOTAL.inc(1)
+                        BATCH_SKIPPED_TOTAL.labels(esp_id=esp_id_str).inc(1)
                         continue
 
                     gpio = reading.get("gpio")
@@ -187,7 +187,7 @@ class SensorBatchHandler:
                             reading,
                         )
                         skipped += 1
-                        BATCH_SKIPPED_TOTAL.inc(1)
+                        BATCH_SKIPPED_TOTAL.labels(esp_id=esp_id_str).inc(1)
                         continue
 
                     raw_value_f = float(raw_value)
@@ -200,7 +200,7 @@ class SensorBatchHandler:
                             esp_id_str, gpio,
                         )
                         skipped += 1
-                        BATCH_SKIPPED_TOTAL.inc(1)
+                        BATCH_SKIPPED_TOTAL.labels(esp_id=esp_id_str).inc(1)
                         continue
 
                     ts = _parse_timestamp(raw_ts, boot_epoch_s)
@@ -278,7 +278,8 @@ class SensorBatchHandler:
                             processing_mode=processing_mode,
                             quality=str(quality) if quality else None,
                             timestamp=ts,
-                            data_source=DataSource.PRODUCTION.value,
+                            # AUT-883: mark spool replays distinctly from live data
+                            data_source=DataSource.BATCH.value,
                             zone_id=esp_device.zone_id,
                             subzone_id=str(subzone_id) if subzone_id else None,
                             device_name=esp_device.name,
@@ -286,10 +287,10 @@ class SensorBatchHandler:
                         if result is None:
                             # Duplicate — silently ignored by ON CONFLICT DO NOTHING
                             skipped += 1
-                            BATCH_SKIPPED_TOTAL.inc(1)
+                            BATCH_SKIPPED_TOTAL.labels(esp_id=esp_id_str).inc(1)
                         else:
                             replayed += 1
-                            BATCH_REPLAYED_TOTAL.inc(1)
+                            BATCH_REPLAYED_TOTAL.labels(esp_id=esp_id_str).inc(1)
                     except Exception as exc:
                         logger.warning(
                             "sensor/batch: failed to save reading esp=%s gpio=%s: %s",
@@ -298,7 +299,7 @@ class SensorBatchHandler:
                             exc,
                         )
                         skipped += 1
-                        BATCH_SKIPPED_TOTAL.inc(1)
+                        BATCH_SKIPPED_TOTAL.labels(esp_id=esp_id_str).inc(1)
 
                 await session.commit()
 

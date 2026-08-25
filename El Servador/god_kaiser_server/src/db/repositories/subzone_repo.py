@@ -174,7 +174,7 @@ class SubzoneRepository(BaseRepository[SubzoneConfig]):
         self,
         esp_id: str,
         subzone_id: str,
-        parent_zone_id: str,
+        parent_zone_id: Optional[str],
         assigned_gpios: List[int],
         subzone_name: Optional[str] = None,
         safe_mode_active: bool = True,

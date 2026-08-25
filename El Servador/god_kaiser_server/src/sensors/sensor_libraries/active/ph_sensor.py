@@ -177,6 +177,8 @@ class PHSensorProcessor(BaseSensorProcessor):
         self,
         calibration_points: list[Dict[str, float]],
         method: str = "linear",
+        adc_source: str = ADC_SOURCE_INTERNAL,
+        pga_gain: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Perform two-point pH calibration.
@@ -207,9 +209,9 @@ class PHSensorProcessor(BaseSensorProcessor):
         raw2 = point2["raw"]
         ph2 = point2["reference"]
 
-        # Convert ADC to voltage
-        voltage1 = self._adc_to_voltage(raw1)
-        voltage2 = self._adc_to_voltage(raw2)
+        # Convert ADC to voltage (not im Produktiv-Pfad / reine Konsolidierung auf adc_normalization)
+        voltage1 = self._adc_to_voltage(raw1, adc_source=adc_source, pga_gain=pga_gain)
+        voltage2 = self._adc_to_voltage(raw2, adc_source=adc_source, pga_gain=pga_gain)
 
         # Calculate slope and offset
         # pH = slope * voltage + offset

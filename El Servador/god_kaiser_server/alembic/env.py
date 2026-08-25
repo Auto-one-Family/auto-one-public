@@ -105,10 +105,14 @@ def do_run_migrations(connection: Connection) -> None:
         if len(heads) != 1:
             raise RuntimeError(f"Expected single Alembic head, got: {heads}")
 
+        # VARCHAR(255), not Alembic's VARCHAR(32) default: this repo has revision
+        # IDs >32 chars (see widen_alembic_version_col.py). Unrelated to any
+        # ESP32/MQTT identifier length limit — this table is pure server-side
+        # migration bookkeeping, never transmitted to firmware or the broker.
         connection.execute(
             text(
                 "CREATE TABLE IF NOT EXISTS alembic_version "
-                "(version_num VARCHAR(32) NOT NULL)"
+                "(version_num VARCHAR(255) NOT NULL)"
             )
         )
         connection.execute(text("DELETE FROM alembic_version"))

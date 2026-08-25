@@ -1,6 +1,6 @@
 # Google Sheets Integration — Auth Bootstrap (S1)
 
-Stand: 2026-05-23.
+Stand: 2026-05-23 — Linear AUT-443 (Parent AUT-442).
 
 Dieses Modul kapselt das **Service-Account-basierte Auth-Setup** fuer den
 geplanten Sheets-Export. Es liefert ausschliesslich:
@@ -12,7 +12,7 @@ geplanten Sheets-Export. Es liefert ausschliesslich:
 Die eigentliche Export-Pipeline (Scheduler, Tab-Rotation, Cursor) ist
 **explizit nicht Teil von S1** und folgt in den Sub-Issues S2-S5.
 
-## Architektur-Entscheidungen
+## Architektur-Entscheidungen (von operators fixiert)
 
 | Frage | Entscheidung |
 |-------|-------------|
@@ -23,8 +23,8 @@ Die eigentliche Export-Pipeline (Scheduler, Tab-Rotation, Cursor) ist
 
 ## Provisionierung (Operator-Runbook)
 
-1. **Google Cloud Project** anlegen oder wiederverwenden
-   (`gcloud projects create autoone-sheets` o. ae.).
+1. **Google Cloud Project** im operator-Workspace anlegen oder
+   wiederverwenden (`gcloud projects create autoone-sheets` o. ae.).
 2. **Sheets API + Drive API aktivieren** (UI: APIs & Services → Library).
 3. **Service-Account erstellen**:
    - Name: `autoone-sheets-exporter`
@@ -36,7 +36,8 @@ Die eigentliche Export-Pipeline (Scheduler, Tab-Rotation, Cursor) ist
    sudo install -m 0600 -o root -g root sheets_sa.json /secrets/sheets_sa.json
    ```
 
-5. **Spreadsheet** anlegen und mit dem Service-Account teilen:
+5. **Spreadsheet im operator-Workspace** anlegen (Owner: operator) und teilen:
+   - `operator@example.com` als **Editor**
    - `autoone-sheets-exporter@<projekt>.iam.gserviceaccount.com` als
      **Editor** (Mail steht im JSON-Feld `client_email`).
 6. **Spreadsheet-ID** aus der URL extrahieren (Teil zwischen `/d/` und `/edit`).
@@ -112,7 +113,7 @@ das Paket fehlt, gibt es einen klaren `SheetsAuthError` mit Code
 ## Verifikation
 
 ```bash
-cd "El Servador/god_kaiser_server"
+cd "/path/to/god_kaiser_server"
 poetry run pytest tests/unit/integrations/test_sheets_auth.py -v
 poetry run ruff check src/integrations/sheets/ src/core/config.py
 ```

@@ -302,10 +302,18 @@ async def get_zone_monitor_data(
     zone_id: str,
     db: DBSession,
     _user: ActiveUser,
+    domain: Optional[str] = Query(
+        None,
+        description=(
+            "Optional report-domain filter (AUT-1321 / AUT-1087). "
+            "When set, only ESP devices with matching ESPDevice.domain are included. "
+            "Omit (default) for full zone-wide monitor data — existing callers unchanged."
+        ),
+    ),
 ) -> ZoneMonitorData:
     """Get monitor data for a zone (sensors/actuators grouped by subzone)."""
     service = MonitorDataService(db)
-    return await service.get_zone_monitor_data(zone_id)
+    return await service.get_zone_monitor_data(zone_id, domain=domain)
 
 
 @router.get(

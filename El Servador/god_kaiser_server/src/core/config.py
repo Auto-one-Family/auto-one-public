@@ -930,7 +930,7 @@ class SheetsExportSettings(BaseSettings):
         default=None,
         alias="SHEETS_SPREADSHEET_ID",
         description=(
-            "Target spreadsheet ID. Optional during "
+            "Target spreadsheet ID inside the operator workspace. Optional during "
             "S1 (auth bootstrap); required from S2 onwards (export pipeline)."
         ),
     )

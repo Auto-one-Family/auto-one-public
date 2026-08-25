@@ -95,6 +95,11 @@ class SensorConditionEvaluator(BaseConditionEvaluator):
             if trigger_zone != cond_zone:
                 return False
 
+        # AUT-994 B2: Plausibility guard — a trigger reading flagged quality="critical"
+        # (SENSOR_PHYSICAL_LIMITS violation, sensor_handler.py) must never dispatch actions.
+        if trigger_matches and sensor_data.get("quality") == "critical":
+            return False
+
         # AUT-41: Freshness check (only when require_fresh_data=True)
         if condition.get("require_fresh_data"):
             stale_reason = self._check_freshness(condition, context, trigger_matches)

@@ -225,3 +225,35 @@ class DashboardDataResponse(BaseResponse):
         None,
         description="Dashboard data",
     )
+
+
+# =============================================================================
+# Assignment Schemas (AUT-1095)
+# =============================================================================
+
+
+class DashboardAssignmentCreate(BaseModel):
+    """Request body for assigning a user to a dashboard."""
+
+    user_id: int = Field(..., description="User ID to assign to the dashboard")
+
+
+class DashboardAssignmentResponse(BaseModel):
+    """Single assignment in API responses."""
+
+    id: uuid.UUID = Field(..., description="Assignment UUID")
+    dashboard_id: uuid.UUID = Field(..., description="Dashboard UUID")
+    user_id: int = Field(..., description="Assigned user ID")
+    assigned_at: Optional[datetime] = Field(None, description="Assignment timestamp (UTC)")
+    assigned_by: Optional[int] = Field(None, description="Operator user ID who created the assignment")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class DashboardAssignmentListResponse(BaseResponse):
+    """Response for listing assignments of a dashboard."""
+
+    data: List[DashboardAssignmentResponse] = Field(
+        default_factory=list,
+        description="List of user assignments",
+    )

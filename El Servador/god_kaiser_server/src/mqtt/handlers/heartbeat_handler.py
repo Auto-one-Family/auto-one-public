@@ -53,7 +53,10 @@ from ...db.repositories.esp_heartbeat_repo import extract_heartbeat_runtime_tele
 from ...db.repositories.actuator_repo import ActuatorRepository
 from ...db.repositories.audit_log_repo import AuditLogRepository
 from ...db.session import resilient_session
-from ...services.event_contract_serializers import serialize_esp_health_event
+from ...services.event_contract_serializers import (
+    extract_last_known_health_metrics,
+    serialize_esp_health_event,
+)
 from ...services.system_event_contract import canonicalize_heartbeat
 from ...services.state_adoption_service import get_state_adoption_service
 from ...schemas.esp import SessionAnnouncePayload
@@ -87,6 +90,12 @@ STATE_PUSH_RECONNECT_DELAY_SECONDS = 30.0
 # Keep this below one heartbeat period (60s) so a lost first push can recover
 # on the next heartbeat cycle instead of stalling for two full minutes.
 CONFIG_PUSH_COOLDOWN_SECONDS = 45
+
+# AUT-1029 / AUT-1026-S3 (E2): Dämpfung für Oversize-Operator-Sichtbarkeit.
+# Muss das Heartbeat-Intervall (60 s, mqtt_client.h:265) überschreiten — der
+# 45-s-Push-Cooldown allein dämpft Oversize nicht (AUT-1027 A2). Nutzt das
+# bestehende Metadata-Feld config_push_oversize_blocked_at als Gate.
+CONFIG_OVERSIZE_NOTIFY_COOLDOWN_SECONDS = 300
 
 # Module-level MQTTCommandBridge reference (set via set_command_bridge())
 _command_bridge = None
@@ -2461,31 +2470,61 @@ class HeartbeatHandler:
         """
         try:
             from ...services.config_builder import (
-                CONFIG_AUTOPUSH_BUDGET_BYTES,
                 ConfigPayloadBuilder,
                 estimate_config_wire_size,
+                resolve_autopush_budget_bytes,
             )
             from ...services.esp_service import ESPService
 
             async with resilient_session() as session:
+                esp_repo = ESPRepository(session)
+                esp_device = await esp_repo.get_by_device_id(esp_device_id)
+                hardware_type = esp_device.hardware_type if esp_device else None
+                budget_bytes = resolve_autopush_budget_bytes(hardware_type)
+
                 config_builder = ConfigPayloadBuilder()
                 combined_config = await config_builder.build_combined_config(esp_device_id, session)
 
                 # AUT-134 PKG-01: Pre-flight Budget-Check — VOR dem Publish.
                 estimated_wire_len = estimate_config_wire_size(combined_config)
-                if estimated_wire_len > CONFIG_AUTOPUSH_BUDGET_BYTES:
+
+                # AUT-1029: Recovery — Oversize-Block-State löschen sobald Config wieder passt.
+                if estimated_wire_len <= budget_bytes and esp_device:
+                    meta = dict(esp_device.device_metadata or {})
+                    cleared = False
+                    for key in (
+                        "config_push_oversize_blocked_at",
+                        "config_push_oversize_reason_code",
+                        "config_push_oversize_snapshot",
+                    ):
+                        if key in meta:
+                            meta.pop(key, None)
+                            cleared = True
+                    if cleared:
+                        esp_device.device_metadata = meta
+                        flag_modified(esp_device, "device_metadata")
+                        await session.commit()
+                        logger.info(
+                            "AUT-1029: Oversize block cleared for %s "
+                            "(estimated_wire_len=%d <= budget=%d) — auto-push resuming",
+                            esp_device_id,
+                            estimated_wire_len,
+                            budget_bytes,
+                        )
+
+                if estimated_wire_len > budget_bytes:
                     await self._handle_oversize_auto_push(
                         session=session,
                         esp_device_id=esp_device_id,
                         reason_code=reason_code,
                         estimated_wire_len=estimated_wire_len,
+                        budget_bytes=budget_bytes,
                         sensor_count=len(combined_config.get("sensors", [])),
                         actuator_count=len(combined_config.get("actuators", [])),
                         offline_rules_count=len(combined_config.get("offline_rules", [])),
                     )
                     return
 
-                esp_repo = ESPRepository(session)
                 esp_service = ESPService(esp_repo)
                 result = await esp_service.send_config(
                     esp_device_id,
@@ -2532,12 +2571,18 @@ class HeartbeatHandler:
         esp_device_id: str,
         reason_code: str,
         estimated_wire_len: int,
+        budget_bytes: int,
         sensor_count: int,
         actuator_count: int,
         offline_rules_count: int,
     ) -> None:
         """
         AUT-134 PKG-01: Sauberer Abbruchpfad bei Config-Oversize VOR dem Publish.
+
+        AUT-1029: Operator-Sichtbarkeit (ERROR/Audit/WS) wird über
+        ``config_push_oversize_blocked_at`` gedämpft (E2). Resync bleibt möglich:
+        ``config_push_sent_at`` wird nicht mehr entfernt; bei Config unter Budget
+        räumt ``_auto_push_config`` die Oversize-Metadata auf.
 
         - Räumt das ``config_push_pending``-Flag auf (kein hängendes Pending).
         - Setzt Metadata: ``config_push_oversize_blocked_at`` + Snapshot.
@@ -2550,27 +2595,42 @@ class HeartbeatHandler:
         Pre-flight Gate früher (4096) und verhindert den MQTT-Publish komplett.
         """
         from ...db.models.audit_log import AuditEventType, AuditSeverity, AuditSourceType
-        from ...services.config_builder import CONFIG_AUTOPUSH_BUDGET_BYTES
+
+        now_ts = int(time_module.time())
+        should_notify = True
+        notify_remaining_seconds = CONFIG_OVERSIZE_NOTIFY_COOLDOWN_SECONDS
 
         # 1) Pending-Flag auflösen, damit Adoption-/Reconnect-Gate weiterläuft.
         self._config_push_pending_esps.discard(esp_device_id)
 
-        # 2) Metadata aufräumen: kein "scheduled push" hängen lassen.
+        # 2) Metadata: Snapshot immer aktualisieren; Operator-Events nur bei Bedarf.
         try:
             esp_repo = ESPRepository(session)
             dev = await esp_repo.get_by_device_id(esp_device_id)
             if dev:
                 meta = dict(dev.device_metadata or {})
-                meta.pop("config_push_sent_at", None)
-                meta["config_push_oversize_blocked_at"] = int(time_module.time())
+                blocked_at_raw = meta.get("config_push_oversize_blocked_at")
+                if blocked_at_raw is not None:
+                    try:
+                        elapsed = now_ts - int(blocked_at_raw)
+                        if elapsed < CONFIG_OVERSIZE_NOTIFY_COOLDOWN_SECONDS:
+                            should_notify = False
+                            notify_remaining_seconds = (
+                                CONFIG_OVERSIZE_NOTIFY_COOLDOWN_SECONDS - elapsed
+                            )
+                    except (TypeError, ValueError):
+                        should_notify = True
+
                 meta["config_push_oversize_reason_code"] = reason_code
                 meta["config_push_oversize_snapshot"] = {
                     "estimated_wire_len": int(estimated_wire_len),
-                    "budget_bytes": int(CONFIG_AUTOPUSH_BUDGET_BYTES),
+                    "budget_bytes": int(budget_bytes),
                     "sensor_count": int(sensor_count),
                     "actuator_count": int(actuator_count),
                     "offline_rules_count": int(offline_rules_count),
                 }
+                if should_notify:
+                    meta["config_push_oversize_blocked_at"] = now_ts
                 dev.device_metadata = meta
                 flag_modified(dev, "device_metadata")
             await session.commit()
@@ -2581,6 +2641,18 @@ class HeartbeatHandler:
                 meta_err,
             )
 
+        if not should_notify:
+            logger.debug(
+                "AUT-1029: Oversize auto-push still blocked for %s "
+                "(notify damped, %ds until next ERROR/audit/WS). "
+                "estimated_wire_len=%d > budget=%d",
+                esp_device_id,
+                max(0, notify_remaining_seconds),
+                estimated_wire_len,
+                budget_bytes,
+            )
+            return
+
         # 3) Strukturiertes Log-Ereignis (Operator-sichtbar).
         logger.error(
             "AUT-134 PKG-01: Auto-push BLOCKED for %s (reason=%s, "
@@ -2589,7 +2661,7 @@ class HeartbeatHandler:
             esp_device_id,
             reason_code,
             estimated_wire_len,
-            CONFIG_AUTOPUSH_BUDGET_BYTES,
+            budget_bytes,
             sensor_count,
             actuator_count,
             offline_rules_count,
@@ -2797,6 +2869,8 @@ class HeartbeatHandler:
 
                 offline_devices = []
                 actuator_reset_counts: dict[str, int] = {}
+                # AUT-884: last-known metrics per device for the offline broadcast below.
+                offline_device_metrics: dict[str, dict] = {}
                 now = datetime.now(timezone.utc)
                 timeout_threshold = now - timedelta(seconds=HEARTBEAT_TIMEOUT_SECONDS)
 
@@ -2832,6 +2906,9 @@ class HeartbeatHandler:
 
                             await esp_repo.update_status(device.device_id, "offline")
                             offline_devices.append(device.device_id)
+                            offline_device_metrics[device.device_id] = (
+                                extract_last_known_health_metrics(device.device_metadata)
+                            )
 
                             # Reset actuator states to idle for offline device
                             try:
@@ -2935,6 +3012,7 @@ class HeartbeatHandler:
                                 source="heartbeat_timeout",
                                 timeout_seconds=HEARTBEAT_TIMEOUT_SECONDS,
                                 actuator_states_reset=actuator_reset_counts.get(device_id, 0),
+                                **offline_device_metrics.get(device_id, {}),
                             )
                             await ws_manager.broadcast(
                                 "esp_health",

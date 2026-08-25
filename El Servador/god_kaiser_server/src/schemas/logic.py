@@ -23,11 +23,14 @@ References:
 
 import uuid
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from ..db.models.logic import RULE_GROUP_CATALOG
 from .common import BaseResponse, PaginatedResponse, TimestampMixin
+
+_RULE_GROUP_SET = set(RULE_GROUP_CATALOG)
 
 # =============================================================================
 # Escalation Policy Validation (AUT-111)
@@ -67,6 +70,101 @@ def _validate_escalation_policy(v: Optional[Dict[str, Any]]) -> Optional[Dict[st
         if not isinstance(fa, list):
             raise ValueError("failover_actions must be a list")
     return v
+
+
+def _validate_rule_group(v: Optional[str]) -> Optional[str]:
+    """AUT-1145: None = no override (auto-derived). Otherwise must be in RULE_GROUP_CATALOG."""
+    if v is not None and v not in _RULE_GROUP_SET:
+        raise ValueError(f"Invalid rule_group '{v}'. Must be one of: {sorted(_RULE_GROUP_SET)}")
+    return v
+
+
+# =============================================================================
+# Measure Bindings (AUT-1393 / M-1) — additive rule_metadata key
+# =============================================================================
+
+MEASURE_BINDING_HOOKS = (
+    "on_start",
+    "after_action",
+    "after_settle",
+    "on_complete",
+)
+MEASURE_BINDING_FORMULA_IDS = (
+    "difference",
+    "delta_over_event",
+)
+MEASURE_BINDING_OUTPUT_TARGETS = (
+    "execution_metadata",
+    "ledger",
+)
+
+
+class MeasureBindingSensorRef(BaseModel):
+    """Live sensor reference (M-0 SSOT): esp_id + gpio + sensor_type."""
+
+    esp_id: str = Field(
+        ...,
+        pattern=r"^(ESP_[A-F0-9]{6,8}|MOCK_[A-Z0-9]+)$",
+        description="ESP device_id (Live-Form, not config UUID)",
+    )
+    gpio: int = Field(..., ge=0, le=39)
+    sensor_type: str = Field(..., min_length=1, max_length=50)
+
+
+class MeasureBinding(BaseModel):
+    """
+    AUT-1393: Optional measure binding under rule_metadata.measure_bindings[].
+
+    Never part of trigger_conditions — observe-only after a rule already fired.
+    """
+
+    sensor_refs: List[MeasureBindingSensorRef] = Field(..., min_length=1)
+    hooks: List[Literal["on_start", "after_action", "after_settle", "on_complete"]] = Field(
+        ...,
+        min_length=1,
+        description="Closed hook list — no free-text strings",
+    )
+    formula_id: Literal["difference", "delta_over_event"] = Field(
+        ...,
+        description="Formula registry id (wave-1: difference/delta_over_event)",
+    )
+    formula_params: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Formula-specific params (caller-defined; no invented knobs here)",
+    )
+    output_target: Literal["execution_metadata", "ledger"] = Field(
+        ...,
+        description="Where derived output is written (wired in M-3)",
+    )
+
+
+def _validate_rule_metadata_measure_bindings(
+    v: Optional[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    """
+    If rule_metadata contains measure_bindings, validate shape.
+    Other keys remain free-form (dose_config etc.). Absent key = no-op.
+    """
+    if v is None:
+        return v
+    if not isinstance(v, dict):
+        raise ValueError("rule_metadata must be a JSON object")
+    if "measure_bindings" not in v:
+        return v
+    bindings = v["measure_bindings"]
+    if bindings is None:
+        return v
+    if not isinstance(bindings, list):
+        raise ValueError("rule_metadata.measure_bindings must be a list")
+    validated: List[Dict[str, Any]] = []
+    for i, item in enumerate(bindings):
+        try:
+            validated.append(MeasureBinding.model_validate(item).model_dump())
+        except Exception as exc:
+            raise ValueError(f"rule_metadata.measure_bindings[{i}]: {exc}") from exc
+    out = dict(v)
+    out["measure_bindings"] = validated
+    return out
 
 
 # Kanonisch mit Laufzeit: logic_repo.get_enabled_rules (priority.asc), ConflictManager
@@ -339,7 +437,13 @@ class LogicRuleCreate(LogicRuleBase):
         ...,
         min_length=1,
         max_length=10,
-        description="Actions to execute when triggered",
+        description=(
+            "Actions to execute when triggered. "
+            "AUT-1317 (opt-in): each action may include "
+            "condition_refs (list[int]|null) and condition_op ('AND'|'OR'|null); "
+            "absent/null/[] refs keep the legacy global rule gate. "
+            "Actuator OFF may set is_safety_critical for action-level cooldown bypass."
+        ),
     )
     logic_operator: str = Field(
         "AND",
@@ -362,15 +466,41 @@ class LogicRuleCreate(LogicRuleBase):
         le=86400,
         description="Minimum seconds between executions",
     )
+    settle_after_rule_id: Optional[uuid.UUID] = Field(
+        None,
+        description=(
+            "AUT-1115: Wait for settle_seconds after the last execution of THIS "
+            "other rule before evaluating. None = no settle dependency."
+        ),
+    )
+    settle_seconds: Optional[int] = Field(
+        None,
+        ge=0,
+        le=86400,
+        description="AUT-1115: Settle window in seconds, evaluated against settle_after_rule_id's last execution",
+    )
     max_executions_per_hour: Optional[int] = Field(
         None,
         ge=1,
         le=60,
         description="Maximum executions per hour (None=unlimited)",
     )
+    max_executions_per_day: Optional[int] = Field(
+        None,
+        ge=0,
+        description="Maximum executions per day / rolling 24h window (None or 0=unlimited)",
+    )
+    max_dose_ml_per_day: Optional[float] = Field(
+        None,
+        ge=0,
+        description="Maximum total dose ml per day / rolling 24h window (None=unlimited, requires AO-5 dose_ml audit)",
+    )
     is_critical: bool = Field(
         False,
-        description="AUT-111: Mark rule as safety-critical (enables degraded-state tracking)",
+        description=(
+            "AUT-111/AUT-1336: Safety-critical flag — degraded-state/Health-Tracking "
+            "and ConflictManager precedence (OR with action.is_safety_critical)"
+        ),
     )
     escalation_policy: Optional[Dict[str, Any]] = Field(
         None,
@@ -380,11 +510,64 @@ class LogicRuleCreate(LogicRuleBase):
             "max_retries: 5, failover_actions: [...]}"
         ),
     )
+    rule_metadata: Dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "AUT-1113: Free-form rule metadata (e.g. chemistry dose_config for "
+            "AUT-1112 — target_value, volume_l, components, safety_factor, "
+            "dilution_value). AUT-1366: components[i] may carry optional "
+            "volume_share (intended volume fraction; Σ≈1; missing → equal "
+            "shares via resolve_volume_shares). AUT-1393: optional "
+            "measure_bindings[] (observe-only; never trigger_conditions) is "
+            "shape-validated when present; other keys stay caller-defined."
+        ),
+    )
+    rule_group: Optional[str] = Field(
+        None,
+        description=(
+            "AUT-1145: Explicit display-group override "
+            f"(one of {sorted(_RULE_GROUP_SET)}). None = auto-derived from the "
+            "rule's mechanic (see LogicService.derive_rule_group)."
+        ),
+    )
+    # AUT-1232: Opt-in plan subscription (default off — additive, no behavior change)
+    follows_plan: bool = Field(
+        False,
+        description=(
+            "AUT-1232: When True, rule may follow plan_segment@now (wired in T3). "
+            "Default False — existing rules stay on their static setpoints."
+        ),
+    )
+    plan_zone_id: Optional[str] = Field(
+        None, max_length=50, description="AUT-1232: Zone for plan subscription"
+    )
+    plan_subzone_config_id: Optional[uuid.UUID] = Field(
+        None, description="AUT-1232: Optional subzone_config for plan subscription"
+    )
+    plan_domain: Optional[str] = Field(
+        None, max_length=32, description="AUT-1232: Plan domain (e.g. nutrient_solution)"
+    )
+    plan_measure: Optional[str] = Field(
+        None, max_length=32, description="AUT-1232: Plan measure (e.g. target_ec)"
+    )
 
     @field_validator("escalation_policy")
     @classmethod
     def validate_escalation(cls, v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         return _validate_escalation_policy(v)
+
+    @field_validator("rule_group")
+    @classmethod
+    def validate_rule_group(cls, v: Optional[str]) -> Optional[str]:
+        return _validate_rule_group(v)
+
+    @field_validator("rule_metadata")
+    @classmethod
+    def validate_rule_metadata_measure_bindings(
+        cls, v: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        result = _validate_rule_metadata_measure_bindings(v)
+        return result if result is not None else {}
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -440,16 +623,64 @@ class LogicRuleUpdate(BaseModel):
         description=LOGIC_RULE_PRIORITY_FIELD_DESCRIPTION,
     )
     cooldown_seconds: Optional[int] = Field(None, ge=0, le=86400)
+    settle_after_rule_id: Optional[uuid.UUID] = Field(
+        None, description="AUT-1115: Settle-after rule reference. None = leave unchanged."
+    )
+    settle_seconds: Optional[int] = Field(None, ge=0, le=86400)
     max_executions_per_hour: Optional[int] = Field(None, ge=1, le=60)
+    max_executions_per_day: Optional[int] = Field(None, ge=0)
+    max_dose_ml_per_day: Optional[float] = Field(None, ge=0)
     is_critical: Optional[bool] = Field(None, description="AUT-111: Safety-critical flag")
     escalation_policy: Optional[Dict[str, Any]] = Field(
         None, description="AUT-111: Escalation policy"
+    )
+    rule_metadata: Optional[Dict[str, Any]] = Field(
+        None,
+        description=(
+            "AUT-1113: Free-form rule metadata. None = leave unchanged. "
+            "AUT-1393: optional measure_bindings[] shape-validated when present."
+        ),
+    )
+    rule_group: Optional[str] = Field(
+        None,
+        description=(
+            "AUT-1145: Explicit display-group override. Omit the field to leave "
+            "unchanged; send null explicitly to clear the override and revert to "
+            f"auto-derivation. One of {sorted(_RULE_GROUP_SET)} when set."
+        ),
+    )
+    follows_plan: Optional[bool] = Field(
+        None, description="AUT-1232: Opt-in plan subscription flag"
+    )
+    plan_zone_id: Optional[str] = Field(
+        None, max_length=50, description="AUT-1232: Zone for plan subscription"
+    )
+    plan_subzone_config_id: Optional[uuid.UUID] = Field(
+        None, description="AUT-1232: Optional subzone_config for plan subscription"
+    )
+    plan_domain: Optional[str] = Field(
+        None, max_length=32, description="AUT-1232: Plan domain"
+    )
+    plan_measure: Optional[str] = Field(
+        None, max_length=32, description="AUT-1232: Plan measure"
     )
 
     @field_validator("escalation_policy")
     @classmethod
     def validate_escalation(cls, v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         return _validate_escalation_policy(v)
+
+    @field_validator("rule_group")
+    @classmethod
+    def validate_rule_group(cls, v: Optional[str]) -> Optional[str]:
+        return _validate_rule_group(v)
+
+    @field_validator("rule_metadata")
+    @classmethod
+    def validate_rule_metadata_measure_bindings(
+        cls, v: Optional[Dict[str, Any]]
+    ) -> Optional[Dict[str, Any]]:
+        return _validate_rule_metadata_measure_bindings(v)
 
 
 class LogicRuleResponse(LogicRuleBase, TimestampMixin):
@@ -464,7 +695,10 @@ class LogicRuleResponse(LogicRuleBase, TimestampMixin):
     )
     actions: List[Dict[str, Any]] = Field(
         ...,
-        description="Actions to execute",
+        description=(
+            "Actions to execute. May include optional AUT-1317 fields "
+            "condition_refs / condition_op (and is_safety_critical on actuators)."
+        ),
     )
     logic_operator: str = Field(
         ...,
@@ -482,7 +716,15 @@ class LogicRuleResponse(LogicRuleBase, TimestampMixin):
         ...,
         description="Cooldown between executions",
     )
+    settle_after_rule_id: Optional[uuid.UUID] = Field(
+        None, description="AUT-1115: Settle-after rule reference"
+    )
+    settle_seconds: Optional[int] = Field(
+        None, description="AUT-1115: Settle window in seconds"
+    )
     max_executions_per_hour: Optional[int] = Field(None)
+    max_executions_per_day: Optional[int] = Field(None)
+    max_dose_ml_per_day: Optional[float] = Field(None)
     # Runtime info
     last_triggered: Optional[datetime] = Field(
         None,
@@ -505,6 +747,41 @@ class LogicRuleResponse(LogicRuleBase, TimestampMixin):
     escalation_policy: Optional[Dict[str, Any]] = Field(
         None,
         description="Escalation policy for critical rules",
+    )
+    rule_metadata: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="AUT-1113: Free-form rule metadata (e.g. chemistry dose_config).",
+    )
+    rule_group: str = Field(
+        ...,
+        description=(
+            "AUT-1145: Effective display group — the explicit override if set, "
+            "otherwise derived from the rule's mechanic (LogicService."
+            f"derive_rule_group, single source of truth). One of {sorted(_RULE_GROUP_SET)}."
+        ),
+    )
+    follows_plan: bool = Field(
+        False,
+        description="AUT-1232: Opt-in plan subscription (default False)",
+    )
+    plan_zone_id: Optional[str] = Field(
+        None, description="AUT-1232: Zone for plan subscription"
+    )
+    plan_subzone_config_id: Optional[uuid.UUID] = Field(
+        None, description="AUT-1232: Optional subzone_config for plan subscription"
+    )
+    plan_domain: Optional[str] = Field(
+        None, description="AUT-1232: Plan domain"
+    )
+    plan_measure: Optional[str] = Field(
+        None, description="AUT-1232: Plan measure"
+    )
+    warnings: List[str] = Field(
+        default_factory=list,
+        description=(
+            "AUT-1116: Non-blocking hints (e.g. paired-rule deadband overlap, "
+            "AUT-1117 pi_enhanced). HTTP 2xx is returned regardless — never a reject."
+        ),
     )
     degraded_since: Optional[datetime] = Field(
         None,
@@ -579,6 +856,59 @@ class RuleToggleResponse(BaseResponse):
     rule_name: str = Field(..., description="Rule name")
     enabled: bool = Field(..., description="New enabled state")
     previous_state: bool = Field(..., description="Previous enabled state")
+
+
+# =============================================================================
+# Bulk Quick-Update (AUT-1145, S0 — Gruppenkarten-Schnellfeld)
+# =============================================================================
+
+
+class RuleBulkQuickUpdateRequest(BaseModel):
+    """
+    Bulk quick-field update for a set of marked rules (Gruppenkarten-Schnellfeld).
+
+    Exactly the three field groups from the group-card quick-field (AUT-1145):
+    active (An/Aus), threshold_value / hysteresis_on_value+hysteresis_off_value
+    (Schwellwert/Zielwert), and the time-window fields (Zeiten). priority and
+    cooldown_seconds are DELIBERATELY absent — those stay editor-only.
+
+    Every provided field is applied per rule_id via the existing single-rule
+    LogicService.update_rule() path (see bulk_quick_update_rules) — this is a
+    thin loop, not a second write path.
+    """
+
+    ids: List[uuid.UUID] = Field(..., min_length=1, max_length=200)
+    active: Optional[bool] = Field(None, description="An/Aus")
+    threshold_value: Optional[float] = Field(
+        None, description="Neuer Zahlenwert fuer eine normale Schwellwert-Bedingung"
+    )
+    hysteresis_on_value: Optional[float] = Field(
+        None, description="Hysterese Ein-Wert (activate_above/activate_below je nach Modus)"
+    )
+    hysteresis_off_value: Optional[float] = Field(
+        None, description="Hysterese Aus-Wert (deactivate_below/deactivate_above je nach Modus)"
+    )
+    start_hour: Optional[int] = Field(None, ge=0, le=23)
+    start_minute: Optional[int] = Field(None, ge=0, le=59)
+    end_hour: Optional[int] = Field(None, ge=0, le=24)
+    end_minute: Optional[int] = Field(None, ge=0, le=59)
+    days_of_week: Optional[List[int]] = Field(
+        None, description="0=Monday..6=Sunday, None=leave unchanged"
+    )
+
+
+class RuleBulkQuickUpdateResult(BaseModel):
+    """Per-rule outcome of a bulk quick-update call."""
+
+    rule_id: uuid.UUID = Field(..., description="Rule ID")
+    success: bool = Field(..., description="Whether this rule was updated without error")
+    error: Optional[str] = Field(None, description="Error message if success=False")
+
+
+class RuleBulkQuickUpdateResponse(BaseResponse):
+    """Bulk quick-update response — one result per requested rule_id."""
+
+    results: List[RuleBulkQuickUpdateResult] = Field(...)
 
 
 # =============================================================================

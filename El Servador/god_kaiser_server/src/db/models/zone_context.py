@@ -35,7 +35,8 @@ class ZoneContext(Base, TimestampMixin):
         plant_count: Number of plants in this zone
         variety: Plant variety / strain
         substrate: Growing medium description
-        growth_phase: Current growth phase (e.g., 'seedling', 'vegetative', 'flower_week_3')
+        growth_phase: Current growth phase (canonical PLANT_PHASES key;
+            legacy zone-context strings are normalised on write)
         planted_date: Date when current cycle was planted
         expected_harvest: Expected harvest date
         responsible_person: Person responsible for this zone
@@ -92,7 +93,7 @@ class ZoneContext(Base, TimestampMixin):
     growth_phase: Mapped[Optional[str]] = mapped_column(
         String(50),
         nullable=True,
-        doc="Current growth phase (e.g., 'vegetative', 'flower_week_5')",
+        doc="Current growth phase (canonical PLANT_PHASES key)",
     )
 
     planted_date: Mapped[Optional[date]] = mapped_column(

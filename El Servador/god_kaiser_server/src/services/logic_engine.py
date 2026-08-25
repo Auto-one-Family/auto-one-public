@@ -5,10 +5,11 @@ Evaluates logic rules in background, triggers actuator actions based on sensor c
 """
 
 import asyncio
+import math
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 from ..core.logging_config import get_logger
 from ..core.metrics import (
@@ -20,10 +21,20 @@ from ..core.metrics import (
 from ..schemas.notification import NotificationCreate
 from sqlalchemy import select
 
-from ..db.repositories import LogicRepository, ESPRepository, SensorRepository
+from ..db.repositories import LogicRepository, ESPRepository, SensorRepository, ActuatorRepository
+from ..sensors.dose_calculators.active.linear_dose_calculator import calculate_dose_ml
+from ..sensors.dose_calculators.active.volume_share import (
+    compute_ratio_shares_from_volume,
+)
 from ..db.session import get_session
 from ..websocket.manager import WebSocketManager
 from .actuator_service import ActuatorService
+from .concentration_auto_cal import enrich_sequences_for_auto_cal
+from .logic_dose_ledger import (
+    collect_dispatched_dose_pumps,
+    extract_dose_pumps_from_actions,
+    record_logic_dose_to_ledger,
+)
 from .state_adoption_service import get_state_adoption_service
 from .notification_router import NotificationRouter
 from .logic.actions import (
@@ -41,9 +52,18 @@ from .logic.conditions import (
     DiagnosticsConditionEvaluator,
     HysteresisConditionEvaluator,
     MetadataFilterEvaluator,
+    NotRunningConditionEvaluator,
     SensorConditionEvaluator,
     SensorDiffConditionEvaluator,
     TimeConditionEvaluator,
+)
+from .logic.plan_setpoint_resolver import (
+    ResolveResult,
+    apply_resolved_value_to_conditions,
+    extract_static_setpoint,
+    log_applied_setpoint,
+    measure_to_sensor_type,
+    resolve_effective_setpoint,
 )
 
 logger = get_logger(__name__)
@@ -93,13 +113,22 @@ class LogicEngine:
         self._running = False
         self._task: Optional[asyncio.Task] = None
 
+        # AUT-1245: SequenceActionExecutor is created before condition wiring so
+        # NotRunningConditionEvaluator can observe the same in-memory instance.
+        shared_seq_exec: Optional[SequenceActionExecutor] = None
+
         # Setup condition evaluators
         if condition_evaluators is None:
+            shared_seq_exec = SequenceActionExecutor()
             sensor_eval = SensorConditionEvaluator()
             sensor_diff_eval = SensorDiffConditionEvaluator()
             time_eval = TimeConditionEvaluator()
             hysteresis_eval = HysteresisConditionEvaluator()
             diagnostics_eval = DiagnosticsConditionEvaluator(session_factory=session_factory)
+            not_running_eval = NotRunningConditionEvaluator(
+                sequence_executor=shared_seq_exec,
+                session_factory=session_factory,
+            )
             metadata_filter_eval = MetadataFilterEvaluator()
             compound_eval = CompoundConditionEvaluator(
                 [
@@ -108,6 +137,7 @@ class LogicEngine:
                     time_eval,
                     hysteresis_eval,
                     diagnostics_eval,
+                    not_running_eval,
                     metadata_filter_eval,
                 ]
             )
@@ -117,6 +147,7 @@ class LogicEngine:
                 time_eval,
                 hysteresis_eval,
                 diagnostics_eval,
+                not_running_eval,
                 metadata_filter_eval,
                 compound_eval,
             ]
@@ -130,7 +161,7 @@ class LogicEngine:
             notification_exec = NotificationActionExecutor()
             plugin_exec = PluginActionExecutor(session_factory=session_factory)
             diag_action_exec = DiagnosticsActionExecutor(session_factory=session_factory)
-            seq_exec = SequenceActionExecutor()
+            seq_exec = shared_seq_exec or SequenceActionExecutor()
             self.action_executors = [
                 actuator_exec,
                 delay_exec,
@@ -244,6 +275,7 @@ class LogicEngine:
         value: float,
         zone_id: Optional[str] = None,
         subzone_id: Optional[str] = None,
+        quality: Optional[str] = None,
     ) -> None:
         """
         Evaluate rules triggered by sensor data.
@@ -258,6 +290,8 @@ class LogicEngine:
             value: Sensor value
             zone_id: Zone ID at measurement time (Phase 0.1, for Phase 2.4 Subzone-Matching)
             subzone_id: Subzone ID at measurement time (Phase 0.1, for Phase 2.4 Subzone-Matching)
+            quality: AUT-994 B2: Data quality flag (e.g. "critical" when the value fails
+                SENSOR_PHYSICAL_LIMITS) — SensorConditionEvaluator refuses to dispatch on it.
         """
         try:
             # Get database session for this evaluation
@@ -287,6 +321,7 @@ class LogicEngine:
                     "timestamp": int(time.time()),
                     "zone_id": zone_id,
                     "subzone_id": subzone_id,
+                    "quality": quality,
                 }
 
                 # Evaluate each matching rule with batch-level lock tracking
@@ -437,6 +472,7 @@ class LogicEngine:
                                             rule.id,
                                             rule.rule_name,
                                             rule.priority,
+                                            rule_is_critical=bool(getattr(rule, "is_critical", False)),
                                             session=session,
                                             batch_locks=batch_locks,
                                         )
@@ -475,6 +511,7 @@ class LogicEngine:
                                             rule.id,
                                             rule.rule_name,
                                             rule.priority,
+                                            rule_is_critical=bool(getattr(rule, "is_critical", False)),
                                             session=session,
                                             batch_locks=batch_locks,
                                         )
@@ -606,12 +643,63 @@ class LogicEngine:
                 "rule_name": rule.rule_name,
                 "condition_index": 0,
             }
-            conditions_met = await self._check_conditions(
-                rule.trigger_conditions, context, logic_operator=rule.logic_operator
-            )
 
-            # Hysteresis deactivation: bypass cooldown (OFF must execute immediately)
-            if not conditions_met and context.get("_hysteresis_just_deactivated"):
+            # AUT-1233 (Welle 5 T3): Read-at-tick plan setpoint resolution.
+            # Opt-in only — resolve_effective_setpoint() returns None immediately
+            # (no DB query against plan_segments) for the vast majority of rules
+            # that never set follows_plan (T2). Non-subscribing rules fall through
+            # to evaluate_conditions with rule.trigger_conditions unchanged, exactly
+            # as before this issue (Given 2: bit-identical, zero extra DB access).
+            resolved_setpoint: Optional[ResolveResult] = None
+            evaluate_conditions = rule.trigger_conditions
+            if rule.follows_plan:
+                static_value, static_value_source = extract_static_setpoint(rule)
+                resolved_setpoint = await resolve_effective_setpoint(
+                    rule,
+                    session=logic_repo.session,
+                    static_value=static_value,
+                    static_value_source=static_value_source,
+                    at=context["current_time"],
+                )
+                if resolved_setpoint is not None:
+                    if resolved_setpoint.value is not None:
+                        sensor_type = measure_to_sensor_type(rule.plan_measure)
+                        if sensor_type:
+                            evaluate_conditions = apply_resolved_value_to_conditions(
+                                rule.trigger_conditions, sensor_type, resolved_setpoint.value
+                            )
+                    # Historical application log — written for EVERY evaluation of a
+                    # subscribing rule (plan_segment OR static_fallback origin), at the
+                    # actual read point, independent of whether conditions later pass.
+                    await log_applied_setpoint(
+                        rule, resolved_setpoint, logic_repo.session, context["current_time"]
+                    )
+
+            # AUT-1317: per-action condition_refs need individual results.
+            # Flat rules (no refs) keep a single _check_conditions call (D4 / wiring tests).
+            has_routed_actions = self._rule_has_routed_actions(rule.actions)
+            condition_results: Optional[List[bool]] = None
+            if has_routed_actions:
+                condition_results = await self._evaluate_individual_conditions(
+                    evaluate_conditions, context
+                )
+                conditions_met = self._combine_condition_results(
+                    condition_results, rule.logic_operator or "AND"
+                )
+            else:
+                conditions_met = await self._check_conditions(
+                    evaluate_conditions, context, logic_operator=rule.logic_operator
+                )
+
+            # Hysteresis deactivation: bypass cooldown (OFF must execute immediately).
+            # AUT-1317: do NOT reuse this rule-wide path for routed rules — it would
+            # force-OFF every actuator action (including geroutete ON). Routed safety
+            # OFF uses action-level cooldown bypass instead.
+            if (
+                not conditions_met
+                and context.get("_hysteresis_just_deactivated")
+                and not has_routed_actions
+            ):
                 off_actions = []
                 for action in rule.actions:
                     if action.get("type") in ("actuator_command", "actuator"):
@@ -634,6 +722,7 @@ class LogicEngine:
                         rule.id,
                         rule.rule_name,
                         rule.priority,
+                        rule_is_critical=bool(getattr(rule, "is_critical", False)),
                         session=logic_repo.session,
                         batch_locks=batch_locks,
                     )
@@ -670,11 +759,26 @@ class LogicEngine:
                             if blocked_by_conflict
                             else None
                         ),
+                        dose_ml=None,  # AO-5: OFF-Pfad = kein Volumen
+                        flow_rate_ml_s_snapshot=None,  # AO-5
                     )
                     await logic_repo.session.commit()
                 return
 
-            if not conditions_met:
+            # AUT-1317: select actions that pass their gate (flat = all under global).
+            if has_routed_actions and condition_results is not None:
+                actions_to_run = self._filter_actions_by_condition_gate(
+                    rule.actions,
+                    condition_results,
+                    conditions_met,
+                    rule.logic_operator or "AND",
+                )
+                should_early_exit = len(actions_to_run) == 0
+            else:
+                actions_to_run = list(rule.actions) if conditions_met else []
+                should_early_exit = not conditions_met
+
+            if should_early_exit:
                 # AUT-41: structured warning when stale sensor data caused conditions to fail
                 stale_reasons = context.get("_stale_reasons")
                 if stale_reasons:
@@ -735,6 +839,7 @@ class LogicEngine:
                                     rule.id,
                                     rule.rule_name,
                                     rule.priority,
+                                    rule_is_critical=bool(getattr(rule, "is_critical", False)),
                                     session=logic_repo.session,
                                     batch_locks=batch_locks,
                                 )
@@ -747,43 +852,193 @@ class LogicEngine:
                 return
 
             # Check cooldown (only for activation — prevents rapid ON-ON-ON).
-            # Rule-update triggers bypass cooldown: admin intent must take effect immediately.
+            # AUT-1135 (A4): rule-update triggers only bypass cooldown when the update
+            # actually changed conditions/actions (trigger_data["force"], set by
+            # on_rule_updated()) — a save that only touches timer parameters must
+            # respect the currently running cooldown.
             # Reconnect triggers bypass cooldown: LWT disconnect leaves stale execution history.
-            is_rule_update = trigger_data.get("type") == "rule_update"
+            # AUT-1317: safety-critical routed OFF bypasses cooldown on action level only.
+            is_forced_bypass = bool(trigger_data.get("force"))
             is_reconnect_trigger = trigger_data.get("type") == "reconnect"
-            if rule.cooldown_seconds and not is_rule_update and not is_reconnect_trigger:
+            if rule.cooldown_seconds and not is_forced_bypass and not is_reconnect_trigger:
                 last_execution = await logic_repo.get_last_execution(rule.id)
                 if last_execution:
                     time_since_last = datetime.now(timezone.utc) - last_execution.timestamp
                     if time_since_last.total_seconds() <= rule.cooldown_seconds:
-                        logger.debug(
-                            f"Rule {rule.rule_name} in cooldown: "
-                            f"{time_since_last.total_seconds():.1f}s < {rule.cooldown_seconds}s"
+                        remaining = int(rule.cooldown_seconds - time_since_last.total_seconds())
+                        safety_off_actions = [
+                            a
+                            for a in actions_to_run
+                            if self._is_safety_critical_routed_off(a)
+                        ]
+                        if safety_off_actions:
+                            logger.info(
+                                "Rule %s in cooldown but executing %d safety-critical "
+                                "routed OFF action(s) (action-level bypass)",
+                                rule.rule_name,
+                                len(safety_off_actions),
+                            )
+                            actions_to_run = safety_off_actions
+                        else:
+                            logger.debug(
+                                f"Rule {rule.rule_name} in cooldown: "
+                                f"{time_since_last.total_seconds():.1f}s < {rule.cooldown_seconds}s"
+                            )
+                            # AUT-1020: write skip entry so rule.health batch can surface it (S5)
+                            await logic_repo.log_execution(
+                                rule_id=rule.id,
+                                trigger_data={},
+                                actions=[],
+                                success=False,
+                                execution_ms=0,
+                                error_message=f"cooldown_active:{remaining}s",
+                                metadata={
+                                    "cooldown_seconds": rule.cooldown_seconds,
+                                    "remaining_seconds": remaining,
+                                    "consecutive_skip_count": 1,
+                                },
+                                is_skip=True,
+                            )
+                            await logic_repo.session.commit()
+                            return
+
+            # AUT-1115: Settle window after the last execution of a DIFFERENT rule
+            # (e.g. EC-Verduennen waits after Nachfuellen) — same skip pattern as the
+            # cooldown check above, just keyed on settle_after_rule_id instead of rule.id.
+            if (
+                rule.settle_after_rule_id
+                and rule.settle_seconds
+                and not is_forced_bypass
+                and not is_reconnect_trigger
+            ):
+                settle_last_execution = await logic_repo.get_last_execution(
+                    rule.settle_after_rule_id
+                )
+                if settle_last_execution:
+                    time_since_settle = (
+                        datetime.now(timezone.utc) - settle_last_execution.timestamp
+                    )
+                    if time_since_settle.total_seconds() <= rule.settle_seconds:
+                        settle_remaining = int(
+                            rule.settle_seconds - time_since_settle.total_seconds()
                         )
+                        logger.debug(
+                            f"Rule {rule.rule_name} settling after rule "
+                            f"{rule.settle_after_rule_id}: "
+                            f"{time_since_settle.total_seconds():.1f}s < {rule.settle_seconds}s"
+                        )
+                        await logic_repo.log_execution(
+                            rule_id=rule.id,
+                            trigger_data={},
+                            actions=[],
+                            success=False,
+                            execution_ms=0,
+                            error_message=f"settling:{settle_remaining}s",
+                            metadata={
+                                "settle_after_rule_id": str(rule.settle_after_rule_id),
+                                "settle_seconds": rule.settle_seconds,
+                                "remaining_seconds": settle_remaining,
+                                "consecutive_skip_count": 1,
+                            },
+                            is_skip=True,
+                        )
+                        await logic_repo.session.commit()
                         return
 
             # Check rate limiting
-            target_esp_ids = self._extract_target_esp_ids(rule.actions)
+            target_esp_ids = self._extract_target_esp_ids(actions_to_run)
             rate_result = await self.rate_limiter.check_rate_limit(
                 rule_id=str(rule.id),
                 rule_max_per_hour=rule.max_executions_per_hour,
+                rule_max_per_day=rule.max_executions_per_day,
+                rule_max_dose_ml_per_day=rule.max_dose_ml_per_day,
                 esp_ids=target_esp_ids,
             )
 
             if not rate_result["allowed"]:
                 increment_safety_trigger()
                 logger.warning(f"Rule {rule.rule_name} rate limited: {rate_result['reason']}")
+                # AUT-1020: write skip entry so rule.health batch can surface it (S5)
+                await logic_repo.log_execution(
+                    rule_id=rule.id,
+                    trigger_data={},
+                    actions=[],
+                    success=False,
+                    execution_ms=0,
+                    error_message=f"rate_limit:{rate_result['reason']}",
+                    metadata={"consecutive_skip_count": 1},
+                    is_skip=True,
+                )
+                await logic_repo.session.commit()
                 return
 
-            # Execute actions (conditions_met from earlier evaluation)
-            logger.info(f"Rule {rule.rule_name} triggered: executing {len(rule.actions)} actions")
+            # Execute actions (AUT-1317: gated subset; flat = all under global gate)
+            logger.info(
+                f"Rule {rule.rule_name} triggered: executing {len(actions_to_run)} actions"
+            )
+
+            # AUT-1112: chemistry feedforward (no-op unless rule_metadata.dose_config is set)
+            # AUT-1233: resolved_setpoint (None for non-subscribing rules) overrides
+            # dose_config["target_value"] with the SAME plan/static value already
+            # resolved above — one resolve per tick, reused at both docking points.
+            actions_with_dose_ml = await self._compute_chemistry_dose_ml(
+                rule,
+                actions_to_run,
+                trigger_data,
+                resolved_setpoint=resolved_setpoint,
+                session=logic_repo.session,
+            )
+            enriched_actions, failed_dose_actions = await self._enrich_actions_with_duration(
+                actions_with_dose_ml, session=logic_repo.session
+            )
+            # AUT-1371 K2: NULL-concentration → serielle Mess-Sequenz (Bestands-Bausteine).
+            # Runs after duration enrichment so dose steps already carry duration_seconds.
+            try:
+                enriched_actions = await enrich_sequences_for_auto_cal(
+                    logic_repo.session, enriched_actions
+                )
+            except Exception as auto_cal_err:
+                logger.error(
+                    "AUT-1371: sequence auto-cal enrichment failed for rule %s: %s",
+                    rule_name_snapshot,
+                    auto_cal_err,
+                    exc_info=True,
+                )
+            # AUT-1396: attach measure_bindings onto sequence actions (observe-only).
+            # Fast-path identity when rule has no measure_bindings.
+            try:
+                from .logic.measure_binding_hooks import attach_measure_bindings_to_sequences
+
+                enriched_actions = attach_measure_bindings_to_sequences(
+                    enriched_actions, getattr(rule, "rule_metadata", None)
+                )
+            except Exception as measure_bind_err:
+                logger.error(
+                    "AUT-1396: measure-binding attach failed for rule %s (observe-only): %s",
+                    rule_name_snapshot,
+                    measure_bind_err,
+                    exc_info=True,
+                )
+            has_dose_failure = bool(failed_dose_actions)
+
+            # AO-5: Dose-Audit-Extraktion aus enriched_actions (nutzt AO-2's _flow_rate_ml_s)
+            _dose_total = sum(
+                a.get("dose_ml", 0) or 0 for a in enriched_actions if a.get("dose_ml")
+            )
+            _flow_snapshot = next(
+                (a.get("_flow_rate_ml_s") for a in enriched_actions if a.get("_flow_rate_ml_s")),
+                None,
+            )
+            dose_ml_for_log = _dose_total if _dose_total > 0 else None
+            flow_rate_for_log = _flow_snapshot
 
             execution_result = await self._execute_actions(
-                rule.actions,
+                enriched_actions,
                 trigger_data,
                 rule.id,
                 rule.rule_name,
                 rule.priority,
+                rule_is_critical=bool(getattr(rule, "is_critical", False)),
                 session=logic_repo.session,
                 batch_locks=batch_locks,
             )
@@ -810,13 +1065,21 @@ class LogicEngine:
                 "message",
                 "Rule execution blocked due to actuator conflict",
             )
-            await logic_repo.log_execution(
+            success = not blocked_by_conflict and not has_dose_failure
+            if blocked_by_conflict:
+                error_message = conflict_message
+            elif has_dose_failure:
+                error_message = "One or more actions skipped: flow_rate_ml_s missing or uncalibrated"
+            else:
+                error_message = None
+
+            history = await logic_repo.log_execution(
                 rule_id=rule.id,
                 trigger_data=trigger_data,
-                actions=rule.actions,
-                success=not blocked_by_conflict,
+                actions=enriched_actions,  # AO-5: angereicherte Actions (mit duration_seconds)
+                success=success,
                 execution_ms=execution_time_ms,
-                error_message=conflict_message if blocked_by_conflict else None,
+                error_message=error_message,
                 metadata=(
                     {
                         "terminal_reason_code": "conflict_priority_lost",
@@ -825,6 +1088,19 @@ class LogicEngine:
                     if blocked_by_conflict
                     else None
                 ),
+                dose_ml=dose_ml_for_log,  # AO-5
+                flow_rate_ml_s_snapshot=flow_rate_for_log,  # AO-5
+            )
+            # AUT-1352: additive ledger logging only — does not alter dose timing.
+            await self._maybe_record_logic_dose_ledger(
+                session=logic_repo.session,
+                rule=rule,
+                logic_execution_id=history.id,
+                enriched_actions=enriched_actions,
+                execution_result=execution_result,
+                blocked_by_conflict=blocked_by_conflict,
+                has_dose_failure=has_dose_failure,
+                success=success,
             )
             await logic_repo.session.commit()
 
@@ -849,6 +1125,8 @@ class LogicEngine:
                         success=False,
                         execution_ms=execution_time_ms,
                         error_message=str(e),
+                        dose_ml=None,  # AO-5: Exception = kein Volumen abgegeben
+                        flow_rate_ml_s_snapshot=None,  # AO-5
                     )
                     await logic_repo.session.commit()
                 else:
@@ -860,6 +1138,105 @@ class LogicEngine:
                 logger.error(
                     "Failed to log execution error for %s: %s", rule_name_snapshot, log_err
                 )
+
+    @staticmethod
+    def _action_has_condition_refs(action: Dict[str, Any]) -> bool:
+        """True when action carries a non-empty condition_refs list (AUT-1317)."""
+        refs = action.get("condition_refs")
+        return isinstance(refs, list) and len(refs) > 0
+
+    @classmethod
+    def _rule_has_routed_actions(cls, actions: Sequence[Dict[str, Any]]) -> bool:
+        """True when any action opts into per-action condition gating."""
+        return any(cls._action_has_condition_refs(a) for a in actions)
+
+    @staticmethod
+    def _combine_condition_results(results: Sequence[bool], logic_operator: str) -> bool:
+        """Combine per-condition booleans with AND/OR (empty → False)."""
+        if not results:
+            return False
+        op = (logic_operator or "AND").upper()
+        if op == "OR":
+            return any(results)
+        return all(results)
+
+    @classmethod
+    def _action_passes_condition_gate(
+        cls,
+        action: Dict[str, Any],
+        condition_results: Sequence[bool],
+        global_conditions_met: bool,
+        rule_logic_operator: str,
+    ) -> bool:
+        """
+        AUT-1317 per-action gate.
+
+        - Absent/null/[] condition_refs → global rule gate (D4).
+        - Non-empty refs → subset under condition_op (default rule.logic_operator).
+        - Invalid index → fail closed.
+        """
+        refs = action.get("condition_refs")
+        if refs is None or refs == []:
+            return global_conditions_met
+        if not isinstance(refs, list):
+            return False
+        subset: List[bool] = []
+        for idx in refs:
+            if not isinstance(idx, int) or idx < 0 or idx >= len(condition_results):
+                return False
+            subset.append(bool(condition_results[idx]))
+        op = action.get("condition_op") or rule_logic_operator or "AND"
+        return cls._combine_condition_results(subset, str(op))
+
+    @classmethod
+    def _filter_actions_by_condition_gate(
+        cls,
+        actions: Sequence[Dict[str, Any]],
+        condition_results: Sequence[bool],
+        global_conditions_met: bool,
+        rule_logic_operator: str,
+    ) -> List[Dict[str, Any]]:
+        """Return actions whose condition gate is true."""
+        return [
+            a
+            for a in actions
+            if cls._action_passes_condition_gate(
+                a, condition_results, global_conditions_met, rule_logic_operator
+            )
+        ]
+
+    @classmethod
+    def _is_safety_critical_routed_off(cls, action: Dict[str, Any]) -> bool:
+        """
+        AUT-1317: safety-critical gerouteter OFF — cooldown bypass on action level.
+
+        Requires command=OFF, is_safety_critical, and non-empty condition_refs.
+        Must not use the rule-wide _hysteresis_just_deactivated path.
+        """
+        if not cls._action_has_condition_refs(action):
+            return False
+        if not action.get("is_safety_critical"):
+            return False
+        if action.get("type") not in ("actuator_command", "actuator"):
+            return False
+        return action.get("command") == "OFF"
+
+    async def _evaluate_individual_conditions(
+        self, conditions, context: dict
+    ) -> List[bool]:
+        """
+        Evaluate each top-level condition once; return per-index results (AUT-1317).
+
+        Needed so condition_refs can gate actions on subsets without relying only on
+        the aggregated conditions_met flag.
+        """
+        if isinstance(conditions, list):
+            results: List[bool] = []
+            for cond in conditions:
+                results.append(await self._check_conditions(cond, context))
+            return results
+        met = await self._check_conditions(conditions, context)
+        return [met]
 
     async def _check_conditions(
         self, conditions, sensor_data: dict, logic_operator: str = "AND"
@@ -992,6 +1369,11 @@ class LogicEngine:
             if cond_subzone and sensor_data.get("subzone_id") != cond_subzone:
                 return False
 
+            # AUT-994 B2: never dispatch on an implausible trigger reading. Mirrors the
+            # guard in SensorConditionEvaluator for the legacy/fallback condition path.
+            if sensor_data.get("quality") == "critical":
+                return False
+
             operator = condition.get("operator")
             threshold = condition.get("value")
             actual = sensor_data.get("value")
@@ -1061,6 +1443,411 @@ class LogicEngine:
             logger.warning(f"Unknown condition type: {cond_type}")
             return False
 
+    async def _compute_chemistry_dose_ml(
+        self,
+        rule,
+        actions: list[dict],
+        trigger_data: dict,
+        resolved_setpoint: Optional[ResolveResult] = None,
+        session=None,
+    ) -> list[dict]:
+        """
+        AUT-1112: Compute dose_ml from rule.rule_metadata["dose_config"] (Ist/Soll/
+        Volumen/Komponenten/Sicherheitsfaktor), before duration enrichment. AUT-1118
+        (S8): dose_config may also carry max_delta_per_dose, capping how much a
+        single dose may change current_value (Profi-Praxis-Amplituden-Deckel).
+
+        No-op (actions returned unchanged) unless dose_config is set — this is the
+        default for practically all existing rules, since rule_metadata defaults to
+        {}. Fail-open per action: any error (missing config, invalid values, exception
+        in calculate_dose_ml) skips only that action (WARNING-log, dose_ml left unset)
+        and never blocks the rule or other actions, mirroring the pattern at
+        _enrich_actions_with_duration()'s flow_rate_ml_s check below.
+
+        components are assigned positionally, one per actuator action in rule
+        order (top-level actions and sequence steps counted together) — e.g. for
+        a 2-step EC sequence (Pump A, Pump B), components[0] dimensions Pump A's
+        own dose_ml and components[1] dimensions Pump B's, each via its own
+        concentration/ratio_share (NOT the combined total for both pumps).
+
+        AUT-1355 U4-a: Divisor ``concentration`` is read from the matched pump's
+        ``actuator_configs.concentration`` when set (>0). Runtime fallback only:
+        if pump concentration is NULL/unset → ``dose_config.components[i].concentration``.
+        ``ratio_share`` stays on dose_config. Formula unchanged (only source of divisor).
+
+        AUT-1366 R1: ``dose_config.components[i].volume_share`` is the SSOT for
+        intended volume fraction (additive JSONB; missing → equal shares).
+
+        AUT-1367 R2: before ``calculate_dose_ml``, EC ``ratio_share`` is derived
+        via shared ``compute_ratio_shares_from_volume`` (same helper as Assist).
+        Formula body of ``calculate_dose_ml`` is unchanged.
+
+        AUT-1233 (Welle 5 T3): ``resolved_setpoint`` is the SAME ResolveResult
+        already produced once in _evaluate_rule for the primary (conditions)
+        docking point — passed through here, not re-resolved. Only overrides
+        dose_config["target_value"] when the rule subscribes AND a concrete
+        value exists (resolved_setpoint.value is not None); this covers both
+        origins (plan_segment and static_fallback) with the identical number
+        the rule's own static_value would have produced anyway, so the
+        override is a no-op for the static_fallback case in practice. Never
+        introduces new chemistry — calculate_dose_ml() below is unchanged.
+
+        Returns:
+            actions with dose_ml written onto matching actuator actions where computable
+        """
+        dose_config = (rule.rule_metadata or {}).get("dose_config")
+        if not dose_config:
+            return actions
+
+        current_value = trigger_data.get("value")
+        target_value = dose_config.get("target_value")
+        if resolved_setpoint is not None and resolved_setpoint.value is not None:
+            target_value = resolved_setpoint.value
+        volume_l = dose_config.get("volume_l")
+        components = dose_config.get("components") or []
+        safety_factor = dose_config.get("safety_factor")
+        dilution_value = dose_config.get("dilution_value")
+        max_delta_per_dose = dose_config.get("max_delta_per_dose")
+
+        esp_uuid_cache: dict[str, object] = {}
+        esp_repo = ESPRepository(session) if session is not None else None
+        actuator_repo = ActuatorRepository(session) if session is not None else None
+
+        async def _resolve_concentration(action: dict, component: dict) -> dict:
+            """Prefer pump SSOT concentration; fallback to dose_config component."""
+            if esp_repo is None or actuator_repo is None:
+                return component
+            esp_id_str = action.get("esp_id")
+            gpio_raw = action.get("gpio")
+            if not esp_id_str or gpio_raw is None:
+                return component
+            if esp_id_str not in esp_uuid_cache:
+                esp = await esp_repo.get_by_device_id(esp_id_str)
+                esp_uuid_cache[esp_id_str] = esp.id if esp else None
+            esp_uuid = esp_uuid_cache.get(esp_id_str)
+            if not esp_uuid:
+                return component
+            act = await actuator_repo.get_by_esp_and_gpio(esp_uuid, int(gpio_raw))
+            pump_conc = act.concentration if act is not None else None
+            if pump_conc is not None and pump_conc > 0:
+                return {**component, "concentration": pump_conc}
+            # Runtime fallback: dose_config.components[i].concentration (no backfill).
+            return component
+
+        # Collect actuator actions in the same positional order as components.
+        actuator_slots: list[tuple[str, int | None, dict]] = []
+        for action_idx, action in enumerate(actions):
+            action_type = action.get("type")
+            if action_type in ("actuator_command", "actuator"):
+                actuator_slots.append(("top", action_idx, action))
+            elif action_type == "sequence" and isinstance(action.get("steps"), list):
+                for step_idx, step in enumerate(action["steps"]):
+                    step_action = step.get("action") if isinstance(step, dict) else None
+                    if isinstance(step_action, dict) and step_action.get("type") in (
+                        "actuator_command",
+                        "actuator",
+                    ):
+                        actuator_slots.append(("seq", step_idx, step_action))
+
+        # Resolve pump concentrations for paired slots; keep dose_config
+        # concentration on unpaired components. Derive ratio_share over the
+        # FULL component set (Assist + LogicEngine share one helper) so a
+        # 2-channel recipe stays 0.5/0.5 even when only one action is present.
+        working_components: list[dict] = [dict(c) for c in components]
+        pair_count = min(len(actuator_slots), len(working_components))
+        for i in range(pair_count):
+            _kind, _idx, act = actuator_slots[i]
+            working_components[i] = await _resolve_concentration(
+                act, working_components[i]
+            )
+        if working_components:
+            try:
+                ratio_shares = compute_ratio_shares_from_volume(working_components)
+                for i, ratio in enumerate(ratio_shares):
+                    working_components[i] = {
+                        **working_components[i],
+                        "ratio_share": ratio,
+                    }
+            except Exception as e:
+                logger.warning(
+                    "Chemistry ratio_share derivation skipped for rule %s — %s",
+                    rule.rule_name,
+                    e,
+                )
+
+        async def _apply(action: dict, component: dict) -> dict:
+            try:
+                dose_ml = calculate_dose_ml(
+                    current_value=current_value,
+                    target_value=target_value,
+                    volume_l=volume_l,
+                    components=[component],
+                    safety_factor=safety_factor,
+                    dilution_value=dilution_value,
+                    max_delta_per_dose=max_delta_per_dose,
+                )
+                return {**action, "dose_ml": dose_ml}
+            except Exception as e:
+                logger.warning(
+                    "Chemistry dose_ml computation skipped for rule %s on %s:GPIO%s — %s",
+                    rule.rule_name, action.get("esp_id"), action.get("gpio"), e,
+                )
+                return action
+
+        component_iter = iter(working_components)
+
+        async def _apply_next(action: dict) -> dict:
+            component = next(component_iter, None)
+            if component is None:
+                return action  # no matching component configured — leave unchanged
+            return await _apply(action, component)
+
+        result = []
+        for action in actions:
+            action_type = action.get("type")
+            if action_type in ("actuator_command", "actuator"):
+                result.append(await _apply_next(action))
+            elif action_type == "sequence" and isinstance(action.get("steps"), list):
+                new_steps = []
+                for step in action["steps"]:
+                    step_action = step.get("action") if isinstance(step, dict) else None
+                    if isinstance(step_action, dict) and step_action.get("type") in (
+                        "actuator_command",
+                        "actuator",
+                    ):
+                        new_steps.append(
+                            {**step, "action": await _apply_next(step_action)}
+                        )
+                    else:
+                        new_steps.append(step)
+                result.append({**action, "steps": new_steps})
+            else:
+                result.append(action)
+
+        return result
+
+    async def _enrich_actions_with_duration(
+        self,
+        actions: list[dict],
+        session,
+    ) -> tuple[list[dict], list[dict]]:
+        """
+        Resolve dose_ml → duration_seconds for actuator actions.
+
+        For each action that has dose_ml set and > 0, looks up the actuator's
+        flow_rate_ml_s (AO-1 dedicated column) and computes
+        duration_seconds = ceil(dose_ml / flow_rate_ml_s), minimum 1 second.
+
+        Actions without dose_ml (or dose_ml <= 0) are passed through unchanged.
+        Actions where flow_rate_ml_s is missing or zero:
+          AUT-1384 — if ``duration_seconds > 0`` is already on the action,
+          pass through duration-driven (WARNING); otherwise move to failed.
+          No blind dosing without an explicit duration.
+
+        AUT-1111: type="sequence" actions are descended one level — each
+        step["action"] with dose_ml is resolved via the same lookup. If any
+        step's dose_ml cannot be resolved, the whole sequence action is moved
+        to failed (mirrors top-level behavior; sequence_executor is unchanged).
+
+        Returns:
+            enriched: actions that are ready for execution (duration resolved or not needed)
+            failed: actions skipped due to missing/uncalibrated flow_rate_ml_s
+                (and no usable duration_seconds fallback)
+        """
+        enriched, failed = [], []
+        esp_uuid_cache: dict[str, uuid.UUID | None] = {}
+        esp_repo = ESPRepository(session)
+        actuator_repo = ActuatorRepository(session)
+
+        async def _resolve(action: dict) -> dict | None:
+            """Resolve dose_ml -> duration_seconds for a single actuator action.
+
+            Returns the enriched action, or None if flow_rate_ml_s is missing/
+            uncalibrated and no duration_seconds fallback is available (AUT-1384).
+            """
+            dose_ml = action.get("dose_ml")
+            if dose_ml is None or dose_ml <= 0:
+                return action
+
+            esp_id_str = action.get("esp_id")
+            gpio_raw = action.get("gpio")
+            if esp_id_str not in esp_uuid_cache:
+                esp = await esp_repo.get_by_device_id(esp_id_str)
+                esp_uuid_cache[esp_id_str] = esp.id if esp else None
+            esp_uuid = esp_uuid_cache.get(esp_id_str)
+
+            flow_rate = None
+            if esp_uuid and gpio_raw is not None:
+                act = await actuator_repo.get_by_esp_and_gpio(esp_uuid, int(gpio_raw))
+                if act:
+                    flow_rate = act.flow_rate_ml_s  # dedizierte Spalte (AO-1), NICHT actuator_metadata
+
+            if not flow_rate or flow_rate <= 0:
+                # AUT-1384: Behälterwechsel / uncalibrated pump — duration fallback.
+                existing_duration = action.get("duration_seconds")
+                try:
+                    duration_fallback = (
+                        float(existing_duration)
+                        if existing_duration is not None
+                        else 0.0
+                    )
+                except (TypeError, ValueError):
+                    duration_fallback = 0.0
+                if duration_fallback > 0:
+                    logger.warning(
+                        "dose_ml=%.2f on %s:GPIO%s — flow_rate_ml_s missing or "
+                        "uncalibrated, using existing duration_seconds=%.1f "
+                        "(AUT-1384 duration fallback)",
+                        dose_ml,
+                        esp_id_str,
+                        gpio_raw,
+                        duration_fallback,
+                    )
+                    return {**action, "duration_seconds": duration_fallback}
+                logger.warning(
+                    "dose_ml=%.2f on %s:GPIO%s — flow_rate_ml_s missing or uncalibrated, dosing skipped",
+                    dose_ml, esp_id_str, gpio_raw
+                )
+                return None
+
+            duration_seconds = max(1, math.ceil(dose_ml / flow_rate))
+            return {**action, "duration_seconds": duration_seconds, "_flow_rate_ml_s": flow_rate}
+
+        for action in actions:
+            if action.get("type") == "sequence" and isinstance(action.get("steps"), list):
+                new_steps = []
+                sequence_failed = False
+                for step in action["steps"]:
+                    step_action = step.get("action") if isinstance(step, dict) else None
+                    if isinstance(step_action, dict) and step_action.get("dose_ml") is not None:
+                        resolved_step_action = await _resolve(step_action)
+                        if resolved_step_action is None:
+                            sequence_failed = True
+                            break
+                        new_steps.append({**step, "action": resolved_step_action})
+                    else:
+                        new_steps.append(step)
+
+                if sequence_failed:
+                    failed.append(action)
+                else:
+                    enriched.append({**action, "steps": new_steps})
+                continue
+
+            resolved_action = await _resolve(action)
+            if resolved_action is None:
+                failed.append(action)
+                continue
+            enriched.append(resolved_action)
+
+        return enriched, failed
+
+    def _sequence_executor(self) -> Optional[SequenceActionExecutor]:
+        for executor in self.action_executors or []:
+            if isinstance(executor, SequenceActionExecutor):
+                return executor
+        return None
+
+    async def _maybe_record_logic_dose_ledger(
+        self,
+        *,
+        session,
+        rule,
+        logic_execution_id: uuid.UUID,
+        enriched_actions: list,
+        execution_result: dict,
+        blocked_by_conflict: bool,
+        has_dose_failure: bool,
+        success: bool,
+    ) -> None:
+        """
+        AUT-1352 B1/B2/B3 — Hook after successful dispatch, before commit.
+
+        Flat actuator doses: write ``top_up_dose`` in the same DB TX as
+        ``log_execution``. Sequences are non-blocking
+        (``SequenceActionExecutor.execute`` returns ``status=running``) — attach
+        ledger context and write only on COMPLETED (see sequence_executor).
+
+        Q1 documented gap: sequence partial abort → no ledger row (WARNING there).
+        """
+        if blocked_by_conflict or has_dose_failure or not success:
+            return
+
+        action_results = execution_result.get("action_results") or []
+        dose_config = (getattr(rule, "rule_metadata", None) or {}).get("dose_config") or {}
+        dose_components = dose_config.get("components") or []
+
+        flat_pumps = collect_dispatched_dose_pumps(
+            enriched_actions=enriched_actions,
+            action_results=action_results,
+            dose_config_components=dose_components,
+        )
+        if flat_pumps:
+            try:
+                await record_logic_dose_to_ledger(
+                    session,
+                    rule_id=rule.id,
+                    logic_execution_id=logic_execution_id,
+                    pumps=flat_pumps,
+                    recipe_label=f"logic:{rule.id}",
+                )
+            except Exception as err:
+                # Fail-open: never block rule commit / dosing path.
+                logger.error(
+                    "AUT-1352: flat ledger write failed for rule %s: %s",
+                    getattr(rule, "rule_name", rule.id),
+                    err,
+                    exc_info=True,
+                )
+
+        seq_exec = self._sequence_executor()
+        if seq_exec is None:
+            return
+
+        for result, action in zip(action_results, enriched_actions):
+            if action.get("type") != "sequence":
+                continue
+            if not result.get("success"):
+                continue
+            data = result.get("data") or {}
+            if data.get("noop") or data.get("skipped"):
+                continue
+            sequence_id = data.get("sequence_id")
+            if not sequence_id:
+                continue
+            pumps = extract_dose_pumps_from_actions(
+                [action], dose_config_components=dose_components
+            )
+            if not pumps:
+                continue
+            status = seq_exec.get_sequence_status(sequence_id)
+            status_value = (status or {}).get("status")
+            if status_value == "completed":
+                try:
+                    await record_logic_dose_to_ledger(
+                        session,
+                        rule_id=rule.id,
+                        logic_execution_id=logic_execution_id,
+                        pumps=pumps,
+                        recipe_label=f"logic:{rule.id}",
+                    )
+                except Exception as err:
+                    logger.error(
+                        "AUT-1352: sequence ledger write (already completed) failed "
+                        "for %s: %s",
+                        sequence_id,
+                        err,
+                        exc_info=True,
+                    )
+            else:
+                seq_exec.attach_logic_dose_ledger_context(
+                    sequence_id,
+                    logic_execution_id=logic_execution_id,
+                    rule_id=rule.id,
+                    pumps=pumps,
+                    recipe_label=f"logic:{rule.id}",
+                )
+
     async def _execute_actions(
         self,
         actions: list,
@@ -1070,6 +1857,7 @@ class LogicEngine:
         rule_priority: int = 100,
         session=None,
         batch_locks: list | None = None,
+        rule_is_critical: bool = False,
     ) -> dict:
         """
         Execute actions for a triggered rule using modular executors.
@@ -1084,6 +1872,8 @@ class LogicEngine:
             batch_locks: Optional batch-level lock tracking list.
                 If provided, acquired locks are added here and NOT released
                 in this method (caller is responsible for batch release).
+            rule_is_critical: AUT-1336 — rule-level is_critical feeds existing ConflictManager
+                safety path (OR with action.is_safety_critical). Default False = unchanged.
         """
         execution_outcome = {
             "blocked_by_conflict": False,
@@ -1136,13 +1926,17 @@ class LogicEngine:
                 or None
             )
 
+            # AUT-1336 Option A: rule.is_critical wires into existing ConflictManager
+            # precedence (priority + is_safety_critical) — no new arbitration mechanism.
             can_execute, conflict = await self.conflict_manager.acquire_actuator(
                 esp_id=action.get("esp_id"),
                 gpio=action.get("gpio"),
                 rule_id=str(rule_id),
                 priority=rule_priority,
                 command=action.get("command", "ON"),
-                is_safety_critical=action.get("is_safety_critical", False),
+                is_safety_critical=bool(
+                    action.get("is_safety_critical", False) or rule_is_critical
+                ),
                 lock_ttl_seconds=lock_ttl,
             )
 
@@ -2164,7 +2958,9 @@ class LogicEngine:
         )
         return any(old_cond.get(k) != new_cond.get(k) for k in _THRESHOLD_KEYS)
 
-    async def on_rule_updated(self, rule_id: str, old_trigger_conditions=None) -> None:
+    async def on_rule_updated(
+        self, rule_id: str, old_trigger_conditions=None, force: bool = False
+    ) -> None:
         """React to a rule update committed via the API.
 
         Called by logic_service.update_rule() after the DB commit.  Performs
@@ -2190,6 +2986,13 @@ class LogicEngine:
                 hysteresis states whose conditions actually changed are reset).
                 When None, all hysteresis states for the rule are reset
                 unconditionally (legacy behavior).
+            force: AUT-1135 (A4). True only when the update actually changed
+                conditions or actions (computed by the caller). Propagated into
+                the Step-3c re-evaluation trigger's "force" field, which is the
+                sole thing `_evaluate_rule()` checks to decide whether to bypass
+                the rule's cooldown/settle window. A save that only touches timer
+                parameters (cooldown_seconds, settle_seconds, ...) must NOT reset
+                a currently running cooldown/settle window to zero.
         """
         try:
             async for session in get_session():
@@ -2268,6 +3071,7 @@ class LogicEngine:
                             rule.id,
                             rule.rule_name,
                             rule.priority,
+                            rule_is_critical=bool(getattr(rule, "is_critical", False)),
                             session=session,
                         )
                         await session.commit()
@@ -2291,6 +3095,7 @@ class LogicEngine:
                                 rule.id,
                                 rule.rule_name,
                                 rule.priority,
+                                rule_is_critical=bool(getattr(rule, "is_critical", False)),
                                 session=session,
                             )
                             await session.commit()
@@ -2331,6 +3136,7 @@ class LogicEngine:
                             rule.id,
                             rule.rule_name,
                             rule.priority,
+                            rule_is_critical=bool(getattr(rule, "is_critical", False)),
                             session=session,
                         )
                         await session.commit()
@@ -2350,6 +3156,7 @@ class LogicEngine:
                                     rule.id,
                                     rule.rule_name,
                                     rule.priority,
+                                    rule_is_critical=bool(getattr(rule, "is_critical", False)),
                                     session=session,
                                 )
                                 await session.commit()
@@ -2393,6 +3200,7 @@ class LogicEngine:
                     "type": "rule_update",
                     "rule_id": rule_id,
                     "timestamp": int(time.time()),
+                    "force": force,
                     **primary_sensor_data,
                 }
                 batch_locks: list = []
@@ -2466,6 +3274,7 @@ class LogicEngine:
                                     rule.id,
                                     rule.rule_name,
                                     rule.priority,
+                                    rule_is_critical=bool(getattr(rule, "is_critical", False)),
                                     session=session,
                                 )
                                 await session.commit()

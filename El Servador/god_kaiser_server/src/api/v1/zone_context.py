@@ -37,6 +37,19 @@ router = APIRouter(
 )
 
 
+async def _context_response(
+    service: ZoneContextService,
+    ctx,
+):
+    phase, source, plant_id = await service.resolve_zone_phase(ctx.zone_id)
+    return model_to_response(
+        ctx,
+        resolved_growth_phase=phase,
+        growth_phase_source=source,
+        active_plant_id=plant_id,
+    )
+
+
 # =============================================================================
 # List Endpoint
 # =============================================================================
@@ -60,7 +73,7 @@ async def list_zone_contexts(
 
     return ZoneContextListResponse(
         success=True,
-        data=[model_to_response(ctx) for ctx in contexts],
+        data=[await _context_response(service, ctx) for ctx in contexts],
         total_count=total,
     )
 
@@ -89,7 +102,7 @@ async def get_zone_context(
     if not ctx:
         raise HTTPException(status_code=404, detail=f"Zone context for '{zone_id}' not found")
 
-    return model_to_response(ctx)
+    return await _context_response(service, ctx)
 
 
 @router.put(
@@ -112,7 +125,7 @@ async def upsert_zone_context(
     await session.commit()
     await session.refresh(ctx)
 
-    return model_to_response(ctx)
+    return await _context_response(service, ctx)
 
 
 @router.patch(
@@ -139,7 +152,7 @@ async def patch_zone_context(
     await session.commit()
     await session.refresh(ctx)
 
-    return model_to_response(ctx)
+    return await _context_response(service, ctx)
 
 
 # =============================================================================

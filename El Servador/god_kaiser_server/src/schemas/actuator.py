@@ -67,6 +67,10 @@ ALL_ACTUATOR_TYPES = list(set(ACTUATOR_TYPES + ESP32_ACTUATOR_TYPES))
 
 ACTUATOR_COMMANDS = ["ON", "OFF", "PWM", "TOGGLE"]
 
+# AUT-1355: Structured recipe role on pump actuator_configs (nullable SSOT identity).
+DOSE_ROLES = ("part_a", "part_b", "ph_down", "generic")
+DOSE_ROLE_PATTERN = r"^(part_a|part_b|ph_down|generic)$"
+
 
 def normalize_actuator_type(esp_type: str) -> str:
     """
@@ -79,6 +83,20 @@ def normalize_actuator_type(esp_type: str) -> str:
         Server-side type (digital, pwm, servo)
     """
     return ACTUATOR_TYPE_MAPPING.get(esp_type.lower(), "digital")
+
+
+def normalize_actuator_status_value(raw_value: float) -> float:
+    """
+    Map ESP status ``value``/``pwm`` to canonical 0.0–1.0 duty (AUT-925/AUT-927).
+
+    ESP firmware publishes uint8 0–255; DB/API contract is normalized float 0.0–1.0.
+    Values already in 0.0–1.0 pass through unchanged.
+    """
+    if raw_value <= 1.0:
+        return max(0.0, min(1.0, raw_value))
+    if raw_value <= 255.0:
+        return max(0.0, min(1.0, raw_value / 255.0))
+    return 1.0
 
 
 # =============================================================================
@@ -205,6 +223,48 @@ class ActuatorConfigCreate(ActuatorConfigBase):
             "False = keep last state (explicit opt-out)."
         ),
     )
+    # AO-1: Enables server-side dose_ml -> duration_s conversion (AO-2).
+    flow_rate_ml_s: Optional[float] = Field(
+        None,
+        gt=0,
+        description=(
+            "AO-1: Pump flow rate calibration in ml/s. "
+            "NULL = uncalibrated. Must be > 0 when set."
+        ),
+    )
+    # AUT-1355 U4-a: Empiric concentration SSOT (µS/cm rise per ml per L).
+    concentration: Optional[float] = Field(
+        None,
+        gt=0,
+        description=(
+            "AUT-1355: Empiric µS/cm rise per ml per L (pump SSOT). "
+            "NULL = unset. Must be > 0 when set. Server-side only."
+        ),
+    )
+    # AUT-1355 U4-a: Structured recipe role for Salzrechner A/B identity.
+    dose_role: Optional[str] = Field(
+        None,
+        pattern=DOSE_ROLE_PATTERN,
+        description=(
+            "AUT-1355: Recipe role — part_a | part_b | ph_down | generic. "
+            "NULL = unset."
+        ),
+    )
+    # AUT-1410 SR-1: Soft recipe identity on the pump (display/traceability only).
+    stock_recipe_ref: Optional[uuid.UUID] = Field(
+        None,
+        description=(
+            "AUT-1410: Soft ref to stock_mix_recipes.id currently attached. "
+            "Display only — never used to derive concentration. NULL = unset."
+        ),
+    )
+    stock_prepared_at: Optional[datetime] = Field(
+        None,
+        description=(
+            "AUT-1410: When stock was last confirmed newly prepared. "
+            "Display only. NULL = unset."
+        ),
+    )
     subzone_id: Optional[str] = Field(
         None,
         max_length=50,
@@ -249,7 +309,7 @@ class ActuatorConfigUpdate(BaseModel):
 
     name: Optional[str] = Field(None, max_length=100)
     enabled: Optional[bool] = Field(None)
-    max_runtime_seconds: Optional[int] = Field(None, ge=1, le=86400)
+    max_runtime_seconds: Optional[int] = Field(None, ge=0, le=86400)
     cooldown_seconds: Optional[int] = Field(None, ge=0, le=3600)
     pwm_frequency: Optional[int] = Field(None, ge=1, le=40000)
     servo_min_pulse: Optional[int] = Field(None, ge=500, le=2500)
@@ -262,6 +322,39 @@ class ActuatorConfigUpdate(BaseModel):
         description=(
             "AUT-120: Override ESP32 fail-safe-on-disconnect default. "
             "None leaves the persisted value unchanged."
+        ),
+    )
+    # AO-1: Pump flow rate calibration override.
+    flow_rate_ml_s: Optional[float] = Field(
+        None,
+        gt=0,
+        description="AO-1: Pump flow rate calibration in ml/s. None = leave unchanged.",
+    )
+    # AUT-1355 U4-a: Empiric concentration override (pump SSOT).
+    concentration: Optional[float] = Field(
+        None,
+        gt=0,
+        description="AUT-1355: Empiric µS/cm rise per ml per L. None = leave unchanged.",
+    )
+    # AUT-1355 U4-a: Recipe role override.
+    dose_role: Optional[str] = Field(
+        None,
+        pattern=DOSE_ROLE_PATTERN,
+        description="AUT-1355: Recipe role part_a|part_b|ph_down|generic. None = leave unchanged.",
+    )
+    # AUT-1410 SR-1: Soft recipe identity override (display/traceability only).
+    stock_recipe_ref: Optional[uuid.UUID] = Field(
+        None,
+        description=(
+            "AUT-1410: Soft ref to stock_mix_recipes.id. "
+            "None = leave unchanged (explicit-null write path: SR-2)."
+        ),
+    )
+    stock_prepared_at: Optional[datetime] = Field(
+        None,
+        description=(
+            "AUT-1410: When stock was last confirmed newly prepared. "
+            "None = leave unchanged (explicit-null write path: SR-2)."
         ),
     )
     # Multi-Zone Device Scope (T13-R2)
@@ -312,6 +405,36 @@ class ActuatorConfigResponse(ActuatorConfigBase, TimestampMixin):
         description=(
             "AUT-120: Persisted fail-safe override. None means the ESP32 "
             "applies its own default (true for critical actuators)."
+        ),
+    )
+    # AO-1: Pump flow rate calibration (ml/s).
+    flow_rate_ml_s: Optional[float] = Field(
+        None,
+        description="AO-1: Pump flow rate calibration in ml/s. NULL = uncalibrated.",
+    )
+    # AUT-1355 U4-a: Empiric concentration SSOT (µS/cm rise per ml per L).
+    concentration: Optional[float] = Field(
+        None,
+        description="AUT-1355: Empiric µS/cm rise per ml per L. NULL = unset.",
+    )
+    # AUT-1355 U4-a: Structured recipe role.
+    dose_role: Optional[str] = Field(
+        None,
+        description="AUT-1355: Recipe role part_a|part_b|ph_down|generic. NULL = unset.",
+    )
+    # AUT-1410 SR-1: Soft recipe identity on the pump (display/traceability only).
+    stock_recipe_ref: Optional[uuid.UUID] = Field(
+        None,
+        description=(
+            "AUT-1410: Soft ref to stock_mix_recipes.id currently attached. "
+            "Display only. NULL = unset."
+        ),
+    )
+    stock_prepared_at: Optional[datetime] = Field(
+        None,
+        description=(
+            "AUT-1410: When stock was last confirmed newly prepared. "
+            "Display only. NULL = unset."
         ),
     )
     # Config status from ESP32 verification

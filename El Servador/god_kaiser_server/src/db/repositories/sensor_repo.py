@@ -688,6 +688,12 @@ class SensorRepository(BaseRepository[SensorConfig]):
             filters.append(SensorData.timestamp <= end_time)
         if quality:
             filters.append(SensorData.quality == quality.lower())
+        else:
+            # AUT-723 E3: warming_up is quality-only, not a numeric chart Y.
+            # Explicit ?quality=warming_up still returns those rows.
+            filters.append(
+                or_(SensorData.quality.is_(None), SensorData.quality != "warming_up")
+            )
         if data_source:
             filters.append(SensorData.data_source == data_source.value)
         if zone_id is not None:
@@ -1074,7 +1080,12 @@ class SensorRepository(BaseRepository[SensorConfig]):
         Returns:
             List of SensorData instances
         """
-        stmt = select(SensorData).where(SensorData.data_source == source.value)
+        stmt = select(SensorData).where(
+            SensorData.data_source == source.value,
+            # AUT-723 E3: warming_up is quality-only — exclude before limit
+            # so /data/by-source does not drop a full page of chartable rows.
+            or_(SensorData.quality.is_(None), SensorData.quality != "warming_up"),
+        )
         if esp_id:
             stmt = stmt.where(SensorData.esp_id == esp_id)
         stmt = stmt.order_by(SensorData.timestamp.desc()).limit(limit)

@@ -148,11 +148,18 @@ class ZoneAckHandler:
                 # Step 4: Get ESP device
                 device = await esp_repo.get_by_device_id(esp_id_str)
                 if not device:
+                    # Terminal outcome (AUT-898): a device without an esp_devices row
+                    # can never be reconciled by replay (e.g. ghost/mock client like
+                    # ESP_00000001). Returning False marks the durable-inbox event as a
+                    # retryable failure, so the inbound replay worker re-runs it every 5s
+                    # forever. Return True instead so the event is acked/removed after one
+                    # pass — the error stays visible via this WARNING, only the loop stops.
                     logger.warning(
                         f"[{ConfigErrorCode.ESP_DEVICE_NOT_FOUND}] "
-                        f"Zone ACK from unknown device: {esp_id_str}"
+                        f"Zone ACK from unknown device: {esp_id_str} — terminal, dropping "
+                        f"(no esp_devices row; replay can never succeed)"
                     )
-                    return False
+                    return True
 
                 # Step 4.5: Validate zone exists before writing FK
                 # Prevents ForeignKeyViolationError on server restart when ESP

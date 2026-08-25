@@ -67,6 +67,18 @@ class ConfigHandler:
     2. Validate payload structure
     3. Log ACK status (success/failed)
     4. Optional: Store in DB for audit log
+
+    Terminal authority (AUT-880): ``system/intent_outcome`` is the canonical
+    terminal source for config intents (accepted→persisted, 2-phase, monotonic
+    finality guard in ``CommandContractRepository.upsert_outcome``). This
+    ``config_response`` path is NOT a no-op and must not be removed:
+    - it is the sole writer of ``config_status="applied"`` (``_mark_config_applied``);
+    - it serves the frontend recovery lane (``config_response_guard_replay``).
+    Both terminal classes write ``command_outcomes`` under DISJOINT ``intent_id``
+    namespaces (intent_outcome → real intent_id; config_response →
+    ``terminal:config_response:<dedup_key>``), so the stale guard only
+    deduplicates repeated ``config_response`` deliveries and never competes with
+    intent_outcome ("no stale config_response wins").
     """
 
     async def handle_config_ack(self, topic: str, payload: dict) -> bool:
@@ -511,6 +523,22 @@ class ConfigHandler:
                             actuator.config_error = None
                             actuator.config_error_detail = None
                             updated_count += 1
+                            # AUT-1132 (A2): mirror the config-applied ack into
+                            # actuator_history (same table/write path as the
+                            # existing ON/OFF "ESP-Bestätigung" entries) so the
+                            # safety-limit config-push confirmation is visible in
+                            # ActuatorActionTimeline.vue — it only reads
+                            # actuator_history, never config_status/audit_logs.
+                            await actuator_repo.log_command(
+                                esp_id=esp.id,
+                                gpio=actuator.gpio,
+                                actuator_type=actuator.actuator_type,
+                                command_type="config_applied",
+                                value=None,
+                                success=True,
+                                issued_by="config_response",
+                                metadata={"config_type": config_type},
+                            )
 
                 if updated_count > 0:
                     await session.commit()
@@ -617,6 +645,26 @@ class ConfigHandler:
                                 config_status="failed",
                                 config_error=error_name,
                                 config_error_detail=error_detail[:200] if error_detail else None,
+                            )
+                            # AUT-1132 (A2, Akzeptanzkriterium 3): mirror the failure into
+                            # actuator_history too — same reasoning as the "applied" ack
+                            # above, so a Sicherheitslimit/Mindest-Pause that failed to
+                            # apply on the ESP shows up as a visible warning in
+                            # ActuatorActionTimeline.vue instead of only in config_status.
+                            await actuator_repo.log_command(
+                                esp_id=esp.id,
+                                gpio=gpio,
+                                actuator_type=actuator.actuator_type,
+                                command_type="config_failed",
+                                value=None,
+                                success=False,
+                                issued_by="config_response",
+                                error_message=(
+                                    f"{error_name}: {error_detail}"[:500]
+                                    if error_detail
+                                    else error_name
+                                ),
+                                metadata={"config_type": config_type},
                             )
                             logger.debug(f"Updated actuator config_status=failed for GPIO {gpio}")
                         else:

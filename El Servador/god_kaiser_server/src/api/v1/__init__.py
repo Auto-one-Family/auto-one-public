@@ -21,6 +21,11 @@ from .logs import router as logs_router
 from .notifications import router as notifications_router
 from .intent_outcomes import router as intent_outcomes_router
 from .plants import router as plants_router
+from .plan_segments import router as plan_segments_router
+from .stock_mix_recipes import router as stock_mix_recipes_router
+from .salt_compositions import router as salt_compositions_router
+from .applied_setpoint_logs import router as applied_setpoint_logs_router
+from .tanks import router as tanks_router
 from .sensors import router as sensors_router
 from .sensor_type_defaults import router as sensor_type_defaults_router
 from .sequences import router as sequences_router
@@ -67,6 +72,11 @@ api_v1_router.include_router(logs_router)  # Frontend error log ingestion
 api_v1_router.include_router(notifications_router)  # Phase 4A.1 - Notification Stack
 api_v1_router.include_router(intent_outcomes_router)  # P0.2 - Canonical intent outcome visibility
 api_v1_router.include_router(plants_router)  # AUT-222 - Phyta Plants Schema
+api_v1_router.include_router(plan_segments_router)  # AUT-1232 - Plan Segment CRUD (T5 precondition)
+api_v1_router.include_router(stock_mix_recipes_router)  # AUT-1361 - Stock mix recipe identity (P9)
+api_v1_router.include_router(salt_compositions_router)  # AUT-1418 - Salt composition library (B1)
+api_v1_router.include_router(applied_setpoint_logs_router)  # AUT-1236 - Applied setpoint log read (T6)
+api_v1_router.include_router(tanks_router)  # AUT-1217 - Tank / Ledger write API
 api_v1_router.include_router(users_router)
 api_v1_router.include_router(zone_router)
 api_v1_router.include_router(zones_router)  # Phase 0.3 - Zone Entity CRUD
@@ -111,6 +121,10 @@ __all__ = [
     "notifications_router",
     "intent_outcomes_router",
     "plants_router",
+    "plan_segments_router",
+    "stock_mix_recipes_router",
+    "salt_compositions_router",
+    "applied_setpoint_logs_router",
     "sequences_router",
     "subzone_router",
     "users_router",

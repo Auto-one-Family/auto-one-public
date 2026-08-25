@@ -199,27 +199,32 @@ class ActuatorAlertHandler:
                             f"{alert_info['message']} - {message}" if alert_info else message
                         )
 
-                    await ws_manager.broadcast(
-                        "actuator_alert",
-                        {
-                            "esp_id": esp_id_str,
-                            "gpio": gpio,
-                            "alert_type": alert_type,
-                            "severity": alert_info["severity"].lower() if alert_info else severity,
-                            "category": alert_info["category"] if alert_info else "SYSTEM",
-                            # Deutsche Meldung
-                            "message": german_message,
-                            # Deutsche Troubleshooting-Schritte
-                            "troubleshooting": alert_info["troubleshooting"] if alert_info else [],
-                            "recoverable": alert_info["recoverable"] if alert_info else True,
-                            "user_action_required": (
-                                alert_info["user_action_required"] if alert_info else False
-                            ),
-                            "zone_id": zone_id,
-                            "timestamp": payload.get("ts", 0),
-                            "correlation_id": ingress_cid,
-                        },
-                    )
+                    _alert_broadcast: dict = {
+                        "esp_id": esp_id_str,
+                        "gpio": gpio,
+                        "alert_type": alert_type,
+                        "severity": alert_info["severity"].lower() if alert_info else severity,
+                        "category": alert_info["category"] if alert_info else "SYSTEM",
+                        # Deutsche Meldung
+                        "message": german_message,
+                        # Deutsche Troubleshooting-Schritte
+                        "troubleshooting": alert_info["troubleshooting"] if alert_info else [],
+                        "recoverable": alert_info["recoverable"] if alert_info else True,
+                        "user_action_required": (
+                            alert_info["user_action_required"] if alert_info else False
+                        ),
+                        "zone_id": zone_id,
+                        "timestamp": payload.get("ts", 0),
+                        "correlation_id": ingress_cid,
+                    }
+                    # AUT-1020: forward runtime limit in seconds when FW provides limit_ms (S6)
+                    _limit_ms = payload.get("limit_ms")
+                    if _limit_ms is not None:
+                        try:
+                            _alert_broadcast["configured_seconds"] = int(_limit_ms) // 1000
+                        except (TypeError, ValueError):
+                            pass
+                    await ws_manager.broadcast("actuator_alert", _alert_broadcast)
                     logger.debug(f"Alert broadcast via WebSocket: {alert_type}")
                 except Exception as e:
                     logger.debug(f"WebSocket broadcast skipped: {e}")

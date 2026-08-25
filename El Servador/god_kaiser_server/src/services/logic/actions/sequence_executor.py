@@ -25,6 +25,7 @@ Status: IMPLEMENTED
 """
 
 import asyncio
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from enum import Enum
@@ -322,6 +323,24 @@ class SequenceActionExecutor(BaseActionExecutor):
                 "started_by": context.get("issued_by", "system"),
             },
         )
+        # AUT-1371: copy auto-cal plan from action onto progress for COMPLETED hook.
+        auto_cal_meta = action.get("_aut1371_auto_cal")
+        if isinstance(auto_cal_meta, dict) and auto_cal_meta:
+            progress.metadata["_aut1371_auto_cal"] = auto_cal_meta
+
+        # AUT-1396: copy measure_bindings onto progress (observe-only; parallel to auto-cal).
+        measure_bindings = action.get("_measure_bindings")
+        if isinstance(measure_bindings, list) and measure_bindings:
+            try:
+                from ..measure_binding_hooks import init_measure_binding_runtime
+
+                init_measure_binding_runtime(progress.metadata, measure_bindings)
+            except Exception as mb_err:
+                logger.error(
+                    "AUT-1396: init measure-binding runtime failed (observe-only): %s",
+                    mb_err,
+                    exc_info=True,
+                )
 
         # 4. Speichern
         async with self._lock:
@@ -476,6 +495,9 @@ class SequenceActionExecutor(BaseActionExecutor):
         progress.status = SequenceStatus.RUNNING
         progress.started_at = datetime.now(timezone.utc)
 
+        # AUT-1396: on_start sample (same lifecycle point as auto-cal start meta).
+        await self._run_measure_binding_hook(progress, "on_start")
+
         try:
             # Timeout für gesamte Sequenz
             async with asyncio.timeout(progress.max_duration_seconds):
@@ -520,6 +542,8 @@ class SequenceActionExecutor(BaseActionExecutor):
                             step_result.complete(
                                 True, f"Delay {step_def['delay_seconds']}s completed"
                             )
+                            # AUT-1396: settle delay completed → after_settle (observe-only).
+                            await self._run_measure_binding_hook(progress, "after_settle")
                         else:
                             # Action ausführen mit Timeout und Retry
                             action = step_def.get("action", {})
@@ -560,11 +584,16 @@ class SequenceActionExecutor(BaseActionExecutor):
                                     last_error or "Unknown error",
                                     SequenceErrorCode.SEQ_STEP_FAILED,
                                 )
+                            elif success:
+                                # AUT-1396: after successful action (observe-only).
+                                await self._run_measure_binding_hook(progress, "after_action")
 
                         # Post-Delay
                         delay_after = step_def.get("delay_after_seconds", 0)
                         if delay_after > 0:
                             await asyncio.sleep(delay_after)
+                            # AUT-1396: post-action settle → after_settle (observe-only).
+                            await self._run_measure_binding_hook(progress, "after_settle")
 
                         # WebSocket: Step Completed
                         await self._broadcast_event(
@@ -661,6 +690,14 @@ class SequenceActionExecutor(BaseActionExecutor):
         finally:
             progress.completed_at = datetime.now(timezone.utc)
 
+            # AUT-1352: ledger write only on full COMPLETED (Q1).
+            # Partial abort / timeout / cancel → no entry, but NEVER silent.
+            await self._finalize_logic_dose_ledger(progress)
+            # AUT-1371: concentration auto-cal write on full COMPLETED only.
+            await self._finalize_concentration_auto_cal(progress)
+            # AUT-1396: measure bindings on_complete (observe-only; never blocks).
+            await self._run_measure_binding_hook(progress, "on_complete")
+
             # WebSocket: Sequence Completed/Failed
             await self._broadcast_event(
                 "sequence_completed",
@@ -748,6 +785,161 @@ class SequenceActionExecutor(BaseActionExecutor):
             return True
 
         return False
+
+    def attach_logic_dose_ledger_context(
+        self,
+        sequence_id: str,
+        *,
+        logic_execution_id: Any,
+        rule_id: Any,
+        pumps: List[Dict[str, Any]],
+        recipe_label: Optional[str] = None,
+    ) -> bool:
+        """
+        AUT-1352: attach deferred ledger payload after ``log_execution``.
+
+        Sequence start is non-blocking; the Tick session closes before COMPLETED,
+        so the write opens a fresh session in ``_finalize_logic_dose_ledger``.
+        """
+        progress = self._sequences.get(sequence_id)
+        if progress is None:
+            logger.warning(
+                "AUT-1352: cannot attach ledger context — sequence %s not found",
+                sequence_id,
+            )
+            return False
+        progress.metadata = dict(progress.metadata or {})
+        progress.metadata["logic_dose_ledger"] = {
+            "logic_execution_id": str(logic_execution_id),
+            "rule_id": str(rule_id),
+            "pumps": list(pumps),
+            "recipe_label": recipe_label or f"logic:{rule_id}",
+        }
+        return True
+
+    async def _finalize_concentration_auto_cal(self, progress: "SequenceProgress") -> None:
+        """
+        AUT-1371: after COMPLETED, write/refine ``actuator_configs.concentration``.
+
+        Fail-closed inside ``finalize_auto_cal_from_sequence`` (no V_real → no write).
+        Partial abort / timeout / cancel → no write.
+        """
+        meta = (progress.metadata or {}).get("_aut1371_auto_cal")
+        if not meta:
+            return
+        if progress.status != SequenceStatus.COMPLETED:
+            logger.info(
+                "AUT-1371: skip auto-cal finalize — sequence %s ended as %s",
+                progress.sequence_id,
+                progress.status.value,
+            )
+            return
+        try:
+            from ....db.session import get_session
+            from ...concentration_auto_cal import finalize_auto_cal_from_sequence
+
+            async for session in get_session():
+                reports = await finalize_auto_cal_from_sequence(
+                    session,
+                    meta=meta,
+                    started_at=progress.started_at,
+                    completed_at=progress.completed_at,
+                )
+                await session.commit()
+                logger.info(
+                    "AUT-1371: auto-cal finalize sequence=%s reports=%d",
+                    progress.sequence_id,
+                    len(reports),
+                )
+                break
+        except Exception as err:
+            logger.error(
+                "AUT-1371: auto-cal finalize failed for %s: %s",
+                progress.sequence_id,
+                err,
+                exc_info=True,
+            )
+
+    async def _run_measure_binding_hook(
+        self, progress: "SequenceProgress", hook: str
+    ) -> None:
+        """
+        AUT-1396: observe-only measure-binding hook.
+
+        Fast-path: no runtime key → return immediately (no bindings = zero work).
+        Failures never alter sequence status / abort / timing.
+        """
+        if not (progress.metadata or {}).get("measure_binding_runtime"):
+            return
+        try:
+            from ..measure_binding_hooks import run_measure_binding_hook
+
+            session = None
+            # Prefer context session if a future caller attaches it; else helper opens one.
+            await run_measure_binding_hook(progress.metadata, hook=hook, session=session)
+        except Exception as err:
+            logger.error(
+                "AUT-1396: measure-binding hook=%s failed for %s (observe-only): %s",
+                hook,
+                progress.sequence_id,
+                err,
+                exc_info=True,
+            )
+
+    async def _finalize_logic_dose_ledger(self, progress: "SequenceProgress") -> None:
+        """
+        AUT-1352 Q1: write ledger only when status == COMPLETED.
+
+        v1 gap (documented, not silent): after partial abort (e.g. A ran, B
+        failed) no ``top_up_dose`` is written — LogicExecutionHistory /
+        sensor EC remain the recovery path. Upgrade later if needed.
+        """
+        payload = (progress.metadata or {}).get("logic_dose_ledger")
+        if not payload:
+            return
+
+        pumps = payload.get("pumps") or []
+        if not pumps:
+            return
+
+        if progress.status != SequenceStatus.COMPLETED:
+            steps_ok = len([r for r in progress.step_results if r.success])
+            logger.warning(
+                "AUT-1352 Q1 DOCUMENTED GAP: sequence %s ended as %s after %d/%d "
+                "successful steps — NO ledger top_up_dose written "
+                "(logic_execution_id=%s). Partial stock may be in tank; "
+                "sensor EC / failure history remain SSOT until v2 upgrade.",
+                progress.sequence_id,
+                progress.status.value,
+                steps_ok,
+                progress.total_steps,
+                payload.get("logic_execution_id"),
+            )
+            return
+
+        try:
+            from ....db.session import get_session
+            from ...logic_dose_ledger import record_logic_dose_to_ledger
+
+            rule_id = uuid.UUID(str(payload["rule_id"]))
+            logic_execution_id = uuid.UUID(str(payload["logic_execution_id"]))
+            async for session in get_session():
+                await record_logic_dose_to_ledger(
+                    session,
+                    rule_id=rule_id,
+                    logic_execution_id=logic_execution_id,
+                    pumps=pumps,
+                    recipe_label=payload.get("recipe_label"),
+                )
+                await session.commit()
+                break
+        except Exception as err:
+            logger.error(
+                "AUT-1352: deferred sequence ledger write failed for %s: %s",
+                progress.sequence_id,
+                err,
+                exc_info=True,
+            )
 
     def get_sequence_status(self, sequence_id: str) -> Optional[Dict[str, Any]]:
         """

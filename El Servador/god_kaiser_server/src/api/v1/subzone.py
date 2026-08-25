@@ -20,7 +20,7 @@ References:
 - El Frontend/Docs/System Flows/10-subzone-safemode-pin-assignment-flow-server-frontend.md
 """
 
-from typing import Annotated
+from typing import Annotated, Optional
 
 from fastapi import APIRouter, HTTPException, Path
 from pydantic import BaseModel, Field as PydanticField
@@ -36,8 +36,14 @@ from ...db.repositories import ESPRepository
 from ..deps import ActiveUser, DBSession, MQTTPublisher, OperatorUser
 from ...schemas.common import ErrorResponse
 from ...schemas.subzone import (
+    ActuatorSubzoneAssignRequest,
+    ActuatorSubzoneAssignmentInfo,
+    ActuatorSubzoneAssignmentsResponse,
     SafeModeRequest,
     SafeModeResponse,
+    SensorSubzoneAssignRequest,
+    SensorSubzoneAssignmentInfo,
+    SensorSubzoneAssignmentsResponse,
     SubzoneAssignRequest,
     SubzoneAssignResponse,
     SubzoneInfo,
@@ -60,9 +66,17 @@ router = APIRouter(
 
 
 class SubzoneMetadataUpdate(BaseModel):
-    """Partial update for subzone custom_data."""
+    """Partial update for subzone custom_data and optional position_label (AUT-1241)."""
 
     custom_data: dict = PydanticField(..., description="Subzone-specific metadata to merge")
+    position_label: Optional[str] = PydanticField(
+        None,
+        max_length=128,
+        description=(
+            "Optional free-text spatial position. "
+            "Omit to leave unchanged; empty string clears to null."
+        ),
+    )
 
 
 # =============================================================================
@@ -84,8 +98,10 @@ class SubzoneMetadataUpdate(BaseModel):
 
     **Requirements:**
     - ESP must be registered and provisioned
-    - ESP must have a zone assigned (zone_id required)
-    - parent_zone_id must match ESP's zone_id (if provided)
+    - ESP zone is optional (AUT-1156): if the ESP has no zone yet, the subzone
+      is created as a DB-only pre-config (`mqtt_sent=False`) and appears
+      zoneless until a zone is later assigned
+    - parent_zone_id must match ESP's zone_id (if both are set)
 
     **Flow:**
     1. Server validates request and ESP state
@@ -133,6 +149,7 @@ async def assign_subzone(
             subzone_name=request.subzone_name,
             parent_zone_id=request.parent_zone_id,
             safe_mode_active=request.safe_mode_active,
+            position_label=request.position_label,
         )
 
         # Commit transaction on success
@@ -351,7 +368,7 @@ async def update_subzone_metadata(
     session: DBSession,
     user: OperatorUser,
 ) -> SubzoneInfo:
-    """Update subzone custom_data metadata."""
+    """Update subzone custom_data metadata and optional position_label."""
     from ...db.repositories.subzone_repo import SubzoneRepository
 
     logger.info(f"Subzone metadata update for {esp_id}/{subzone_id} by {user.username}")
@@ -369,12 +386,18 @@ async def update_subzone_metadata(
 
     flag_modified(subzone, "custom_data")
 
+    # AUT-1241: only touch position_label when the client sent the field
+    if "position_label" in body.model_fields_set:
+        label = body.position_label
+        subzone.position_label = label.strip() if label and label.strip() else None
+
     await session.commit()
     await session.refresh(subzone)
 
     return SubzoneInfo(
         subzone_id=subzone.subzone_id,
         subzone_name=subzone.subzone_name,
+        position_label=subzone.position_label,
         parent_zone_id=subzone.parent_zone_id,
         assigned_gpios=subzone.assigned_gpios or [],
         safe_mode_active=subzone.safe_mode_active,
@@ -524,3 +547,376 @@ async def disable_safe_mode(
         if "not found" in error_msg:
             raise SubzoneNotFoundException(subzone_id, esp_id)
         raise ValidationException("safe_mode", error_msg)
+
+
+# =============================================================================
+# Sensor-Subzone n:m Assignment Endpoints (AUT-1155)
+# =============================================================================
+
+
+@router.post(
+    "/devices/{esp_id}/subzones/{subzone_id}/sensors",
+    response_model=SensorSubzoneAssignmentInfo,
+    responses={
+        200: {"description": "Sensor assigned to subzone"},
+        400: {"description": "Validation error or already assigned", "model": ErrorResponse},
+        404: {"description": "Subzone or sensor config not found", "model": ErrorResponse},
+    },
+    summary="Assign Sensor to Subzone",
+    description="""
+    Explicitly assign a sensor config to a subzone via the server-side n:m
+    junction table (`sensor_subzone_assignments`).
+
+    **Additive:** The existing `assigned_gpios` / `get_subzone_by_gpio()` path
+    for ESP32 config-push remains unchanged.  This endpoint is the server-side
+    logical assignment layer (AUT-1155 [B1]).
+
+    **Idempotency:** A second POST with the same sensor+subzone pair returns 400
+    (already assigned) rather than silently succeeding.
+    """,
+)
+async def assign_sensor_to_subzone(
+    esp_id: Annotated[
+        str,
+        Path(
+            description="ESP device ID (real or mock)",
+            pattern=ESP_ID_PATH_PATTERN,
+        ),
+    ],
+    subzone_id: Annotated[
+        str,
+        Path(description="Subzone ID", min_length=1, max_length=32),
+    ],
+    request: SensorSubzoneAssignRequest,
+    session: DBSession,
+    user: OperatorUser,
+) -> SensorSubzoneAssignmentInfo:
+    """Assign a sensor config to a subzone (n:m, AUT-1155)."""
+    logger.info(
+        "Sensor-subzone assign: %s/%s <- sensor %s by %s",
+        esp_id,
+        subzone_id,
+        request.sensor_config_id,
+        user.username,
+    )
+
+    esp_repo = ESPRepository(session)
+    service = SubzoneService(esp_repo=esp_repo, session=session)
+
+    try:
+        result = await service.assign_sensor_to_subzone(
+            esp_id=esp_id,
+            subzone_id=subzone_id,
+            sensor_config_id=request.sensor_config_id,
+            assigned_by=user.id,
+        )
+        await session.commit()
+        return result
+    except ValueError as e:
+        error_msg = str(e)
+        if "not found" in error_msg.lower():
+            raise SubzoneNotFoundException(subzone_id, esp_id)
+        raise ValidationException("sensor_subzone_assignment", error_msg)
+
+
+@router.delete(
+    "/devices/{esp_id}/subzones/{subzone_id}/sensors/{sensor_config_id}",
+    response_model=SubzoneRemoveResponse,
+    responses={
+        200: {"description": "Sensor assignment removed"},
+        404: {"description": "Assignment, subzone or sensor config not found", "model": ErrorResponse},
+    },
+    summary="Remove Sensor from Subzone",
+    description="""
+    Remove a sensor config from a subzone in the n:m junction table.
+
+    Returns 404 if the assignment does not exist.
+    The sensor config itself is not deleted.
+    """,
+)
+async def remove_sensor_from_subzone(
+    esp_id: Annotated[
+        str,
+        Path(
+            description="ESP device ID (real or mock)",
+            pattern=ESP_ID_PATH_PATTERN,
+        ),
+    ],
+    subzone_id: Annotated[
+        str,
+        Path(description="Subzone ID", min_length=1, max_length=32),
+    ],
+    sensor_config_id: Annotated[
+        str,
+        Path(description="UUID of the sensor_config to remove from this subzone"),
+    ],
+    session: DBSession,
+    user: OperatorUser,
+) -> SubzoneRemoveResponse:
+    """Remove sensor→subzone assignment (n:m, AUT-1155)."""
+    logger.info(
+        "Sensor-subzone remove: %s/%s <- sensor %s by %s",
+        esp_id,
+        subzone_id,
+        sensor_config_id,
+        user.username,
+    )
+
+    esp_repo = ESPRepository(session)
+    service = SubzoneService(esp_repo=esp_repo, session=session)
+
+    try:
+        deleted = await service.remove_sensor_from_subzone(
+            esp_id=esp_id,
+            subzone_id=subzone_id,
+            sensor_config_id=sensor_config_id,
+        )
+        if not deleted:
+            raise SubzoneNotFoundException(subzone_id, esp_id)
+        await session.commit()
+        return SubzoneRemoveResponse(
+            success=True,
+            message="Sensor assignment removed",
+            device_id=esp_id,
+            subzone_id=subzone_id,
+            mqtt_topic="",
+            mqtt_sent=False,
+        )
+    except ValueError as e:
+        error_msg = str(e)
+        if "not found" in error_msg.lower():
+            raise SubzoneNotFoundException(subzone_id, esp_id)
+        raise ValidationException("sensor_subzone_assignment", error_msg)
+
+
+@router.get(
+    "/devices/{esp_id}/subzones/{subzone_id}/sensors",
+    response_model=SensorSubzoneAssignmentsResponse,
+    responses={
+        200: {"description": "List of sensor assignments for this subzone"},
+        404: {"description": "Subzone not found", "model": ErrorResponse},
+    },
+    summary="List Sensor Assignments for Subzone",
+    description="""
+    Return all sensor configs explicitly assigned to a subzone via the n:m
+    junction table (`sensor_subzone_assignments`).
+
+    Note: This returns only assignments created through the n:m API
+    (AUT-1155 [B1]).  Sensors whose GPIO is listed in `assigned_gpios` but
+    which have no explicit n:m record are not included here.
+    """,
+)
+async def get_subzone_sensor_assignments(
+    esp_id: Annotated[
+        str,
+        Path(
+            description="ESP device ID (real or mock)",
+            pattern=ESP_ID_PATH_PATTERN,
+        ),
+    ],
+    subzone_id: Annotated[
+        str,
+        Path(description="Subzone ID", min_length=1, max_length=32),
+    ],
+    session: DBSession,
+    user: ActiveUser,
+) -> SensorSubzoneAssignmentsResponse:
+    """List sensor assignments for a subzone (n:m, AUT-1155)."""
+    esp_repo = ESPRepository(session)
+    service = SubzoneService(esp_repo=esp_repo, session=session)
+
+    try:
+        return await service.get_subzone_sensor_assignments(
+            esp_id=esp_id,
+            subzone_id=subzone_id,
+        )
+    except ValueError as e:
+        error_msg = str(e)
+        if "not found" in error_msg.lower():
+            raise SubzoneNotFoundException(subzone_id, esp_id)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
+# Actuator-Subzone n:m Assignment Endpoints (Verortung)
+# =============================================================================
+
+
+@router.post(
+    "/devices/{esp_id}/subzones/{subzone_id}/actuators",
+    response_model=ActuatorSubzoneAssignmentInfo,
+    responses={
+        200: {"description": "Actuator assigned to subzone"},
+        400: {"description": "Validation error or already assigned", "model": ErrorResponse},
+        404: {"description": "Subzone or actuator config not found", "model": ErrorResponse},
+    },
+    summary="Assign Actuator to Subzone",
+    description="""
+    Explicitly assign an actuator config to a subzone via the server-side n:m
+    junction table (`actuator_subzone_assignments`).
+
+    **Verortung only:** The existing `assigned_gpios` / `get_subzone_by_gpio()`
+    path for ESP32 config-push and Logic Engine control matching remains
+    unchanged. `assigned_subzones` JSON stays dead (AUT-227).
+    """,
+)
+async def assign_actuator_to_subzone(
+    esp_id: Annotated[
+        str,
+        Path(
+            description="ESP device ID (real or mock)",
+            pattern=ESP_ID_PATH_PATTERN,
+        ),
+    ],
+    subzone_id: Annotated[
+        str,
+        Path(description="Subzone ID", min_length=1, max_length=32),
+    ],
+    request: ActuatorSubzoneAssignRequest,
+    session: DBSession,
+    user: OperatorUser,
+) -> ActuatorSubzoneAssignmentInfo:
+    """Assign an actuator config to a subzone (n:m Verortung)."""
+    logger.info(
+        "Actuator-subzone assign: %s/%s <- actuator %s by %s",
+        esp_id,
+        subzone_id,
+        request.actuator_config_id,
+        user.username,
+    )
+
+    esp_repo = ESPRepository(session)
+    service = SubzoneService(esp_repo=esp_repo, session=session)
+
+    try:
+        result = await service.assign_actuator_to_subzone(
+            esp_id=esp_id,
+            subzone_id=subzone_id,
+            actuator_config_id=request.actuator_config_id,
+            assigned_by=user.id,
+        )
+        await session.commit()
+        return result
+    except ValueError as e:
+        error_msg = str(e)
+        if "not found" in error_msg.lower():
+            raise SubzoneNotFoundException(subzone_id, esp_id)
+        raise ValidationException("actuator_subzone_assignment", error_msg)
+
+
+@router.delete(
+    "/devices/{esp_id}/subzones/{subzone_id}/actuators/{actuator_config_id}",
+    response_model=SubzoneRemoveResponse,
+    responses={
+        200: {"description": "Actuator assignment removed"},
+        404: {"description": "Assignment, subzone or actuator config not found", "model": ErrorResponse},
+    },
+    summary="Remove Actuator from Subzone",
+    description="""
+    Remove an actuator config from a subzone in the n:m junction table.
+
+    Returns 404 if the assignment does not exist.
+    The actuator config itself is not deleted.
+    """,
+)
+async def remove_actuator_from_subzone(
+    esp_id: Annotated[
+        str,
+        Path(
+            description="ESP device ID (real or mock)",
+            pattern=ESP_ID_PATH_PATTERN,
+        ),
+    ],
+    subzone_id: Annotated[
+        str,
+        Path(description="Subzone ID", min_length=1, max_length=32),
+    ],
+    actuator_config_id: Annotated[
+        str,
+        Path(description="UUID of the actuator_config to remove from this subzone"),
+    ],
+    session: DBSession,
+    user: OperatorUser,
+) -> SubzoneRemoveResponse:
+    """Remove actuator→subzone assignment (n:m Verortung)."""
+    logger.info(
+        "Actuator-subzone remove: %s/%s <- actuator %s by %s",
+        esp_id,
+        subzone_id,
+        actuator_config_id,
+        user.username,
+    )
+
+    esp_repo = ESPRepository(session)
+    service = SubzoneService(esp_repo=esp_repo, session=session)
+
+    try:
+        deleted = await service.remove_actuator_from_subzone(
+            esp_id=esp_id,
+            subzone_id=subzone_id,
+            actuator_config_id=actuator_config_id,
+        )
+        if not deleted:
+            raise SubzoneNotFoundException(subzone_id, esp_id)
+        await session.commit()
+        return SubzoneRemoveResponse(
+            success=True,
+            message="Actuator assignment removed",
+            device_id=esp_id,
+            subzone_id=subzone_id,
+            mqtt_topic="",
+            mqtt_sent=False,
+        )
+    except ValueError as e:
+        error_msg = str(e)
+        if "not found" in error_msg.lower():
+            raise SubzoneNotFoundException(subzone_id, esp_id)
+        raise ValidationException("actuator_subzone_assignment", error_msg)
+
+
+@router.get(
+    "/devices/{esp_id}/subzones/{subzone_id}/actuators",
+    response_model=ActuatorSubzoneAssignmentsResponse,
+    responses={
+        200: {"description": "List of actuator assignments for this subzone"},
+        404: {"description": "Subzone not found", "model": ErrorResponse},
+    },
+    summary="List Actuator Assignments for Subzone",
+    description="""
+    Return all actuator configs explicitly assigned to a subzone via the n:m
+    junction table (`actuator_subzone_assignments`).
+
+    Note: This returns only Verortung assignments. Actuators whose GPIO is
+    listed in `assigned_gpios` but which have no explicit n:m record are not
+    included here.
+    """,
+)
+async def get_subzone_actuator_assignments(
+    esp_id: Annotated[
+        str,
+        Path(
+            description="ESP device ID (real or mock)",
+            pattern=ESP_ID_PATH_PATTERN,
+        ),
+    ],
+    subzone_id: Annotated[
+        str,
+        Path(description="Subzone ID", min_length=1, max_length=32),
+    ],
+    session: DBSession,
+    user: ActiveUser,
+) -> ActuatorSubzoneAssignmentsResponse:
+    """List actuator assignments for a subzone (n:m Verortung)."""
+    esp_repo = ESPRepository(session)
+    service = SubzoneService(esp_repo=esp_repo, session=session)
+
+    try:
+        return await service.get_subzone_actuator_assignments(
+            esp_id=esp_id,
+            subzone_id=subzone_id,
+        )
+    except ValueError as e:
+        error_msg = str(e)
+        if "not found" in error_msg.lower():
+            raise SubzoneNotFoundException(subzone_id, esp_id)
+        raise HTTPException(status_code=500, detail=str(e))

@@ -139,3 +139,23 @@ def resolve_calibration_for_processor(payload: Any) -> dict | None:
 
     # Legacy flat row (pre-canonical schema): the whole object is calibration.
     return dict(payload)
+
+
+def read_calibrated_at(payload: Any) -> Any:
+    """
+    Read ``calibrated_at`` for the sensor_health reminder interval.
+
+    Session apply stores the timestamp on ``derived`` (SSOT). Legacy rows
+    may still have a top-level value. Derived wins when both exist.
+    This function does not write or copy the field.
+    """
+    if payload is None or not isinstance(payload, dict):
+        return None
+
+    derived = payload.get("derived")
+    if isinstance(derived, dict):
+        cal_ts = derived.get("calibrated_at")
+        if cal_ts:
+            return cal_ts
+
+    return payload.get("calibrated_at") or None

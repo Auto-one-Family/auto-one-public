@@ -5,9 +5,15 @@ Phase: Monitor L2 Optimized Design
 Status: IMPLEMENTED
 
 Builds ZoneMonitorData for GET /zone/{zone_id}/monitor-data.
-Groups sensors/actuators by subzone (GPIO-based via subzone_configs.assigned_gpios).
+Groups sensors/actuators by subzone using complementary paths:
+  1. Legacy GPIO-based path: subzone_configs.assigned_gpios (1:1, first-match)
+  2. n:m path: sensor_subzone_assignments junction table (AUT-1179)
+  3. n:m path: actuator_subzone_assignments junction table (Verortung)
+
+Both entity n:m paths are unified additively with GPIO — neither replaces it.
 """
 
+import uuid
 from typing import Dict, List, Optional, Set, Tuple
 
 from sqlalchemy import select
@@ -36,15 +42,33 @@ class MonitorDataService:
     def __init__(self, session: AsyncSession):
         self.session = session
 
-    async def get_zone_monitor_data(self, zone_id: str) -> ZoneMonitorData:
+    async def get_zone_monitor_data(
+        self, zone_id: str, domain: Optional[str] = None
+    ) -> ZoneMonitorData:
         """
         Get full monitor data for a zone.
 
         Returns sensors and actuators grouped by subzone (GPIO-based).
         Devices without subzone assignment go to "Keine Subzone".
+
+        Args:
+            zone_id: Zone identifier.
+            domain: Optional report domain pre-filter (AUT-1087).  When set,
+                only ESP devices whose ``ESPDevice.domain`` matches are
+                included.  All downstream joins (sensor configs, VPD entries,
+                actuator configs) are scoped to the filtered ``esp_uuids`` list
+                transitively — no additional code required (VPD inheritance).
+                ``None`` (default) preserves the existing zone-wide behaviour.
         """
-        # 1. Load ESPs in zone
-        esp_stmt = select(ESPDevice).where(ESPDevice.zone_id == zone_id)
+        # 1. Load ESPs in zone (optionally pre-filtered by domain)
+        # Soft-deleted devices stay in zone_id but must not appear as live monitor sensors
+        # (otherwise L3 detail hits GET /sensors/data → ESPNotFoundError 404).
+        esp_stmt = select(ESPDevice).where(
+            ESPDevice.zone_id == zone_id,
+            ESPDevice.deleted_at.is_(None),
+        )
+        if domain is not None:
+            esp_stmt = esp_stmt.where(ESPDevice.domain == domain)
         esp_result = await self.session.execute(esp_stmt)
         esps = list(esp_result.scalars().all())
 
@@ -62,18 +86,61 @@ class MonitorDataService:
         zone_name = esps[0].zone_name or zone_id
         esp_uuids = [e.id for e in esps]
 
-        # 2. Build (esp_id, gpio) -> (subzone_id, subzone_name) map
+        # 2. Build (esp_id, gpio) -> (subzone_id, subzone_name) map (legacy GPIO path)
         #    Also collect all configured subzone keys (for empty subzone inclusion)
         gpio_to_subzone: Dict[Tuple[str, int], Tuple[str, str]] = {}
         configured_subzone_keys: Set[Tuple[Optional[str], str]] = set()
+        # NOTE (AUT-1156): subzones with parent_zone_id=NULL (pending zone assignment) are
+        # intentionally excluded here — they have no zone to be displayed in.  This is a
+        # display deficit, not data loss; the subzone record exists in DB and will appear
+        # once its parent_zone_id is set via zone transfer.
         subzone_configs_stmt = select(SubzoneConfig).where(SubzoneConfig.parent_zone_id == zone_id)
         subzone_result = await self.session.execute(subzone_configs_stmt)
-        for sc in subzone_result.scalars().all():
+        subzone_configs_list = list(subzone_result.scalars().all())
+        # Build PK→(subzone_id, subzone_name) index for n:m lookup (step 2b)
+        subzone_pk_to_info: Dict[uuid.UUID, Tuple[str, str]] = {}
+        for sc in subzone_configs_list:
             subzone_id = sc.subzone_id
             subzone_name = sc.subzone_name or subzone_id
             configured_subzone_keys.add((subzone_id, subzone_name))
+            subzone_pk_to_info[sc.id] = (subzone_id, subzone_name)
             for gpio in sc.assigned_gpios or []:
                 gpio_to_subzone[(sc.esp_id, gpio)] = (subzone_id, subzone_name)
+
+        # 2b. Build sensor_config_id -> set[(subzone_id, subzone_name)] from n:m table (AUT-1179)
+        #     Additive alongside the GPIO path — neither replaces the other.
+        from ..db.repositories.sensor_subzone_assignment_repo import SensorSubzoneAssignmentRepository
+        from ..db.repositories.actuator_subzone_assignment_repo import (
+            ActuatorSubzoneAssignmentRepository,
+        )
+
+        subzone_pks = list(subzone_pk_to_info.keys())
+        nm_repo = SensorSubzoneAssignmentRepository(self.session)
+        nm_assignments = await nm_repo.get_assignments_for_subzones(subzone_pks)
+        sensor_nm_subzones: Dict[uuid.UUID, Set[Tuple[str, str]]] = {}
+        for assignment in nm_assignments:
+            info = subzone_pk_to_info.get(assignment.subzone_config_id)
+            if info is None:
+                continue
+            sid = assignment.sensor_config_id
+            if sid not in sensor_nm_subzones:
+                sensor_nm_subzones[sid] = set()
+            sensor_nm_subzones[sid].add(info)
+
+        # 2c. Build actuator_config_id -> set[(subzone_id, subzone_name)] from n:m (Verortung)
+        actuator_nm_repo = ActuatorSubzoneAssignmentRepository(self.session)
+        actuator_nm_assignments = await actuator_nm_repo.get_assignments_for_subzones(
+            subzone_pks
+        )
+        actuator_nm_subzones: Dict[uuid.UUID, Set[Tuple[str, str]]] = {}
+        for assignment in actuator_nm_assignments:
+            info = subzone_pk_to_info.get(assignment.subzone_config_id)
+            if info is None:
+                continue
+            aid = assignment.actuator_config_id
+            if aid not in actuator_nm_subzones:
+                actuator_nm_subzones[aid] = set()
+            actuator_nm_subzones[aid].add(info)
 
         # 3. Load sensor configs for ESPs in zone
         sensor_stmt = (
@@ -112,6 +179,9 @@ class MonitorDataService:
             state_map[(s.esp_id, s.gpio)] = s
 
         # 7. Build sensor entries with latest values
+        #    AUT-1179: each sensor may appear in multiple subzones when assigned
+        #    via the n:m junction table.  The GPIO path (legacy) is still checked
+        #    first; both paths are unified and deduplicated by subzone_id.
         sensor_entries: Dict[Tuple[Optional[str], Optional[str]], List[SubzoneSensorEntry]] = {}
         alarm_count = 0
 
@@ -119,11 +189,30 @@ class MonitorDataService:
             if sc.gpio is None:
                 continue
             gpio = sc.gpio
-            subzone_id, subzone_name = gpio_to_subzone.get(
-                (device_id, gpio), (None, "Keine Subzone")
-            )
-            key = (subzone_id, subzone_name)
 
+            # --- Subzone resolution: union of n:m and GPIO paths ---
+            seen_subzone_ids: Set[Optional[str]] = set()
+            all_subzone_assignments: List[Tuple[Optional[str], str]] = []
+
+            # n:m path (AUT-1179): explicit assignments via junction table
+            for nm_subzone_id, nm_subzone_name in sensor_nm_subzones.get(sc.id, set()):
+                if nm_subzone_id not in seen_subzone_ids:
+                    seen_subzone_ids.add(nm_subzone_id)
+                    all_subzone_assignments.append((nm_subzone_id, nm_subzone_name))
+
+            # GPIO path (legacy): subzone_configs.assigned_gpios first-match
+            gpio_match = gpio_to_subzone.get((device_id, gpio))
+            if gpio_match:
+                g_subzone_id, g_subzone_name = gpio_match
+                if g_subzone_id not in seen_subzone_ids:
+                    seen_subzone_ids.add(g_subzone_id)
+                    all_subzone_assignments.append((g_subzone_id, g_subzone_name))
+
+            # No assignment on either path → fall back to "Keine Subzone"
+            if not all_subzone_assignments:
+                all_subzone_assignments = [(None, "Keine Subzone")]
+
+            # --- Resolve latest reading (once per physical sensor) ---
             reading = latest_readings.get((sc.esp_id, gpio, sc.sensor_type))
             raw_value = None
             quality = "unknown"
@@ -138,34 +227,56 @@ class MonitorDataService:
                 quality = reading.quality or "unknown"
                 last_read = reading.timestamp.isoformat() if reading.timestamp else None
 
+            # Count alarm once per physical sensor regardless of subzone multiplicity
             if quality in ("error", "bad"):
                 alarm_count += 1
 
             unit = self._get_sensor_unit(sc.sensor_type)
-            entry = SubzoneSensorEntry(
-                esp_id=device_id,
-                gpio=gpio,
-                sensor_type=sc.sensor_type,
-                name=sc.sensor_name or None,
-                raw_value=raw_value,
-                unit=unit,
-                quality=quality,
-                last_read=last_read,
-                operating_mode=sc.operating_mode,
-            )
-            if key not in sensor_entries:
-                sensor_entries[key] = []
-            sensor_entries[key].append(entry)
+
+            # Place one entry per assigned subzone
+            for subzone_id, subzone_name in all_subzone_assignments:
+                key = (subzone_id, subzone_name)
+                if key not in sensor_entries:
+                    sensor_entries[key] = []
+                sensor_entries[key].append(
+                    SubzoneSensorEntry(
+                        esp_id=device_id,
+                        gpio=gpio,
+                        sensor_type=sc.sensor_type,
+                        name=sc.sensor_name or None,
+                        raw_value=raw_value,
+                        unit=unit,
+                        quality=quality,
+                        last_read=last_read,
+                        operating_mode=sc.operating_mode,
+                    )
+                )
 
         # 8. Build actuator entries
+        #    Verortung n:m: each actuator may appear in multiple subzones when
+        #    assigned via actuator_subzone_assignments. GPIO path remains.
         actuator_entries: Dict[Tuple[Optional[str], Optional[str]], List[SubzoneActuatorEntry]] = {}
 
         for ac, device_id in actuator_configs:
             gpio = ac.gpio
-            subzone_id, subzone_name = gpio_to_subzone.get(
-                (device_id, gpio), (None, "Keine Subzone")
-            )
-            key = (subzone_id, subzone_name)
+
+            seen_subzone_ids: Set[Optional[str]] = set()
+            all_subzone_assignments: List[Tuple[Optional[str], str]] = []
+
+            for nm_subzone_id, nm_subzone_name in actuator_nm_subzones.get(ac.id, set()):
+                if nm_subzone_id not in seen_subzone_ids:
+                    seen_subzone_ids.add(nm_subzone_id)
+                    all_subzone_assignments.append((nm_subzone_id, nm_subzone_name))
+
+            gpio_match = gpio_to_subzone.get((device_id, gpio))
+            if gpio_match:
+                g_subzone_id, g_subzone_name = gpio_match
+                if g_subzone_id not in seen_subzone_ids:
+                    seen_subzone_ids.add(g_subzone_id)
+                    all_subzone_assignments.append((g_subzone_id, g_subzone_name))
+
+            if not all_subzone_assignments:
+                all_subzone_assignments = [(None, "Keine Subzone")]
 
             state = state_map.get((ac.esp_id, gpio))
             current_state = False
@@ -178,18 +289,20 @@ class MonitorDataService:
                 pwm_value = float(state.current_value or 0.0)
                 emergency_stopped = state.state == "emergency_stop"
 
-            entry = SubzoneActuatorEntry(
-                esp_id=device_id,
-                gpio=gpio,
-                actuator_type=ac.actuator_type,
-                name=ac.actuator_name or None,
-                state=current_state,
-                pwm_value=pwm_value,
-                emergency_stopped=emergency_stopped,
-            )
-            if key not in actuator_entries:
-                actuator_entries[key] = []
-            actuator_entries[key].append(entry)
+            for subzone_id, subzone_name in all_subzone_assignments:
+                key = (subzone_id, subzone_name)
+                entry = SubzoneActuatorEntry(
+                    esp_id=device_id,
+                    gpio=gpio,
+                    actuator_type=ac.actuator_type,
+                    name=ac.actuator_name or None,
+                    state=current_state,
+                    pwm_value=pwm_value,
+                    emergency_stopped=emergency_stopped,
+                )
+                if key not in actuator_entries:
+                    actuator_entries[key] = []
+                actuator_entries[key].append(entry)
 
         # 9. Merge sensors and actuators into SubzoneGroups
         #    Include empty subzones (from SubzoneConfig) that have no sensors/actuators

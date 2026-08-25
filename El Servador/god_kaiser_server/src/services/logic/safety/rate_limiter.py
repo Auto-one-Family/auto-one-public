@@ -130,7 +130,12 @@ class RateLimiter:
         return self._esp_buckets[esp_id]
 
     async def check_rate_limit(
-        self, rule_id: str, rule_max_per_hour: Optional[int], esp_ids: list
+        self,
+        rule_id: str,
+        rule_max_per_hour: Optional[int],
+        esp_ids: list,
+        rule_max_per_day: Optional[int] = None,
+        rule_max_dose_ml_per_day: Optional[float] = None,
     ) -> dict:
         """
         Prüft ob eine Rule ausgeführt werden darf.
@@ -139,6 +144,8 @@ class RateLimiter:
             rule_id: ID der Rule
             rule_max_per_hour: Max Executions pro Stunde (aus DB-Feld!)
             esp_ids: Liste der betroffenen ESP-IDs (für Actions)
+            rule_max_per_day: Max Executions pro Tag / rolling 24h window (aus DB-Feld, None=unlimited)
+            rule_max_dose_ml_per_day: Max Dosis ml pro Tag / rolling 24h window (aus DB-Feld, None=unlimited)
 
         Returns:
             Dict mit {"allowed": bool, "reason": str, ...}
@@ -193,6 +200,56 @@ class RateLimiter:
                     }
             except Exception as e:
                 logger.error(f"Error checking hourly limit for rule {rule_id}: {e}")
+                # Bei Fehler: Erlauben (fail-open für Verfügbarkeit)
+
+        # 4. Per-Rule Daily Execution-Count Limit (DB-basiert!)
+        if rule_max_per_day and self.logic_repo:
+            try:
+                import uuid
+
+                rule_uuid = uuid.UUID(rule_id) if isinstance(rule_id, str) else rule_id
+
+                daily_count = await self.logic_repo.get_execution_count_last_24h(rule_uuid)
+
+                if daily_count >= rule_max_per_day:
+                    logger.warning(
+                        f"Rule {rule_id} daily limit exceeded: "
+                        f"{daily_count}/{rule_max_per_day}"
+                    )
+                    return {
+                        "allowed": False,
+                        "reason": f"Rule exceeded {rule_max_per_day} executions per day",
+                        "wait_seconds": 86400,
+                        "current_rate": daily_count,
+                        "limit": rule_max_per_day,
+                    }
+            except Exception as e:
+                logger.error(f"Error checking daily execution limit for rule {rule_id}: {e}")
+                # Bei Fehler: Erlauben (fail-open für Verfügbarkeit)
+
+        # 5. Per-Rule Daily Dose-ml Limit (DB-basiert! AO-5-abhängig)
+        if rule_max_dose_ml_per_day and self.logic_repo:
+            try:
+                import uuid
+
+                rule_uuid = uuid.UUID(rule_id) if isinstance(rule_id, str) else rule_id
+
+                daily_dose_ml = await self.logic_repo.get_dose_ml_last_24h(rule_uuid)
+
+                if daily_dose_ml >= rule_max_dose_ml_per_day:
+                    logger.warning(
+                        f"Rule {rule_id} daily dose limit exceeded: "
+                        f"{daily_dose_ml}/{rule_max_dose_ml_per_day}ml"
+                    )
+                    return {
+                        "allowed": False,
+                        "reason": f"Rule exceeded {rule_max_dose_ml_per_day}ml per day",
+                        "wait_seconds": 86400,
+                        "current_rate": daily_dose_ml,
+                        "limit": rule_max_dose_ml_per_day,
+                    }
+            except Exception as e:
+                logger.error(f"Error checking daily dose limit for rule {rule_id}: {e}")
                 # Bei Fehler: Erlauben (fail-open für Verfügbarkeit)
 
         return {"allowed": True, "reason": "OK"}

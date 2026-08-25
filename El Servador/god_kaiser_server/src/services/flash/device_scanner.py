@@ -8,6 +8,7 @@ on Windows without USB passthrough.
 """
 
 import os
+import platform
 import sys
 from pathlib import Path
 
@@ -17,6 +18,18 @@ from ...core.logging_config import get_logger
 from ...schemas.flash import UsbDevice
 
 logger = get_logger(__name__)
+
+# --- Runtime host detection (no magic strings) ---
+
+HOST_NATIVE_WINDOWS = "native-windows"
+HOST_NATIVE_MACOS = "native-macos"
+HOST_DOCKER_DESKTOP = "docker-desktop"
+HOST_LINUX = "linux-host"
+
+# Kernel-release markers that identify a Linux container running under
+# Docker Desktop (Windows/Mac). WSL2 backend → "microsoft"/"wsl";
+# legacy Hyper-V/Mac backend → "linuxkit".
+_DOCKER_DESKTOP_KERNEL_MARKERS = ("microsoft", "wsl", "linuxkit")
 
 # --- USB VID/PID constants (no magic numbers) ---
 
@@ -78,6 +91,33 @@ def is_usb_scanning_supported() -> bool:
 
     dev = Path("/dev")
     return bool(list(dev.glob("ttyUSB*")) or list(dev.glob("ttyACM*")))
+
+
+def detect_runtime_host() -> str:
+    """
+    Best-effort detection of the host the server actually runs on.
+
+    Used to pick the correct degraded-mode guidance: a Linux Docker container
+    reports ``sys.platform == "linux"`` regardless of whether the Docker host
+    is a Raspberry Pi (where ``docker restart`` re-binds the serial device) or
+    Windows/macOS via Docker Desktop (where USB passthrough needs usbipd-win or
+    running the server natively).
+
+    Returns one of:
+        HOST_NATIVE_WINDOWS — server runs directly on Windows (pyserial sees COM ports).
+        HOST_NATIVE_MACOS   — server runs directly on macOS.
+        HOST_DOCKER_DESKTOP — Linux container under Docker Desktop / WSL2 (Windows/Mac host).
+        HOST_LINUX          — Linux container/process on a real Linux host (e.g. Raspberry Pi).
+    """
+    if sys.platform == "win32":
+        return HOST_NATIVE_WINDOWS
+    if sys.platform == "darwin":
+        return HOST_NATIVE_MACOS
+
+    release = platform.uname().release.lower()
+    if any(marker in release for marker in _DOCKER_DESKTOP_KERNEL_MARKERS):
+        return HOST_DOCKER_DESKTOP
+    return HOST_LINUX
 
 
 def scan_usb_devices() -> list[UsbDevice]:

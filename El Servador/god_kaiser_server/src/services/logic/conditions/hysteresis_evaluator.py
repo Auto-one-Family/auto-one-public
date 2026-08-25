@@ -206,6 +206,14 @@ class HysteresisConditionEvaluator(BaseConditionEvaluator):
             state = self._get_state(context)
             return state.is_active
 
+        # AUT-994 B2: a trigger reading flagged quality="critical" (SENSOR_PHYSICAL_LIMITS
+        # violation, sensor_handler.py) is not a valid measurement. Hold the current state
+        # without transitioning, so an implausible value can neither ACTIVATE (spurious
+        # dose start) nor DEACTIVATE (spurious OFF) the actuator. Mirrors the value-is-None
+        # handling below.
+        if sensor_data.get("quality") == "critical":
+            return self._get_state(context).is_active
+
         # 2. Hole den Wert
         value = sensor_data.get("value")
         if value is None:

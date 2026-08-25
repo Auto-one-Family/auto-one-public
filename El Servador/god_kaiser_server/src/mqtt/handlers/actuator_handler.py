@@ -25,7 +25,7 @@ from ...db.models.enums import DataSource
 from ...db.repositories import ActuatorRepository, ESPRepository
 from ...db.session import resilient_session
 from ...services.state_adoption_service import get_state_adoption_service
-from ...schemas.actuator import normalize_actuator_type
+from ...schemas.actuator import normalize_actuator_status_value, normalize_actuator_type
 from ..topics import TopicBuilder
 
 logger = get_logger(__name__)
@@ -56,7 +56,7 @@ class ActuatorStatusHandler:
             "gpio": 18,
             "actuator_type": "pump",
             "state": "on",               // or true/false (boolean) - both accepted
-            "value": 255,                // or "pwm": 255 - both accepted
+            "value": 255,                // or "pwm": 255 - ESP uint8 duty; normalized to 0.0–1.0 for DB
             "last_command": "on",
             "runtime_ms": 3600000,       // or "uptime": 3600
             "error": null
@@ -153,7 +153,8 @@ class ActuatorStatusHandler:
                     state = "on" if state else "off"
 
                 # Accept both "value" and "pwm" for PWM value
-                value = float(payload.get("value", payload.get("pwm", 0.0)))
+                raw_value = float(payload.get("value", payload.get("pwm", 0.0)))
+                value = normalize_actuator_status_value(raw_value)
                 last_command = payload.get("last_command", payload.get("command", ""))
                 error = payload.get("error", None)
 

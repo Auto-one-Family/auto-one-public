@@ -22,14 +22,23 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.logging_config import get_logger
 from ..db.models.zone_context import ZoneContext
+from ..db.repositories.plant_repo import PlantRepository
 from ..db.repositories.zone_context_repo import ZoneContextRepository
 from ..schemas.zone_context import ZoneContextResponse
+from .growth_phase_vocabulary import majority_phase, normalize_growth_phase
 
 logger = get_logger(__name__)
 
 
-def model_to_response(ctx: ZoneContext) -> ZoneContextResponse:
+def model_to_response(
+    ctx: ZoneContext,
+    *,
+    resolved_growth_phase: Optional[str] = None,
+    growth_phase_source: Optional[str] = None,
+    active_plant_id: Optional[str] = None,
+) -> ZoneContextResponse:
     """Convert SQLAlchemy model to Pydantic response with computed fields."""
+    stored = normalize_growth_phase(ctx.growth_phase) or ctx.growth_phase
     return ZoneContextResponse(
         id=ctx.id,
         zone_id=ctx.zone_id,
@@ -37,7 +46,7 @@ def model_to_response(ctx: ZoneContext) -> ZoneContextResponse:
         plant_count=ctx.plant_count,
         variety=ctx.variety,
         substrate=ctx.substrate,
-        growth_phase=ctx.growth_phase,
+        growth_phase=stored,
         planted_date=ctx.planted_date,
         expected_harvest=ctx.expected_harvest,
         responsible_person=ctx.responsible_person,
@@ -49,6 +58,10 @@ def model_to_response(ctx: ZoneContext) -> ZoneContextResponse:
         updated_at=ctx.updated_at,
         plant_age_days=ctx.plant_age_days,
         days_to_harvest=ctx.days_to_harvest,
+        resolved_growth_phase=resolved_growth_phase or stored,
+        growth_phase_source=growth_phase_source
+        or ("zone_context" if stored else None),
+        active_plant_id=active_plant_id,
     )
 
 
@@ -70,15 +83,67 @@ class ZoneContextService:
     async def get_all(self, page: int = 1, page_size: int = 50) -> tuple[List[ZoneContext], int]:
         return await self.repo.get_all(page, page_size)
 
+    async def resolve_zone_phase(
+        self, zone_id: str
+    ) -> tuple[Optional[str], Optional[str], Optional[str]]:
+        """Return (phase, source, plant_id) without writing plants."""
+        plant_repo = PlantRepository(self.session)
+        plants = await plant_repo.get_active(zone_id=zone_id, limit=500)
+        majority = majority_phase([p.phase for p in plants])
+        if majority is not None:
+            match = next(
+                (p for p in plants if normalize_growth_phase(p.phase) == majority),
+                None,
+            )
+            plant_id = str(match.plant_id) if match is not None else None
+            return majority, "plant", plant_id
+        ctx = await self.repo.get_by_zone_id(zone_id)
+        stored = normalize_growth_phase(ctx.growth_phase) if ctx else None
+        if stored is not None:
+            return stored, "zone_context", None
+        return None, None, None
+
+    async def sync_growth_phase_from_plants(self, zone_id: str) -> Optional[str]:
+        """Cache the active plant phase on zone_contexts — never the reverse."""
+        phase, source, _plant_id = await self.resolve_zone_phase(zone_id)
+        if source != "plant" or phase is None:
+            return phase
+        ctx = await self.repo.get_by_zone_id(zone_id)
+        if ctx is None:
+            await self.repo.upsert(zone_id, {"growth_phase": phase})
+            return phase
+        if ctx.growth_phase != phase:
+            ctx.growth_phase = phase
+            await self.session.flush()
+        return phase
+
+    def _prepare_write(
+        self, data: Dict[str, Any], *, plant_phase: Optional[str]
+    ) -> Dict[str, Any]:
+        """Keep spatial/context writes on ZoneContext; phase SSOT is the plant."""
+        prepared = dict(data)
+        if "growth_phase" in prepared:
+            raw = prepared["growth_phase"]
+            if raw is None or raw == "":
+                prepared["growth_phase"] = None
+            else:
+                prepared["growth_phase"] = normalize_growth_phase(raw) or raw
+        if plant_phase is not None:
+            # Plants exist: zone save must not invent a second phase object.
+            prepared["growth_phase"] = plant_phase
+        return prepared
+
     async def upsert(self, zone_id: str, data: Dict[str, Any], username: str) -> ZoneContext:
         logger.info(f"Zone context upsert for '{zone_id}' by {username}")
-        return await self.repo.upsert(zone_id, data)
+        plant_phase, _source, _pid = await self.resolve_zone_phase(zone_id)
+        return await self.repo.upsert(zone_id, self._prepare_write(data, plant_phase=plant_phase))
 
     async def patch(
         self, zone_id: str, data: Dict[str, Any], username: str
     ) -> Optional[ZoneContext]:
         logger.info(f"Zone context patch for '{zone_id}' by {username}")
-        return await self.repo.patch(zone_id, data)
+        plant_phase, _source, _pid = await self.resolve_zone_phase(zone_id)
+        return await self.repo.patch(zone_id, self._prepare_write(data, plant_phase=plant_phase))
 
     async def archive_cycle(self, zone_id: str, username: str) -> Optional[dict]:
         logger.info(f"Cycle archive for zone '{zone_id}' by {username}")

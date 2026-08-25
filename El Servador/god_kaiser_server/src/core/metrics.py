@@ -263,17 +263,21 @@ CONTRACT_TERMINALIZATION_BLOCKED_TOTAL = Counter(
 )
 
 # AUT-715: Sensor batch replay metrics (offline spool)
+# AUT-883: per-esp_id label so replay volume is attributable to a single device.
 BATCH_REPLAYED_TOTAL = Counter(
     "autoone_sensor_batch_replayed_total",
     "Total sensor readings replayed from offline spool",
+    ["esp_id"],
 )
 BATCH_SKIPPED_TOTAL = Counter(
     "autoone_sensor_batch_skipped_total",
     "Total sensor batch readings skipped (dedup or parse error)",
+    ["esp_id"],
 )
 BATCH_QUEUED_TOTAL = Counter(
     "autoone_sensor_batch_queued_total",
     "Total sensor readings received in batch messages",
+    ["esp_id"],
 )
 
 SAFETY_TRIGGERS_TOTAL = Counter(

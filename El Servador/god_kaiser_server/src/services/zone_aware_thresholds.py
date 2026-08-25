@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.logging_config import get_logger
 from ..db.repositories.zone_context_repo import ZoneContextRepository
+from .growth_phase_vocabulary import to_threshold_bucket
 
 logger = get_logger(__name__)
 
@@ -61,21 +62,8 @@ SENSOR_TYPE_TO_CATEGORY = {
 
 
 def _normalize_phase(phase: str) -> str:
-    """Normalize growth phase to a known key. flower_week_X → flower_early/flower_late."""
-    if not phase:
-        return "vegetative"
-    p = phase.lower().strip()
-    if p.startswith("flower_week_"):
-        try:
-            week = int(p.replace("flower_week_", ""))
-            return "flower_late" if week >= 5 else "flower_early"
-        except ValueError:
-            return "flower_early"
-    if p in PHASE_THRESHOLDS:
-        return p
-    if "flower" in p:
-        return "flower_early"
-    return "vegetative"
+    """Map any grower/legacy phase key onto a threshold bucket."""
+    return to_threshold_bucket(phase)
 
 
 class ZoneAwareThresholdService:

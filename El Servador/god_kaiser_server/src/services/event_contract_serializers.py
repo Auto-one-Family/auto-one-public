@@ -43,6 +43,31 @@ def build_esp_health_message(esp_id: str, heap_free: Any, wifi_rssi: Any, uptime
     return f"{esp_id} online ({heap_kb}KB frei, RSSI: {wifi_rssi_int}dBm){_uptime_suffix(uptime)}"
 
 
+def extract_last_known_health_metrics(
+    device_metadata: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """Return last-known heap/rssi/uptime for offline esp_health broadcasts (AUT-884).
+
+    Offline broadcasts (LWT, heartbeat-timeout) carry no live telemetry, so the serializer
+    would default heap_free/wifi_rssi/uptime to 0. Because the frontend resolves these via
+    ``value ?? lastKnown`` (and ``0 ?? x === 0``), a default-0 overwrites the last shown
+    values, producing the "0/0/0" flash. Reusing the values the heartbeat handler persisted
+    in ``device_metadata`` avoids that. Only keys with a known value are returned, so the
+    WS-event field set stays identical to before when nothing is stored yet.
+    """
+    metadata = device_metadata or {}
+    metrics: dict[str, Any] = {}
+    for source_key, target_key in (
+        ("last_heap_free", "heap_free"),
+        ("last_wifi_rssi", "wifi_rssi"),
+        ("last_uptime", "uptime"),
+    ):
+        value = metadata.get(source_key)
+        if value is not None:
+            metrics[target_key] = value
+    return metrics
+
+
 def serialize_actuator_response_event(
     *,
     esp_id: str,

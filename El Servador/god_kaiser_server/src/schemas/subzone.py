@@ -55,6 +55,15 @@ class SubzoneAssignRequest(BaseModel):
         description="Human-readable subzone name",
         examples=["Irrigation Section A", "Climate Control Zone"],
     )
+    position_label: Optional[str] = Field(
+        None,
+        max_length=128,
+        description=(
+            "Optional free-text spatial position for operators "
+            "(e.g. 'Reihe 2, oberes Regal'). Not display-sort; not CAD/XY. AUT-1241."
+        ),
+        examples=["Reihe 2, oberes Regal", "Tisch links"],
+    )
     parent_zone_id: Optional[str] = Field(
         None,
         max_length=50,
@@ -323,9 +332,17 @@ class SubzoneInfo(BaseModel):
         description="Human-readable subzone name",
         examples=["Irrigation Section A"],
     )
-    parent_zone_id: str = Field(
-        ...,
-        description="Parent zone ID",
+    position_label: Optional[str] = Field(
+        None,
+        description=(
+            "Optional free-text spatial position (AUT-1241). "
+            "Null/omitted when unset — never a required field."
+        ),
+        examples=["Reihe 2, oberes Regal"],
+    )
+    parent_zone_id: Optional[str] = Field(
+        None,
+        description="Parent zone ID (None when subzone created before zone assignment)",
         examples=["greenhouse_zone_1"],
     )
     assigned_gpios: List[int] = Field(
@@ -384,4 +401,109 @@ class SubzoneListResponse(BaseResponse):
     device_id: str = Field(...)
     zone_id: Optional[str] = Field(None)
     subzones: List[SubzoneInfo] = Field(default_factory=list)
+    total_count: int = Field(0)
+
+
+# =============================================================================
+# Sensor-Subzone n:m Assignment (AUT-1155)
+# =============================================================================
+
+
+class SensorSubzoneAssignRequest(BaseModel):
+    """
+    Request to explicitly assign a sensor config to a subzone config.
+
+    AUT-1155 [B1]: additive server-side n:m assignment.
+    The assigned_gpios / get_subzone_by_gpio() path remains canonical for the
+    ESP32 config-push flow and is not affected by this assignment.
+    """
+
+    sensor_config_id: str = Field(
+        ...,
+        description="UUID of the sensor_config to assign to this subzone",
+        examples=["3fa85f64-5717-4562-b3fc-2c963f66afa6"],
+    )
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "sensor_config_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+            }
+        }
+    )
+
+
+class SensorSubzoneAssignmentInfo(BaseModel):
+    """
+    Single sensor→subzone assignment record.
+
+    Returned when creating or listing assignments.
+    """
+
+    id: str = Field(..., description="UUID of the assignment record")
+    sensor_config_id: str = Field(..., description="UUID of the sensor_config")
+    subzone_config_id: str = Field(..., description="UUID of the subzone_config")
+    assigned_at: str = Field(..., description="ISO-8601 timestamp (UTC)")
+    assigned_by: Optional[int] = Field(None, description="User ID of the assigning operator")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SensorSubzoneAssignmentsResponse(BaseResponse):
+    """
+    Response listing all sensor assignments for a subzone.
+    """
+
+    esp_id: str = Field(..., description="ESP device ID")
+    subzone_id: str = Field(..., description="Subzone identifier")
+    assignments: List[SensorSubzoneAssignmentInfo] = Field(default_factory=list)
+    total_count: int = Field(0)
+
+
+# =============================================================================
+# Actuator-Subzone n:m Assignment (Verortung — mirror AUT-1155)
+# =============================================================================
+
+
+class ActuatorSubzoneAssignRequest(BaseModel):
+    """
+    Request to explicitly assign an actuator config to a subzone config.
+
+    Additive Verortung only. The assigned_gpios / get_subzone_by_gpio() path
+    remains canonical for ESP32 config-push and Logic Engine control matching.
+    """
+
+    actuator_config_id: str = Field(
+        ...,
+        description="UUID of the actuator_config to assign to this subzone",
+        examples=["3fa85f64-5717-4562-b3fc-2c963f66afa6"],
+    )
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "actuator_config_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+            }
+        }
+    )
+
+
+class ActuatorSubzoneAssignmentInfo(BaseModel):
+    """Single actuator→subzone assignment record."""
+
+    id: str = Field(..., description="UUID of the assignment record")
+    actuator_config_id: str = Field(..., description="UUID of the actuator_config")
+    subzone_config_id: str = Field(..., description="UUID of the subzone_config")
+    assigned_at: str = Field(..., description="ISO-8601 timestamp (UTC)")
+    assigned_by: Optional[int] = Field(None, description="User ID of the assigning operator")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ActuatorSubzoneAssignmentsResponse(BaseResponse):
+    """Response listing all actuator assignments for a subzone."""
+
+    esp_id: str = Field(..., description="ESP device ID")
+    subzone_id: str = Field(..., description="Subzone identifier")
+    assignments: List[ActuatorSubzoneAssignmentInfo] = Field(default_factory=list)
     total_count: int = Field(0)

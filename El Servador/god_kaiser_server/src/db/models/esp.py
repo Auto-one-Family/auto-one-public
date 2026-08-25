@@ -28,6 +28,7 @@ class ESPDevice(Base, TimestampMixin):
         zone_name: Human-readable zone name
         is_zone_master: Whether this device is a zone master
         kaiser_id: ID of the Kaiser managing this device (optional)
+        tank_id: Assigned tank (FK to tanks.id, n:1, AUT-1223)
         hardware_type: Hardware variant (ESP32_WROOM, XIAO_ESP32_C3, ESP32_S3_DEVKITC1)
         ip_address: Current IP address
         mac_address: Hardware MAC address
@@ -99,6 +100,23 @@ class ESPDevice(Base, TimestampMixin):
         nullable=True,
         index=True,
         doc="ID of the Kaiser managing this device",
+    )
+
+    # Report Domain (AUT-1085 — reporting metadata only, never pushed to device)
+    domain: Mapped[Optional[str]] = mapped_column(
+        String(20),
+        nullable=True,
+        index=True,
+        doc="Report domain — reporting metadata only, never pushed to device",
+    )
+
+    # Tank Assignment (AUT-1223 Q2 — n:1, analogous to zone_id)
+    tank_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("tanks.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+        doc="Assigned tank (FK to tanks.id). n:1 — a device belongs to at most one tank.",
     )
 
     # Hardware Information (CRITICAL!)

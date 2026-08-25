@@ -150,6 +150,7 @@ class CalibrationResponseHandler:
 
         # Step 3: Check for active calibration session
         active_session = None
+        ambiguous_fallback = False
         normalized_type = normalize_sensor_type(sensor_type) if sensor_type else "unknown"
         request_id = payload.get("request_id")
         try:
@@ -168,12 +169,18 @@ class CalibrationResponseHandler:
                         sensor_type=None,
                         limit=5,
                     )
-                    active_session = next(
-                        (candidate for candidate in recent_sessions if not candidate.is_terminal),
-                        None,
-                    )
-                    if active_session:
+                    non_terminal_sessions = [c for c in recent_sessions if not c.is_terminal]
+                    # AUT-1014 (B6): the fallback is only safe to accept when exactly one
+                    # session is in flight AND its type matches the response — otherwise two
+                    # co-located sensors (e.g. pH+EC on the same gpio=0) could be confused.
+                    if len(non_terminal_sessions) == 1 and (
+                        normalized_type == "unknown"
+                        or non_terminal_sessions[0].sensor_type == normalized_type
+                    ):
+                        active_session = non_terminal_sessions[0]
                         normalized_type = active_session.sensor_type
+                    elif non_terminal_sessions:
+                        ambiguous_fallback = True
 
                 raw_value = payload.get("raw", payload.get("raw_value"))
                 if raw_value is None:
@@ -197,6 +204,29 @@ class CalibrationResponseHandler:
                     return True
 
                 if not active_session:
+                    if ambiguous_fallback:
+                        # AUT-1014 (B6): multiple concurrent sessions or a type mismatch at
+                        # this gpio — do not silently guess the sensor, report a misassignment.
+                        logger.warning(
+                            "CalibrationResponseHandler: Ambiguous session fallback for "
+                            "%s/GPIO%d/%s (multiple active sessions or type mismatch) — "
+                            "reporting misassignment instead of a silent success.",
+                            esp_id,
+                            gpio,
+                            normalized_type,
+                        )
+                        await self._broadcast_calibration_event(
+                            "calibration_measurement_failed",
+                            esp_id=esp_id,
+                            gpio=gpio,
+                            error=(
+                                "Mehrdeutige Sensor-Zuordnung — mehrere aktive Kalibrier-Sessions "
+                                "oder Typ-Mismatch am selben GPIO. Messung wird nicht zugeordnet."
+                            ),
+                            correlation_id=correlation_id,
+                            request_id=request_id if isinstance(request_id, str) else None,
+                        )
+                        return True
                     # No active calibration — this is a normal sensor response
                     logger.debug(
                         "CalibrationResponseHandler: No active session for %s/GPIO%d/%s",

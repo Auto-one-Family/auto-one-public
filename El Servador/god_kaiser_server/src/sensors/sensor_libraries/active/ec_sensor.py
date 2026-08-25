@@ -34,6 +34,7 @@ from typing import Any, Dict, Optional
 from ...adc_normalization import (
     ADC_SOURCE_ADS1115,
     ADC_SOURCE_INTERNAL,
+    DEFAULT_PGA_GAIN,
     raw_to_voltage,
     resolve_adc_descriptor,
 )
@@ -42,6 +43,9 @@ from ...base_processor import (
     ProcessingResult,
     ValidationResult,
 )
+
+# TDS (ppm) approximation: TDS_ppm ≈ EC_µS/cm * EC_TO_TDS_PPM_FACTOR.
+EC_TO_TDS_PPM_FACTOR = 0.5  # NaCl approximation; range 0.47–0.70 depending on solution type
 
 
 class ECSensorProcessor(BaseSensorProcessor):
@@ -126,7 +130,8 @@ class ECSensorProcessor(BaseSensorProcessor):
                 - "offset": float - Linear offset (EC at 0V)
                 - "adc_type": str - "12bit" or "16bit" (default: "12bit")
             params: Optional processing parameters
-                - "unit": str - Output unit: "us_cm" (default), "ms_cm", "ppm"
+                - "unit": str - Output unit: "us_cm" (default / SSOT), "ppm"
+                  (AUT-1350: optional ``ms_cm`` removed — treated as µS/cm)
                 - "temperature_compensation": float - Temperature in °C for compensation
                 - "decimal_places": int - Decimal places for rounding (default: 1)
 
@@ -149,12 +154,7 @@ class ECSensorProcessor(BaseSensorProcessor):
             )
             # EC compensated: EC_25C = EC_raw / (1 + 0.02 * (30 - 25))
 
-            # With unit conversion (mS/cm)
-            result = processor.process(
-                raw_value=1800,
-                calibration=calibration,
-                params={"unit": "ms_cm"}
-            )
+            # Unit SSOT is µS/cm (AUT-1350); ppm still available via params.unit
         """
         # Step 1: Validate raw value
         validation = self.validate(raw_value)
@@ -408,8 +408,9 @@ class ECSensorProcessor(BaseSensorProcessor):
             calibrations stored before the PGA-exact adc_source path existed;
             new ADS1115 sensors use adc_source='ads1115' + pga_gain instead.
         """
+        # nicht im Produktiv-Pfad / reine Konsolidierung auf adc_normalization
         if adc_type == "16bit":
-            return (adc_value / self.ADC_MAX_16BIT) * self.ADC_VOLTAGE_RANGE_5V
+            return raw_to_voltage(adc_value, adc_source=ADC_SOURCE_ADS1115, pga_gain=DEFAULT_PGA_GAIN)
         return raw_to_voltage(adc_value, adc_source=ADC_SOURCE_INTERNAL)
 
     def _voltage_to_ec_calibrated(self, voltage: float, slope: float, offset: float) -> float:
@@ -511,10 +512,9 @@ class ECSensorProcessor(BaseSensorProcessor):
 
         Unit Conversion Details:
 
-        1. µS/cm → mS/cm (milliSiemens/cm):
-           - Conversion: divide by 1000
-           - Example: 1000 µS/cm = 1.0 mS/cm
-           - Use case: High-EC solutions (>10000 µS/cm)
+        1. µS/cm (SSOT, AUT-1350 / AUT-1268):
+           - Default and only conductivity unit for operational paths
+           - Legacy ``ms_cm`` requests are ignored (no /1000) — emit µS/cm
 
         2. µS/cm → ppm (Total Dissolved Solids):
            - Conversion: multiply by 0.5 (APPROXIMATION)
@@ -529,24 +529,20 @@ class ECSensorProcessor(BaseSensorProcessor):
 
         Args:
             ec_us_cm: EC value in µS/cm (microSiemens per centimeter)
-            unit_type: "us_cm" (µS/cm), "ms_cm" (mS/cm), "ppm" (TDS)
+            unit_type: "us_cm" (µS/cm), "ppm" (TDS); ``ms_cm`` → µS/cm (capped)
 
         Returns:
             Tuple of (converted_value, unit_string)
 
         Note:
             - ppm conversion is industry-standard approximation (±20% error possible)
-            - For research-grade applications, use µS/cm or mS/cm directly
+            - Ledger mS/cm lives in ``ledger_ec_units``, not in the sensor path
         """
-        if unit_type == "ms_cm":
-            # mS/cm = µS/cm / 1000 (exact conversion)
-            return (ec_us_cm / 1000.0, "mS/cm")
-        elif unit_type == "ppm":
-            # TDS (ppm) ≈ EC (µS/cm) * 0.5 (approximation for typical solutions)
-            return (ec_us_cm * 0.5, "ppm")
-        else:
-            # Default: µS/cm (most accurate unit for EC)
-            return (ec_us_cm, "µS/cm")
+        if unit_type == "ppm":
+            # TDS (ppm) ≈ EC (µS/cm) * EC_TO_TDS_PPM_FACTOR (approximation for typical solutions)
+            return (ec_us_cm * EC_TO_TDS_PPM_FACTOR, "ppm")
+        # Default + legacy ms_cm: µS/cm SSOT (AUT-1350 — no /1000 path)
+        return (ec_us_cm, "µS/cm")
 
     def _extract_stability_params(
         self,
@@ -615,10 +611,8 @@ class ECSensorProcessor(BaseSensorProcessor):
         Returns:
             Quality string: "good", "fair", "poor", "error"
         """
-        # Convert to µS/cm for quality assessment
-        if unit_type == "ms_cm":
-            ec_us_cm = ec_value * 1000.0
-        elif unit_type == "ppm":
+        # Convert to µS/cm for quality assessment (ms_cm output removed AUT-1350)
+        if unit_type == "ppm":
             ec_us_cm = ec_value / 0.5
         else:
             ec_us_cm = ec_value

@@ -70,7 +70,7 @@ def _agent_debug_log(
         }
         line = json.dumps(entry, ensure_ascii=True) + "\n"
         for candidate_path in (
-            "/home/robin/.cursor/debug-eea42f.log",
+            "/tmp/debug.log",
             "/app/logs/debug-eea42f.log",
         ):
             try:

@@ -6,7 +6,7 @@ Phase 4A.7: Per-Sensor/Device Alert Configuration
 
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .common import BaseResponse
 
@@ -25,7 +25,14 @@ class CustomThresholds(BaseModel):
 
 
 class SensorAlertConfigUpdate(BaseModel):
-    """Schema for updating per-sensor alert configuration."""
+    """Schema for updating per-sensor alert configuration.
+
+    extra="ignore": unknown fields are silently dropped (Pydantic v2 default,
+    explicitly set here for backward-compatibility — callers sending undocumented
+    keys continue to work without 422 errors).
+    """
+
+    model_config = ConfigDict(extra="ignore")
 
     alerts_enabled: Optional[bool] = Field(
         None, description="Master toggle for this sensor's alerts"

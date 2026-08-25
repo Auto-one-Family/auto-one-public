@@ -9,6 +9,7 @@ from .compound_evaluator import CompoundConditionEvaluator
 from .diagnostics_evaluator import DiagnosticsConditionEvaluator
 from .hysteresis_evaluator import HysteresisConditionEvaluator
 from .metadata_filter_evaluator import MetadataFilterEvaluator
+from .running_state_evaluator import NotRunningConditionEvaluator
 from .sensor_evaluator import SensorConditionEvaluator
 from .sensor_diff_evaluator import SensorDiffConditionEvaluator
 from .time_evaluator import TimeConditionEvaluator
@@ -22,4 +23,5 @@ __all__ = [
     "HysteresisConditionEvaluator",
     "DiagnosticsConditionEvaluator",
     "MetadataFilterEvaluator",
+    "NotRunningConditionEvaluator",
 ]

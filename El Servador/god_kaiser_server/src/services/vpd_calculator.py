@@ -2,8 +2,11 @@
 VPD Calculator — Air-VPD using Magnus-Tetens approximation.
 
 Shared by:
-- sensor_handler.py (event-driven VPD persistence)
+- sensor_handler.py (event-driven VPD persistence from live T/RH)
 - zone_kpi_service.py (live zone KPI calculation)
+- planned_climate.py (derived VPD band from planned T/RH targets, AUT-1239)
+
+Formula is intentionally separate from the sensor_handler trigger path.
 """
 
 import math

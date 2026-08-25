@@ -41,7 +41,9 @@ logger = get_logger(__name__)
 # Tuned for fast manual probing: allow one request every ~2 seconds.
 _MEASURE_COOLDOWN_SECONDS: float = 2.0
 # Module-level dict so the cooldown survives across FastAPI request-scoped SensorService instances.
-_measure_cooldown: Dict[tuple[str, int], float] = {}
+# AUT-1012 (B5): key extended with sensor_type + adc_channel so co-located ADS1115 sensors
+# sharing gpio=0 (pH/EC) get independent cooldown windows instead of blocking each other.
+_measure_cooldown: Dict[tuple[str, int, str, Optional[int]], float] = {}
 
 
 class SensorService:
@@ -602,7 +604,8 @@ class SensorService:
             raise ValueError(f"Sensor is disabled: {esp_id}/GPIO {gpio}")
 
         resolved_sensor_type = sensor.sensor_type
-        command_params: dict[str, int] = {}
+        resolved_adc_channel = getattr(sensor, "adc_channel", None)
+        command_params: dict[str, Any] = {}
         if resolved_sensor_type in ("ec", "ph"):
             command_params["sample_count"] = sample_count if sample_count is not None else 30
             command_params["sample_delay_ms"] = sample_delay_ms if sample_delay_ms is not None else 100
@@ -615,8 +618,15 @@ class SensorService:
             if timeout_ms is not None:
                 command_params["timeout_ms"] = timeout_ms
 
+        # AUT-1012 (B1): additive, optional channel discriminator so the firmware can
+        # disambiguate co-located ADS1115 sensors sharing gpio=0 (AUT-1011).
+        if resolved_sensor_type:
+            command_params["sensor_type"] = resolved_sensor_type
+        if resolved_adc_channel is not None:
+            command_params["adc_channel"] = resolved_adc_channel
+
         # 3. Busy-guard: reject rapid-fire duplicates within the cooldown window
-        cooldown_key = (esp_id, gpio)
+        cooldown_key = (esp_id, gpio, resolved_sensor_type, resolved_adc_channel)
         now_ts = datetime.now(timezone.utc).timestamp()
         last_triggered = _measure_cooldown.get(cooldown_key)
         if last_triggered is not None and (now_ts - last_triggered) < _MEASURE_COOLDOWN_SECONDS:

@@ -40,6 +40,10 @@ class WebSocketManager:
         self._connections: Dict[str, WebSocket] = {}
         self._subscriptions: Dict[str, Dict] = {}  # {client_id: {filters}}
         self._rate_limiter: Dict[str, deque] = {}  # Rate limiting per client
+        # AUT-1096: per-client role + viewer sensor-allow-set (precomputed at connect)
+        # role in ("admin", "operator") → allowed_sensor_keys=None (unrestricted)
+        # role="viewer" → frozenset of "{esp_id}:{gpio}" strings (empty = no access)
+        self._user_meta: Dict[str, dict] = {}
         self._lock = asyncio.Lock()  # Thread-safe for concurrent access
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._rate_limit_window = timedelta(seconds=1)  # 1 second window
@@ -104,19 +108,43 @@ class WebSocketManager:
         """
         return len(self._connections)
 
-    async def connect(self, websocket: WebSocket, client_id: str) -> None:
+    async def connect(
+        self,
+        websocket: WebSocket,
+        client_id: str,
+        user_id: int = 0,
+        role: str = "operator",
+        allowed_sensor_keys: Optional[frozenset] = None,
+        allowed_esp_ids: Optional[frozenset] = None,
+    ) -> None:
         """
         Accept WebSocket connection.
 
         Args:
             websocket: WebSocket connection
             client_id: Unique client identifier
+            user_id: Authenticated user ID (AUT-1096)
+            role: User role — "admin", "operator", or "viewer" (AUT-1096).
+                  Default "operator" preserves backward-compat for existing tests
+                  that call connect() without role. In production realtime.py
+                  ALWAYS passes role=user.role explicitly.
+            allowed_sensor_keys: frozenset of "{esp_id}:{gpio}" strings the viewer
+                may receive. None means unrestricted (admin/operator). Empty
+                frozenset means viewer with no assigned dashboards. (AUT-1096)
+            allowed_esp_ids: frozenset of esp_id strings for device-level events
+                (esp_health, actuator_status, ...). None means unrestricted. (AUT-1096)
         """
         async with self._lock:
             await websocket.accept()
             self._connections[client_id] = websocket
             self._subscriptions[client_id] = {}
             self._rate_limiter[client_id] = deque()
+            self._user_meta[client_id] = {
+                "user_id": user_id,
+                "role": role,
+                "allowed_sensor_keys": allowed_sensor_keys,
+                "allowed_esp_ids": allowed_esp_ids,
+            }
             logger.info(f"WebSocket client connected: {client_id}")
 
     async def disconnect(self, client_id: str) -> None:
@@ -148,6 +176,7 @@ class WebSocketManager:
         websocket = self._connections.pop(client_id)
         self._subscriptions.pop(client_id, None)
         self._rate_limiter.pop(client_id, None)
+        self._user_meta.pop(client_id, None)
 
         # Try to close WebSocket gracefully
         try:
@@ -295,6 +324,30 @@ class WebSocketManager:
                     ):
                         continue
 
+                # AUT-1096: Role/assignment filter (viewer only, strictly additive).
+                # admin/operator: skip entirely → behaviour unchanged.
+                # viewer: check precomputed allow-sets built at connect time.
+                #   - Events with esp_id + gpio: sensor-level key "{esp_id}:{gpio}".
+                #   - Events with only esp_id: device-level (esp_health, actuator, …).
+                #   - Events without esp_id (notification, system): always delivered.
+                # gpio in data is int; f-string coerces to str matching the stored key.
+                meta = self._user_meta.get(client_id, {})
+                if meta.get("role") not in ("admin", "operator"):
+                    allowed_sk = meta.get("allowed_sensor_keys")
+                    if allowed_sk is not None:  # None = unrestricted; frozenset = viewer
+                        esp_id_ev = data.get("esp_id")
+                        gpio_ev = data.get("gpio")
+                        if esp_id_ev is not None and gpio_ev is not None:
+                            # sensor-level event: match on "{esp_id}:{gpio}"
+                            if f"{esp_id_ev}:{gpio_ev}" not in allowed_sk:
+                                continue
+                        elif esp_id_ev is not None:
+                            # device-level event: match on esp_id
+                            allowed_ei = meta.get("allowed_esp_ids") or frozenset()
+                            if esp_id_ev not in allowed_ei:
+                                continue
+                        # Events without esp_id: always deliver (notifications, system)
+
                 clients_to_send.append(client_id)
 
             # Send to all matching clients
@@ -438,6 +491,7 @@ class WebSocketManager:
             self._connections.clear()
             self._subscriptions.clear()
             self._rate_limiter.clear()
+            self._user_meta.clear()
             self._loop = None
 
             logger.info("WebSocket Manager shutdown complete")

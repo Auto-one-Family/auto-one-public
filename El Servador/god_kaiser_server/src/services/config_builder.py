@@ -19,9 +19,11 @@ Priority: CRITICAL
 Status: IMPLEMENTED
 """
 
+import base64
 import json
+import struct
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -45,6 +47,195 @@ logger = get_logger(__name__)
 # die der ESP32-Ingress beim Empfang verwirft. Die finale Wire-Schwelle in
 # ``ESPService.send_config`` (4352) bleibt als Defense-in-Depth bestehen.
 CONFIG_AUTOPUSH_BUDGET_BYTES = 4096
+
+# AUT-1029 / AUT-1027 Grenzen-Inventar: Firmware-Ingress CONFIG_PAYLOAD_MAX_LEN ist
+# für ESP32_WROOM, ESP32_S3_DEVKITC1 und XIAO_ESP32_C3 identisch 4352 B
+# (config_update_queue.h:31, kein Board-#ifdef). Server-Pre-flight bleibt konservativ
+# darunter (~4096 B reines JSON unterhalb 4352 inkl. MQTT-/Header-Overhead).
+_AUTOPUSH_BUDGET_BY_HARDWARE: Dict[str, int] = {
+    "ESP32_WROOM": CONFIG_AUTOPUSH_BUDGET_BYTES,
+    "ESP32_S3_DEVKITC1": CONFIG_AUTOPUSH_BUDGET_BYTES,
+    "XIAO_ESP32_C3": CONFIG_AUTOPUSH_BUDGET_BYTES,
+}
+
+
+def resolve_autopush_budget_bytes(hardware_type: Optional[str]) -> int:
+    """Return board-aware Auto-Push preflight budget (AUT-1029 / TM E1).
+
+    Values are keyed by ``esp_devices.hardware_type`` (AUT-1027: identisches
+    Firmware-Ingress 4352 B auf allen Boards → einheitlich 4096 B Pre-flight).
+    """
+    if hardware_type:
+        return _AUTOPUSH_BUDGET_BY_HARDWARE.get(hardware_type, CONFIG_AUTOPUSH_BUDGET_BYTES)
+    return CONFIG_AUTOPUSH_BUDGET_BYTES
+
+
+# AUT-1143: Board-differentiated offline_rules capacity.
+#
+# S3 boards have substantially more DRAM headroom (~161 KB free) vs. WROOM
+# (~232 B — AUT-1139 S0/D6), so S3 can safely hold 16 offline rules while WROOM
+# and XIAO stay at the conservative 8. ``MOCK_ESP32`` devices have no real DRAM
+# constraints and always receive the S3-equivalent capacity (16).
+_MAX_OFFLINE_RULES_BY_HARDWARE: Dict[str, int] = {
+    "ESP32_WROOM": 8,
+    "ESP32_S3_DEVKITC1": 16,
+    "XIAO_ESP32_C3": 8,
+}
+
+
+def resolve_max_offline_rules(hardware_type: Optional[str]) -> int:
+    """Return the board-specific offline_rules capacity (AUT-1143).
+
+    ``MOCK_ESP32`` is treated as always capable of 16 rules (no real DRAM
+    limit). Real boards are keyed by ``esp_devices.hardware_type``; unknown or
+    non-string values fall back to ``ConfigPayloadBuilder.MAX_OFFLINE_RULES``
+    (8 — the conservative class-level constant kept for backwards compatibility).
+    Pattern mirrors ``resolve_offline_rules_encoding`` (MOCK_ESP32 explicit
+    check before dict lookup, defensive ``isinstance`` guard).
+    """
+    if isinstance(hardware_type, str) and hardware_type == "MOCK_ESP32":
+        return 16
+    if isinstance(hardware_type, str):
+        return _MAX_OFFLINE_RULES_BY_HARDWARE.get(
+            hardware_type, ConfigPayloadBuilder.MAX_OFFLINE_RULES
+        )
+    return ConfigPayloadBuilder.MAX_OFFLINE_RULES
+
+
+# AUT-1141 L1: packed-struct wire encoding for the offline_rules scope.
+#
+# Byte-exact mirror of the firmware OfflineRule struct (56 B, v5,
+# El Trabajante/src/models/offline_rule.h:22-49) — the same layout the
+# firmware already persists in the NVS ``ofr_blob`` (offline_mode_manager.cpp
+# saveOfflineRulesToNVS/loadOfflineRulesFromNVS ver>=5). Field order/padding
+# verified against the struct declaration (S0 AUT-1140):
+#   0 enabled(B) 1 actuator_gpio(B) 2 sensor_gpio(B) 3-23 sensor_value_type(21s)
+#   24-39 activate_below/deactivate_above/activate_above/deactivate_below (ffff)
+#   40-48 is_active/server_override/time_filter_enabled/start_hour/start_minute/
+#         end_hour/end_minute/days_of_week_mask/timezone_mode (BBBBBBBBB)
+#   49 padding(x) 50-51 max_on_seconds(H) 52-53 cooldown_seconds(H) 54-55 padding(xx)
+OFFLINE_RULE_PACK_FORMAT_V5 = "<BBB21sffffBBBBBBBBBxHHxx"
+_OFFLINE_RULE_SVT_MAX_LEN = 20  # NUL-terminated within the 21-byte field
+
+# Minimum firmware_version that can decode "packed" (AUT-1141). Devices below
+# this (or with an unparsable version) get the JSON-array fallback.
+_PACKED_CAPABLE_MIN_VERSION: Tuple[int, int, int] = (4, 1, 0)
+
+
+def _crc8_smbus(data: bytes) -> int:
+    """CRC-8/SMBUS (poly 0x07, init 0, no reflect/xor-out) — mirrors the
+    firmware's table-free implementation (offline_mode_manager.cpp:67-77)."""
+    crc = 0
+    for byte in data:
+        crc ^= byte
+        for _ in range(8):
+            crc = ((crc << 1) ^ 0x07) & 0xFF if crc & 0x80 else (crc << 1) & 0xFF
+    return crc
+
+
+def _timezone_mode_from_name(timezone_name: Optional[str]) -> int:
+    """Python mirror of parseTimezoneMode() (offline_mode_manager.cpp:138-147)."""
+    if not timezone_name or timezone_name == "UTC":
+        return 0
+    if timezone_name in ("Europe/Berlin", "CET", "CEST"):
+        return 1
+    return 0
+
+
+def _parse_firmware_version_tuple(
+    firmware_version: Optional[str],
+) -> Optional[Tuple[int, int, int]]:
+    if not isinstance(firmware_version, str):
+        return None
+    parts = firmware_version.strip().split(".")
+    if len(parts) != 3:
+        return None
+    try:
+        return (int(parts[0]), int(parts[1]), int(parts[2]))
+    except ValueError:
+        return None
+
+
+def resolve_offline_rules_encoding(
+    hardware_type: Optional[str], firmware_version: Optional[str]
+) -> str:
+    """Return the offline_rules wire encoding for a device: "packed" or "json".
+
+    Per-device dispatch (AUT-1141 DP-Pflicht) — NOT a global switch — so a
+    later additive encoding (e.g. CBOR for flash-rich S3 boards) only needs a
+    new branch here, never a change to the decode side. ``MOCK_ESP32`` devices
+    are always packed-capable (dev-local, no real firmware to be incompatible
+    with). Real boards require firmware_version >= _PACKED_CAPABLE_MIN_VERSION
+    so the server never sends a shape the deployed firmware cannot parse
+    (safety net for the window between server merge and firmware reflash).
+    """
+    if isinstance(hardware_type, str) and hardware_type == "MOCK_ESP32":
+        return "packed"
+    version_tuple = _parse_firmware_version_tuple(firmware_version)
+    if version_tuple is not None and version_tuple >= _PACKED_CAPABLE_MIN_VERSION:
+        return "packed"
+    return "json"
+
+
+def _pack_offline_rule(rule: Dict[str, Any]) -> bytes:
+    """Serialize one offline_rules dict into the 56 B OfflineRule wire layout.
+
+    Replicates the defaults ``OfflineModeManager::parseOfflineRules()``
+    (offline_mode_manager.cpp:948-1078) applies on the JSON-array path so the
+    packed and JSON encodings drive the firmware to identical struct state.
+    """
+    sensor_value_type = str(rule.get("sensor_value_type", ""))
+    enabled = 1
+    if len(sensor_value_type) > _OFFLINE_RULE_SVT_MAX_LEN:
+        # Mirrors parseOfflineRules' defensive fallback: an oversized field
+        # disables the rule instead of failing the whole config push.
+        logger.warning(
+            "[CONFIG] packed offline_rule: sensor_value_type truncated: '%s'",
+            sensor_value_type,
+        )
+        enabled = 0
+        sensor_value_type = sensor_value_type[:_OFFLINE_RULE_SVT_MAX_LEN]
+
+    time_filter = rule.get("time_filter") or {}
+
+    return struct.pack(
+        OFFLINE_RULE_PACK_FORMAT_V5,
+        enabled,
+        int(rule.get("actuator_gpio", 255) or 255) & 0xFF,
+        int(rule.get("sensor_gpio", 255) or 255) & 0xFF,
+        sensor_value_type.encode("ascii", errors="replace"),
+        float(rule.get("activate_below", 0.0) or 0.0),
+        float(rule.get("deactivate_above", 0.0) or 0.0),
+        float(rule.get("activate_above", 0.0) or 0.0),
+        float(rule.get("deactivate_below", 0.0) or 0.0),
+        1 if rule.get("current_state_active") else 0,
+        0,  # server_override — parseOfflineRules always forces false on config push
+        1 if time_filter.get("enabled") else 0,
+        int(time_filter.get("start_hour", 0) or 0) & 0xFF,
+        int(time_filter.get("start_minute", 0) or 0) & 0xFF,
+        int(time_filter.get("end_hour", 0) or 0) & 0xFF,
+        int(time_filter.get("end_minute", 0) or 0) & 0xFF,
+        int(time_filter.get("days_of_week_mask", 0x7F) or 0x7F) & 0xFF,
+        _timezone_mode_from_name(time_filter.get("timezone")),
+        min(int(rule.get("max_on_seconds", 0) or 0), 65535),
+        min(int(rule.get("cooldown_seconds", 0) or 0), 65535),
+    )
+
+
+def _encode_offline_rules_packed(rules: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Pack ``offline_rules`` into the wire-compatible OfflineRule blob (AUT-1141 L1).
+
+    Produces the exact byte layout the firmware already persists in the NVS
+    ``ofr_blob`` (N x 56 B + 1 CRC8 trailer byte) so the firmware can reuse its
+    existing blob-decode path — no second/parallel parser.
+    """
+    body = b"".join(_pack_offline_rule(rule) for rule in rules)
+    blob = body + bytes([_crc8_smbus(body)])
+    return {
+        "encoding": "packed",
+        "count": len(rules),
+        "blob": base64.b64encode(blob).decode("ascii"),
+    }
 
 
 def estimate_config_wire_size(config: Dict[str, Any]) -> int:
@@ -200,7 +391,11 @@ class ConfigPayloadBuilder:
         builder = ConfigPayloadBuilder(mapping_engine=engine)
     """
 
-    # Maximum offline rules per ESP32 (firmware limit: 8 rules max)
+    # Conservative fallback for the maximum number of offline rules per ESP32
+    # when the board type is unknown (AUT-1143). Board-aware capacity is
+    # determined at runtime by ``resolve_max_offline_rules()`` — S3=16,
+    # WROOM=8, XIAO=8, MOCK=16. Do NOT remove this constant; it is used as the
+    # default fallback value inside ``resolve_max_offline_rules``.
     MAX_OFFLINE_RULES = 8
 
     # Sensor types that require calibration parameters to convert ADC raw values
@@ -336,9 +531,16 @@ class ConfigPayloadBuilder:
         # Preserve ESP-side hardware driver tokens when available.
         # API normalization stores actuator_type as server mode (e.g. "digital"),
         # while ESP firmware expects hardware tokens such as "relay"/"pump"/"valve".
+        #
+        # AUT-997/AUT-998: compare against the ORIGINAL DB value actuator.actuator_type
+        # (nullable=False, always present) — NOT payload["actuator_type"]. By this point
+        # apply_actuator_mapping() (above) has already run the actuator_type_to_esp32
+        # transform, which maps "digital" → "relay". Comparing the already-transformed
+        # payload value made this restore branch dead code, so every binary actuator was
+        # pushed as "relay" regardless of its real hardware_type (e.g. a pump).
         hardware_type = str(getattr(actuator, "hardware_type", "") or "").strip().lower()
-        payload_type = str(payload.get("actuator_type", "") or "").strip().lower()
-        if payload_type == "digital" and hardware_type in {"relay", "pump", "valve", "pwm"}:
+        original_type = str(getattr(actuator, "actuator_type", "") or "").strip().lower()
+        if original_type == "digital" and hardware_type in {"relay", "pump", "valve", "pwm"}:
             payload["actuator_type"] = hardware_type
 
         # AUT-120: Add fail_safe_on_disconnect only when the server has an
@@ -413,6 +615,10 @@ class ConfigPayloadBuilder:
             iface = getattr(sensor, "interface_type", None)
             if iface and iface.upper() in ("I2C", "ONEWIRE"):
                 continue
+            # ADS1115 sensors use virtual GPIO 0 over I2C — no real ESP32 pin conflict
+            adc_src = getattr(sensor, "adc_source", None)
+            if adc_src and adc_src.lower() == "ads1115":
+                continue
             if sensor.gpio in used_gpios:
                 sensor_name = sensor.sensor_name or sensor.sensor_type
                 raise ConfigConflictError(
@@ -444,7 +650,7 @@ class ConfigPayloadBuilder:
         # Problem context:
         #   AUT-54 switched all sensor publishes to QoS-0 because simultaneous QoS-1
         #   sensor + actuator traffic filled the IDF OUTBOX under WiFi jitter, causing
-        #   1500 ms write-timeouts and MQTT disconnects.
+        #   1500 ms write-timeouts and MQTT disconnects (root-cause on ESP_EA5484).
         #   But sensors referenced in a cross_esp_logic rule MUST have their reading
         #   delivered — a lost QoS-0 packet means the rule engine sees a stale value
         #   and may miss or delay a trigger (e.g. humidity threshold not crossed).
@@ -537,6 +743,18 @@ class ConfigPayloadBuilder:
             "offline_rules_diagnostics": offline_rules_diagnostics,
         }
 
+        # AUT-1141 L1: per-device encoding dispatch for the offline_rules scope.
+        # Packed-capable devices get the compact 56 B/rule blob (< the JSON array's
+        # ~214 B/rule); everything else keeps the existing JSON array untouched —
+        # required during the merge-to-reflash window so old firmware never
+        # receives a shape it cannot parse.
+        offline_rules_encoding = resolve_offline_rules_encoding(
+            getattr(esp_device, "hardware_type", None),
+            getattr(esp_device, "firmware_version", None),
+        )
+        if offline_rules_encoding == "packed":
+            config["offline_rules"] = _encode_offline_rules_packed(offline_rules)
+
         # Log zone information for better traceability
         zone_info = f"zone={esp_device.zone_id or 'none'}"
         if esp_device.zone_name:
@@ -602,7 +820,8 @@ class ConfigPayloadBuilder:
           and may not be visible as "sensor rules" in the UI logic rule list.
         - **AUT-59 consistency strip** — rules referencing GPIOs absent in the current
           config frame are removed by ``_validate_offline_rules_consistency``.
-        - **MAX_OFFLINE_RULES cap** — hard limit of 8; excess entries are truncated.
+        - **MAX_OFFLINE_RULES cap** — board-budgeted limit (see ``resolve_max_offline_rules()``);
+          excess entries are truncated.
 
         Per-rule skip details are logged at WARNING/INFO level inside
         ``_extract_offline_rule``. A structured audit summary is emitted at INFO level
@@ -623,7 +842,8 @@ class ConfigPayloadBuilder:
                 - deactivate_below: float (cooling mode; 0.0 if heating mode)
                 - current_state_active: bool
                 - time_filter: dict  (optional, present when a time_window condition exists)
-            Maximum MAX_OFFLINE_RULES entries; excess entries are truncated with a warning.
+            Board-budgeted number of entries (see ``resolve_max_offline_rules()``);
+            excess entries are truncated with a warning.
         """
         if not self.logic_repo:
             self.logic_repo = LogicRepository(db)
@@ -631,6 +851,7 @@ class ConfigPayloadBuilder:
             self.sensor_repo = SensorRepository(db)
 
         esp_id = esp_device.device_id
+        max_offline_rules = resolve_max_offline_rules(esp_device.hardware_type)
 
         try:
             enabled_rules = await self.logic_repo.get_enabled_rules()
@@ -739,17 +960,17 @@ class ConfigPayloadBuilder:
                 continue
 
         rules_before_cap = len(offline_rules)
-        if rules_before_cap > self.MAX_OFFLINE_RULES:
+        if rules_before_cap > max_offline_rules:
             logger.warning(
                 "[CONFIG] ESP %s: %d offline rules exceed limit of %d, truncating",
                 esp_id,
                 rules_before_cap,
-                self.MAX_OFFLINE_RULES,
+                max_offline_rules,
             )
             if skip_collector is not None:
                 # AUT-132: Record each truncated rule so the diagnostics payload
                 # tells operators *why* a rule did not reach the ESP.
-                for dropped in offline_rules[self.MAX_OFFLINE_RULES :]:
+                for dropped in offline_rules[max_offline_rules:]:
                     skip_collector.append(
                         {
                             "rule_id": "",
@@ -757,12 +978,12 @@ class ConfigPayloadBuilder:
                             "actuator_gpio": dropped.get("actuator_gpio"),
                             "reason_code": self.REASON_MAX_RULE_LIMIT,
                             "reason_detail": (
-                                f"rule exceeded firmware limit of {self.MAX_OFFLINE_RULES} "
+                                f"rule exceeded firmware limit of {max_offline_rules} "
                                 f"offline rules (had {rules_before_cap})"
                             ),
                         }
                     )
-            offline_rules = offline_rules[: self.MAX_OFFLINE_RULES]
+            offline_rules = offline_rules[:max_offline_rules]
 
         twindow_count = sum(
             1

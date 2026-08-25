@@ -19,12 +19,15 @@ class DataSource(str, Enum):
         MOCK: MockESP32Client or Debug API generated data
         TEST: Temporary test data (auto-cleanup candidates)
         SIMULATION: Wokwi or other simulator generated data
+        BATCH: Offline-spool replay via sensor/batch (AUT-883). Real production
+            data delivered late after reconnect — distinguishable from live rows.
     """
 
     PRODUCTION = "production"
     MOCK = "mock"
     TEST = "test"
     SIMULATION = "simulation"
+    BATCH = "batch"  # AUT-883: offline-spool replay marker (real prod, delivered late)
 
     @classmethod
     def from_string(cls, value: str) -> "DataSource":

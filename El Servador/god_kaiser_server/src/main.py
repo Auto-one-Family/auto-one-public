@@ -15,6 +15,7 @@ Status: IMPLEMENTED
 """
 
 import asyncio
+import os
 import time
 from contextlib import asynccontextmanager
 
@@ -72,6 +73,7 @@ from .services.logic.actions import (
 from .services.logic.conditions import (
     CompoundConditionEvaluator,
     HysteresisConditionEvaluator,
+    NotRunningConditionEvaluator,
     SensorConditionEvaluator,
     TimeConditionEvaluator,
 )
@@ -772,45 +774,13 @@ async def lifespan(app: FastAPI):
             # Initialize Logic Engine with modular evaluators and executors
             global _logic_engine, _logic_scheduler
 
-            # Setup condition evaluators
-            sensor_evaluator = SensorConditionEvaluator()
-            time_evaluator = TimeConditionEvaluator()
-            hysteresis_evaluator = HysteresisConditionEvaluator(
-                session_factory=get_session,
-            )
-            await hysteresis_evaluator.load_states_from_db()
-
-            # Phase 4D: Diagnostics Condition Evaluator
-            from .services.logic.conditions.diagnostics_evaluator import (
-                DiagnosticsConditionEvaluator,
-            )
-
-            diagnostics_condition_evaluator = DiagnosticsConditionEvaluator(
-                session_factory=get_session,
-            )
-
-            compound_evaluator = CompoundConditionEvaluator(
-                [
-                    sensor_evaluator,
-                    time_evaluator,
-                    hysteresis_evaluator,
-                    diagnostics_condition_evaluator,
-                ]
-            )
-            condition_evaluators = [
-                sensor_evaluator,
-                time_evaluator,
-                hysteresis_evaluator,
-                diagnostics_condition_evaluator,
-                compound_evaluator,
-            ]
-
-            # Setup action executors
+            # Setup action executors first — SequenceActionExecutor must exist before
+            # NotRunningConditionEvaluator (AUT-1245/AUT-1333) so interlocks observe
+            # the same in-memory running-sequence set used by sequence actions.
             actuator_executor = ActuatorActionExecutor(actuator_service)
             delay_executor = DelayActionExecutor()
             notification_executor = NotificationActionExecutor()
 
-            # Phase 3: Sequence Executor (requires circular dependency resolution)
             global _sequence_executor
             _sequence_executor = SequenceActionExecutor(websocket_manager=_websocket_manager)
 
@@ -835,6 +805,47 @@ async def lifespan(app: FastAPI):
                 _sequence_executor,
                 plugin_executor,
                 diagnostics_executor,
+            ]
+
+            # Setup condition evaluators (must include not_running — AUT-1333).
+            # Previously main.py omitted NotRunningConditionEvaluator while LogicEngine's
+            # default list had it; custom list → unknown type → legacy fail → Frischwasser /
+            # PH MINUS permanently blocked.
+            sensor_evaluator = SensorConditionEvaluator()
+            time_evaluator = TimeConditionEvaluator()
+            hysteresis_evaluator = HysteresisConditionEvaluator(
+                session_factory=get_session,
+            )
+            await hysteresis_evaluator.load_states_from_db()
+
+            from .services.logic.conditions.diagnostics_evaluator import (
+                DiagnosticsConditionEvaluator,
+            )
+
+            diagnostics_condition_evaluator = DiagnosticsConditionEvaluator(
+                session_factory=get_session,
+            )
+            not_running_evaluator = NotRunningConditionEvaluator(
+                sequence_executor=_sequence_executor,
+                session_factory=get_session,
+            )
+
+            compound_evaluator = CompoundConditionEvaluator(
+                [
+                    sensor_evaluator,
+                    time_evaluator,
+                    hysteresis_evaluator,
+                    diagnostics_condition_evaluator,
+                    not_running_evaluator,
+                ]
+            )
+            condition_evaluators = [
+                sensor_evaluator,
+                time_evaluator,
+                hysteresis_evaluator,
+                diagnostics_condition_evaluator,
+                not_running_evaluator,
+                compound_evaluator,
             ]
 
             # KRITISCH: Circular-Dependency auflösen
@@ -1327,16 +1338,22 @@ app.add_middleware(
 # Must be after CORS middleware, before router includes.
 # Exposes HTTP request metrics (duration, count, size) + custom gauges
 # at /api/v1/health/metrics in Prometheus text format.
-try:
-    from prometheus_fastapi_instrumentator import Instrumentator
+# Skip under pytest: prometheus-fastapi-instrumentator 7.x assumes every
+# app.routes entry has .path. FastAPI's _IncludedRouter does not, so every
+# ASGI request 500s (AttributeError) before reaching the endpoint.
+if os.environ.get("TESTING") != "true":
+    try:
+        from prometheus_fastapi_instrumentator import Instrumentator
 
-    Instrumentator().instrument(app).expose(
-        app,
-        endpoint="/api/v1/health/metrics",
-        include_in_schema=False,
-    )
-except ImportError:
-    logger.warning("prometheus_fastapi_instrumentator not installed — metrics endpoint disabled")
+        Instrumentator().instrument(app).expose(
+            app,
+            endpoint="/api/v1/health/metrics",
+            include_in_schema=False,
+        )
+    except ImportError:
+        logger.warning(
+            "prometheus_fastapi_instrumentator not installed — metrics endpoint disabled"
+        )
 
 # ===== ROUTES =====
 

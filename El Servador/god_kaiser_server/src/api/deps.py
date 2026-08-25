@@ -298,6 +298,9 @@ async def require_operator(
 # Type aliases for role guards
 AdminUser = Annotated[User, Depends(require_admin)]
 OperatorUser = Annotated[User, Depends(require_operator)]
+# ViewerUser: any active authenticated user (viewer, operator, admin).
+# Use this when a specific sub-field check in the handler controls access.
+ViewerUser = ActiveUser
 
 
 # =============================================================================

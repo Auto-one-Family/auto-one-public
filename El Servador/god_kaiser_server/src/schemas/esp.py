@@ -157,6 +157,20 @@ class ESPDeviceUpdate(BaseModel):
         None,
         description="Custom metadata",
     )
+    domain: Optional[str] = Field(
+        None,
+        max_length=20,
+        description="Report domain (reporting metadata only, never pushed to device). Set to null to clear.",
+    )
+    tank_id: Optional[uuid.UUID] = Field(
+        None,
+        description=(
+            "Assigned tank UUID (n:1, AUT-1223 / AUT-1358). Set to null to "
+            "clear. UI-SSOT write path is PATCH /esp/devices/{esp_id} "
+            "{tank_id}; PUT/DELETE /tanks/{tank_id}/devices/{esp_id} is an "
+            "alias for the same esp_devices.tank_id column."
+        ),
+    )
 
 
 class ZoneContextSummary(BaseModel):
@@ -269,6 +283,18 @@ class ESPDeviceResponse(ESPDeviceBase, TimestampMixin):
     zone_context: Optional["ZoneContextSummary"] = Field(
         None,
         description="Inherited zone context (plant info, growth phase). Auto-populated when zone_id is set.",
+    )
+
+    # Report domain (AUT-1085 — reporting metadata only, never pushed to device)
+    domain: Optional[str] = Field(
+        None,
+        description="Report domain (reporting metadata only). None means unassigned.",
+    )
+
+    # Tank Assignment (AUT-1223 Q2 — n:1, mirrors domain pattern)
+    tank_id: Optional[uuid.UUID] = Field(
+        None,
+        description="Assigned tank UUID (n:1, FK to tanks.id). None means unassigned.",
     )
 
     # Soft-delete fields (T02-Fix1)

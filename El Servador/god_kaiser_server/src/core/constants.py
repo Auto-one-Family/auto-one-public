@@ -186,6 +186,20 @@ SENSOR_TYPES = [
 ]
 
 # =============================================================================
+# DEVICE DOMAINS (AUT-1085)
+# Report/grouping metadata — never pushed to device firmware.
+# An empty/NULL domain is valid: device is simply unassigned.
+# =============================================================================
+
+WATER_DOMAIN = "wasser"
+DOMAINS = ["luft", WATER_DOMAIN, "boden", "licht", "mensch", "pflanze"]
+
+
+def domain_allows_tank(domain: str | None) -> bool:
+    """AUT-1328: tank membership is valid only for report domain wasser."""
+    return domain == WATER_DOMAIN
+
+# =============================================================================
 # ACTUATOR TYPES
 # =============================================================================
 

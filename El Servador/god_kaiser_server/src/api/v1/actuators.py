@@ -143,6 +143,10 @@ def _model_to_schema_response(
         esp_device_id=esp_device_id,
         gpio=actuator.gpio,
         actuator_type=actuator.actuator_type,
+        # AUT-997/AUT-999: expose the semantic ESP32 hardware_type (already declared on
+        # ActuatorConfigResponse) so clients can seed the edit panel from the real type
+        # ("pump"/"valve") instead of the generic "digital" — was previously never populated.
+        hardware_type=getattr(actuator, "hardware_type", None),
         name=actuator.actuator_name,
         enabled=actuator.enabled,
         max_runtime_seconds=max_runtime_seconds,
@@ -171,6 +175,11 @@ def _model_to_schema_response(
         subzone_id=subzone_id,
         subzone_warning=subzone_warning,
         fail_safe_on_disconnect=actuator.fail_safe_on_disconnect,
+        flow_rate_ml_s=actuator.flow_rate_ml_s,
+        concentration=actuator.concentration,
+        dose_role=actuator.dose_role,
+        stock_recipe_ref=actuator.stock_recipe_ref,
+        stock_prepared_at=actuator.stock_prepared_at,
     )
 
 
@@ -229,6 +238,21 @@ def _schema_to_model_fields(
     elif existing is None:
         # AUT-482: product default — manual actuators without offline rule → OFF on disconnect
         fields["fail_safe_on_disconnect"] = True
+    # AUT-1302: allow explicit null to clear orphaned pump calibration on type change.
+    # Previously only truthy/non-None writes were applied, so FE null was a no-op.
+    if "flow_rate_ml_s" in request.model_fields_set:
+        fields["flow_rate_ml_s"] = request.flow_rate_ml_s
+    # AUT-1355: same explicit-null pattern for concentration / dose_role (pump SSOT).
+    if "concentration" in request.model_fields_set:
+        fields["concentration"] = request.concentration
+    if "dose_role" in request.model_fields_set:
+        fields["dose_role"] = request.dose_role
+    # AUT-1410 SR-1: soft stock identity (display/traceability). Same fields_set pattern.
+    # Atomic reset + concentration explicit-null contract is SR-2 / AUT-1412.
+    if "stock_recipe_ref" in request.model_fields_set:
+        fields["stock_recipe_ref"] = request.stock_recipe_ref
+    if "stock_prepared_at" in request.model_fields_set:
+        fields["stock_prepared_at"] = request.stock_prepared_at
 
     return fields
 
@@ -599,6 +623,25 @@ async def create_or_update_actuator(
                 )
             )
             act_zones_changed = True
+
+    # AUT-1419 B2: optional NPK recompute beside stock identity write.
+    # Does NOT alter concentration / stock_recipe_ref / stock_prepared_at semantics.
+    if (
+        "stock_recipe_ref" in request.model_fields_set
+        and actuator.stock_recipe_ref is not None
+    ):
+        try:
+            from ...services.stock_mix_npk import recompute_recipe_by_id
+
+            await recompute_recipe_by_id(db, actuator.stock_recipe_ref)
+        except Exception as e:
+            logger.warning(
+                "AUT-1419 NPK recompute after stock_recipe_ref write failed "
+                "for recipe %s: %s",
+                actuator.stock_recipe_ref,
+                e,
+                exc_info=True,
+            )
 
     await db.commit()
 
@@ -1342,6 +1385,11 @@ async def delete_actuator(
     if not actuator:
         raise ActuatorNotFoundError(esp_id, gpio)
 
+    # AUT-1007: capture fields for the tombstone entry BEFORE delete/commit —
+    # the ORM object is expired afterwards (mirrors sensors.py delete_sensor()).
+    deleted_actuator_type = actuator.actuator_type
+    deleted_actuator_name = actuator.actuator_name
+
     delete_correlation_id = str(uuid.uuid4())
 
     # Send OFF command before deleting
@@ -1422,15 +1470,23 @@ async def delete_actuator(
 
     logger.info(f"Actuator deleted: {esp_id} GPIO {gpio} by {current_user.username}")
 
-    # Publish updated config to ESP32 via MQTT (actuator removed from payload)
+    # Publish updated config to ESP32 via MQTT.
+    # AUT-1007: a tombstone entry (active=False) is appended — same mechanism as
+    # sensors.py delete_sensor() — so the firmware's existing !config.active branch
+    # in ActuatorManager::configureActuator() calls removeActuator() and the deleted
+    # actuator no longer survives as a phantom in RAM+NVS.
     try:
-        config_builder: ConfigPayloadBuilder = get_config_builder(db)
-        await config_builder.build_combined_config(esp_id, db)
-
+        tombstone: dict = {
+            "gpio": gpio,
+            "actuator_type": deleted_actuator_type,
+            "actuator_name": deleted_actuator_name,
+            "active": False,
+        }
         esp_service: ESPService = get_esp_service(db)
         await esp_service.trigger_config_push_debounced(
             esp_id,
             reason_code="actuator_config_change",
+            extra_actuator_entries=[tombstone],
         )
         logger.info("Config push coalesced for ESP %s after actuator delete", esp_id)
     except Exception as e:

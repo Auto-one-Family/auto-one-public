@@ -27,6 +27,7 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from .alert_config import CustomThresholds
 from .common import (
     BaseResponse,
     PaginatedResponse,
@@ -66,6 +67,7 @@ QUALITY_LEVELS = [
     "degraded",  # PKG-HW-01: server-side ingest without matching sensor_configs row
     "aggregated",
     "unknown",
+    "warming_up",
 ]
 
 # AUT-299: Sensor types that are valid ATC temperature sources.
@@ -211,6 +213,12 @@ class SensorConfigCreate(SensorConfigBase):
         description="ADS1115 PGA full-scale range in volts (only for adc_source='ads1115'; default '4.096')",
     )
     # =========================================================================
+    polarity: Optional[str] = Field(
+        None,
+        pattern=r"^(active_high|active_low)$",
+        description="Signal polarity for digital sensors: 'active_low' (NPN, default) or 'active_high' (PNP). "
+        "Only relevant for interface_type=DIGITAL (e.g. liquid_level). Omit to use default 'active_low'.",
+    )
 
     # Calibration
     calibration: Optional[Dict[str, Any]] = Field(
@@ -479,6 +487,9 @@ class SensorConfigResponse(SensorConfigBase, TimestampMixin):
         None,
         description="ADS1115 PGA full-scale range in volts (only for adc_source='ads1115')",
     )
+    polarity: Optional[str] = Field(
+        None, description="Signal polarity: 'active_low' or 'active_high'"
+    )
     # =========================================================================
 
     calibration: Optional[Dict[str, Any]] = Field(None)
@@ -486,6 +497,15 @@ class SensorConfigResponse(SensorConfigBase, TimestampMixin):
     threshold_max: Optional[float] = Field(None)
     warning_min: Optional[float] = Field(None)
     warning_max: Optional[float] = Field(None)
+    # AUT-1104: sensor.alert_config.custom_thresholds passthrough — the same
+    # value alert_suppression_service.get_effective_thresholds() prioritizes
+    # over threshold_min/max above. Read-only here; written via the dedicated
+    # alert-config endpoint (see sensors.py ALLOWED_VIEWER_FIELDS).
+    custom_thresholds: Optional[CustomThresholds] = Field(
+        None,
+        description="Operator-configured alert thresholds (alert_config.custom_thresholds), "
+        "if set. Takes priority over threshold_min/max for scale/zone derivation.",
+    )
     metadata: Optional[Dict[str, Any]] = Field(None)
     # AUT-299: Linked temperature sensor config UUID for ATC
     temp_sensor_config_id: Optional[uuid.UUID] = Field(
@@ -612,7 +632,11 @@ class SensorReading(BaseModel):
     timestamp: datetime = Field(
         ..., description="Reading timestamp (or bucket start for aggregated)"
     )
-    raw_value: float = Field(..., description="Raw sensor value (or avg for aggregated)")
+    raw_value: Optional[float] = Field(
+        None,
+        description="Raw sensor value (or avg for aggregated). Null when the "
+        "bucket has no raw samples — never coerced to 0.0 (AUT-723 E3).",
+    )
     processed_value: Optional[float] = Field(
         None,
         description="Processed value (after calibration/conversion, or avg for aggregated)",

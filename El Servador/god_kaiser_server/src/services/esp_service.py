@@ -170,6 +170,7 @@ class ESPService:
         device_id: str,
         reason_code: str = "crud_config_change",
         extra_sensor_entries: list[dict] | None = None,
+        extra_actuator_entries: list[dict] | None = None,
     ) -> dict[str, Any]:
         """
         Legacy entrypoint for CRUD-triggered config pushes.
@@ -182,6 +183,10 @@ class ESPService:
                 after build_combined_config(). Used to inject tombstone entries
                 (active=False) for sensors deleted from the DB so the ESP removes
                 them from NVS.
+            extra_actuator_entries: AUT-1007 — same tombstone mechanism as
+                extra_sensor_entries, for actuators deleted from the DB. Without
+                this, a deleted actuator is simply absent from the payload and the
+                ESP never learns it was removed (phantom actuator stays active).
         """
         session_maker = get_session_maker()
         async with session_maker() as session:
@@ -198,6 +203,9 @@ class ESPService:
             if extra_sensor_entries:
                 combined_config.setdefault("sensors", [])
                 combined_config["sensors"].extend(extra_sensor_entries)
+            if extra_actuator_entries:
+                combined_config.setdefault("actuators", [])
+                combined_config["actuators"].extend(extra_actuator_entries)
             delegated_service = ESPService(esp_repo, self.publisher)
             return await delegated_service.send_config_coalesced(
                 device_id=device_id,
@@ -492,6 +500,11 @@ class ESPService:
         """
         offline_rules = config.get("offline_rules")
         if not offline_rules:
+            return []
+        if not isinstance(offline_rules, list):
+            # AUT-1141: packed-capable devices carry a {"encoding": "packed", ...}
+            # blob dict here, not a rule list — GPIO consistency was already
+            # enforced pre-pack in ConfigPayloadBuilder._validate_offline_rules_consistency.
             return []
 
         actuator_gpios = {int(a["gpio"]) for a in config.get("actuators", []) if "gpio" in a}
@@ -936,35 +949,83 @@ class ESPService:
             reserved_handle = str(uuid.uuid4())
             _pending_config_handles[device_id] = reserved_handle
 
-            async def _delayed_push() -> None:
-                await asyncio.sleep(CONFIG_PUSH_COALESCE_SECONDS)
-                async with _pending_config_lock:
-                    payload = _pending_config_payloads.pop(device_id, config)
-                    merged_reason = _pending_config_reasons.pop(device_id, reason_code)
-                    merged_generation = _pending_config_generations.pop(device_id, generation)
-                    merged_fingerprint = _pending_config_fingerprints.pop(
-                        device_id, config_fingerprint
+            async def _publish(
+                push_payload: Dict[str, Any],
+                push_reason: Optional[str],
+                push_generation: Optional[int],
+                push_fingerprint: Optional[str],
+                push_handle: str,
+                *,
+                coalesced: bool,
+            ) -> None:
+                if coalesced:
+                    resolved_reason = (
+                        f"coalesced:{push_reason}" if push_reason else "coalesced"
                     )
-                    merged_handle = _pending_config_handles.pop(device_id, reserved_handle)
+                else:
+                    resolved_reason = push_reason or reason_code
                 session_maker = get_session_maker()
                 async with session_maker() as session:
                     coalesced_service = ESPService(
                         esp_repo=ESPRepository(session),
                         publisher=self.publisher,
                     )
-                    coalesced_reason = (
-                        f"coalesced:{merged_reason}" if merged_reason else "coalesced"
-                    )
                     await coalesced_service.send_config(
                         device_id=device_id,
-                        config=payload,
+                        config=push_payload,
                         offline_behavior=offline_behavior,
                         require_online=require_online,
-                        reason_code=coalesced_reason,
-                        generation=merged_generation,
-                        config_fingerprint=merged_fingerprint,
-                        forced_correlation_id=merged_handle,
+                        reason_code=resolved_reason,
+                        generation=push_generation,
+                        config_fingerprint=push_fingerprint,
+                        forced_correlation_id=push_handle,
                     )
+
+            async def _delayed_push() -> None:
+                # AUT-880: leading edge — no window existed when this task was
+                # created, so push the first state immediately instead of waiting
+                # the full coalesce window. The handle stays in the dict (.get) so
+                # in-window merges and the trailing push share one correlation id.
+                async with _pending_config_lock:
+                    lead_payload = _pending_config_payloads.pop(device_id, config)
+                    lead_reason = _pending_config_reasons.pop(device_id, reason_code)
+                    lead_generation = _pending_config_generations.pop(device_id, generation)
+                    lead_fingerprint = _pending_config_fingerprints.pop(
+                        device_id, config_fingerprint
+                    )
+                    lead_handle = _pending_config_handles.get(device_id, reserved_handle)
+                await _publish(
+                    lead_payload,
+                    lead_reason,
+                    lead_generation,
+                    lead_fingerprint,
+                    lead_handle,
+                    coalesced=False,
+                )
+
+                # Hold the coalesce window open (AUT-590/AUT-331 burst protection).
+                await asyncio.sleep(CONFIG_PUSH_COALESCE_SECONDS)
+
+                # Trailing edge — flush once only if changes arrived during the window.
+                async with _pending_config_lock:
+                    if device_id not in _pending_config_payloads:
+                        _pending_config_handles.pop(device_id, None)
+                        return
+                    trail_payload = _pending_config_payloads.pop(device_id)
+                    trail_reason = _pending_config_reasons.pop(device_id, reason_code)
+                    trail_generation = _pending_config_generations.pop(device_id, generation)
+                    trail_fingerprint = _pending_config_fingerprints.pop(
+                        device_id, config_fingerprint
+                    )
+                    trail_handle = _pending_config_handles.pop(device_id, reserved_handle)
+                await _publish(
+                    trail_payload,
+                    trail_reason,
+                    trail_generation,
+                    trail_fingerprint,
+                    trail_handle,
+                    coalesced=True,
+                )
 
             task = asyncio.create_task(_delayed_push())
             _pending_config_pushes[device_id] = task

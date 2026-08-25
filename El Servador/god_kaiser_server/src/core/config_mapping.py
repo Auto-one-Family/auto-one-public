@@ -306,6 +306,18 @@ DEFAULT_SENSOR_MAPPINGS: List[Dict[str, Any]] = [
         "default": "4.096",
     },
     # =============================================================
+    # Digital sensor polarity — liquid_level (and future digital types).
+    # active_low  = NPN / signal LOW when triggered (default, backwards-compatible)
+    # active_high = PNP / signal HIGH when triggered (XKC-Y26S-PNP)
+    # =============================================================
+    {
+        "source": "polarity",
+        "target": "polarity",
+        "field_type": "string",
+        "required": False,
+        "default": "active_low",
+    },
+    # =============================================================
     # UART sensor fields (AUT-576: SEN0220 / MH-Z16 CO2 via UART)
     #
     # UART pins are stored in sensor_metadata by the API layer when
@@ -413,6 +425,15 @@ DEFAULT_ACTUATOR_MAPPINGS: List[Dict[str, Any]] = [
         "transform": "seconds_to_ms",
         "default": None,  # None → seconds_to_ms(None) → 3600000 (1h fallback)
     },
+    {
+        # Cooldown — from safety_constraints.cooldown_period (seconds) → cooldown_ms
+        # Default: 30000ms (30s), matches ESP32 firmware's compiled PumpActuator default.
+        "source": "safety_constraints.cooldown_period",
+        "target": "cooldown_ms",
+        "field_type": "int",
+        "transform": "cooldown_seconds_to_ms",
+        "default": None,  # None → cooldown_seconds_to_ms(None) → 30000 (30s fallback)
+    },
 ]
 
 
@@ -455,6 +476,9 @@ class ConfigMappingEngine:
         "ms_to_seconds": lambda x: (int(x) // 1000) if x else 30,
         # SAFETY-P1: Convert seconds to milliseconds for max_runtime_ms Config-Push
         "seconds_to_ms": lambda x: (int(x) * 1000) if x is not None else 3600000,
+        # Cooldown: Convert seconds to milliseconds for cooldown_ms Config-Push
+        # 0 = no cooldown (explicit contract: is not None check, not truthy check)
+        "cooldown_seconds_to_ms": lambda x: (int(x) * 1000) if x is not None else 30000,
         # BUG-FIX: Convert Server actuator types to ESP32-compatible types
         # Server stores "digital" but ESP32 expects "relay"
         # See: El Trabajante/src/models/actuator_types.h (ActuatorTypeTokens)

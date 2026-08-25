@@ -5,6 +5,7 @@ Extended with Mock-ESP CRUD operations for Database as Single Source of Truth.
 """
 
 import re
+import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -138,6 +139,21 @@ class ESPRepository(BaseRepository[ESPDevice]):
         stmt = select(ESPDevice).where(
             ESPDevice.master_zone_id == master_zone_id, self._not_deleted()
         )
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def get_by_tank_id(self, tank_id: uuid.UUID) -> List[ESPDevice]:
+        """
+        Get all active ESP devices assigned to a tank (n:1, AUT-1223).
+
+        Args:
+            tank_id: Tank UUID (tanks.id)
+
+        Returns:
+            List of ESPDevice instances currently assigned to the tank
+            (soft-deleted devices excluded).
+        """
+        stmt = select(ESPDevice).where(ESPDevice.tank_id == tank_id, self._not_deleted())
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
 

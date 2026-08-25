@@ -29,6 +29,7 @@ from src.core.logging_config import get_logger
 from src.db.repositories.esp_repo import ESPRepository
 from src.db.repositories.sensor_repo import SensorRepository
 from src.db.repositories.sensor_type_defaults_repo import SensorTypeDefaultsRepository
+from src.services.calibration_payloads import read_calibrated_at
 from src.websocket.manager import WebSocketManager
 
 if TYPE_CHECKING:
@@ -433,10 +434,8 @@ async def check_sensor_timeouts(
                 latest = freshness_readings.get(sensor_key)
 
                 if latest is None:
-                    is_stale = True
-                    age_seconds = float("inf")
-                    last_reading_at = None
-                    stale_reason = StaleReason.NO_DATA
+                    # Never measured — expected initial state for on_demand/scheduled
+                    continue
                 else:
                     last_reading_at_dt = latest.timestamp
                     if last_reading_at_dt.tzinfo is None:
@@ -556,7 +555,7 @@ async def check_sensor_timeouts(
 
             calibrated_at = None
             if sensor.calibration_data and isinstance(sensor.calibration_data, dict):
-                cal_ts = sensor.calibration_data.get("calibrated_at")
+                cal_ts = read_calibrated_at(sensor.calibration_data)
                 if cal_ts:
                     try:
                         if isinstance(cal_ts, str):

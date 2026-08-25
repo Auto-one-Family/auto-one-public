@@ -2,8 +2,14 @@
 Flow Sensor Library: Processing, Validation, Calibration
 
 Supports:
-- YFS201: Hall-effect flow sensor (pulses per liter)
+- FS300A G3/4: Hall-effect flow sensor (default K-factor)
+- YF-S201 G1/2: Legacy Hall-effect flow sensor
 - Generic: Pulse-based flow sensors
+
+FS300A (AUT-849 / AUT-847):
+  K-Faktor: 330 Pulse/Liter (f ≈ 5.5 Hz/(L/min))
+  Messbereich: 1–60 L/min
+  Legacy YF-S201 used 450 Pulse/Liter — do NOT use as default (36% error).
 """
 
 import logging
@@ -21,11 +27,10 @@ logger = logging.getLogger(__name__)
 
 class FlowProcessor(BaseSensorProcessor):
     """
-    Flow Sensor Processor (YFS201, Generic).
+    Flow Sensor Processor (FS300A default, YF-S201 legacy, Generic).
 
-    Supports:
-    - YFS201: Hall-effect flow sensor (pulses per liter)
-    - Generic: Pulse-based flow sensors
+    Server-side K-factor only (ESP sends raw pulses; calibration_data is not
+    pushed to firmware — see config_builder / AUT-847).
     """
 
     # =========================================================================
@@ -37,18 +42,49 @@ class FlowProcessor(BaseSensorProcessor):
     RECOMMENDED_INTERVAL_SECONDS = 10  # Read every 10 seconds (faster for flow monitoring)
     SUPPORTS_ON_DEMAND = False
 
-    # Sensor Specifications
-    FS300A_PULSES_PER_LITER = 330  # FS300A G3/4 default (YFS201 was 450)
+    # Sensor Specifications (AUT-849)
+    # FS300A G3/4: 330 Pulse/L, Messbereich 1–60 L/min (kanonischer Default)
+    FS300A_PULSES_PER_LITER = 330
+    # YF-S201 G1/2 reference only — not the system default
+    YFS201_PULSES_PER_LITER = 450
     GENERIC_MIN_FLOW = 0.0  # L/min
-    GENERIC_MAX_FLOW = 30.0  # L/min (typical max for small pumps)
+    GENERIC_MAX_FLOW = 60.0  # L/min (FS300A datasheet upper end)
 
-    # Typical ranges
+    # Typical ranges (irrigation / Nachfüll; below 1 L/min may be outside FS300A)
     TYPICAL_MIN_FLOW = 0.0  # L/min (no flow)
-    TYPICAL_MAX_FLOW = 20.0  # L/min (typical max for irrigation)
+    TYPICAL_MAX_FLOW = 60.0  # L/min (FS300A G3/4)
 
     def get_sensor_type(self) -> str:
         """Return sensor type identifier."""
         return "flow"
+
+    @staticmethod
+    def _resolve_pulses_per_liter(
+        calibration: Optional[Dict[str, Any]],
+        params: Optional[Dict[str, Any]],
+        default: float,
+    ) -> float:
+        """
+        Resolve K-factor with Frontend + Legacy aliases (AUT-849).
+
+        Priority (highest wins):
+          1. params["pulses_per_liter"] / params["calibration_factor"]
+          2. calibration["pulses_per_liter"] (SensorConfigPanel / derived)
+          3. calibration["calibration_factor"] (legacy)
+          4. FS300A default (330)
+        """
+        factor = default
+        if calibration:
+            if calibration.get("pulses_per_liter") is not None:
+                factor = float(calibration["pulses_per_liter"])
+            elif calibration.get("calibration_factor") is not None:
+                factor = float(calibration["calibration_factor"])
+        if params:
+            if params.get("pulses_per_liter") is not None:
+                factor = float(params["pulses_per_liter"])
+            elif params.get("calibration_factor") is not None:
+                factor = float(params["calibration_factor"])
+        return factor
 
     def process(
         self,
@@ -61,14 +97,16 @@ class FlowProcessor(BaseSensorProcessor):
 
         Args:
             raw_value: Raw pulse count or frequency (Hz) or flow rate (L/min)
-            calibration: Optional calibration data
-                - "pulses_per_liter": float - Pulses per liter (default: 330 for FS300A)
+            calibration: Optional calibration data (flat; derived already
+                unwrapped by resolve_calibration_for_processor)
+                - "pulses_per_liter": float - Frontend key (default: 330 FS300A)
+                - "calibration_factor": float - Legacy alias for pulses_per_liter
                 - "sensor_model": str - "fs300a", "yfs201" or "generic"
             params: Optional processing parameters
                 - "sensor_model": str - Sensor model ("fs300a", "yfs201" or "generic")
-                - "pulses_per_liter": float - Pulses per liter (overrides calibration)
+                - "pulses_per_liter" / "calibration_factor": override calibration
                 - "input_type": str - "pulses", "frequency", or "flow_rate" (default: "pulses")
-                - "time_window": float - Time window in seconds for pulse counting (default: 1.0)
+                - "time_window": float - Time window in seconds for pulse counting
                 - "decimal_places": int - Decimal places for rounding (default: 2)
 
         Returns:
@@ -81,12 +119,10 @@ class FlowProcessor(BaseSensorProcessor):
         if calibration and not sensor_model:
             sensor_model = calibration.get("sensor_model", "").lower()
 
-        # Get calibration factor
-        calibration_factor = self.FS300A_PULSES_PER_LITER  # Default
-        if calibration and "pulses_per_liter" in calibration:
-            calibration_factor = calibration.get("pulses_per_liter", calibration_factor)
-        if params and "pulses_per_liter" in params:
-            calibration_factor = params.get("pulses_per_liter", calibration_factor)
+        # Get calibration factor (AUT-849: pulses_per_liter + legacy calibration_factor)
+        calibration_factor = self._resolve_pulses_per_liter(
+            calibration, params, float(self.FS300A_PULSES_PER_LITER)
+        )
 
         # Determine input type
         input_type = params.get("input_type", "pulses") if params else "pulses"

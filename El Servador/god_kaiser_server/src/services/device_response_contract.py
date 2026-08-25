@@ -74,6 +74,8 @@ class CanonicalActuatorResponse:
     raw_esp_id: str | None
     raw_gpio: Any
     raw_success: Any
+    # AUT-1020: optional FW safety-rejection details (ms→s converted), None if absent
+    details: dict | None = None
 
 
 def _to_text(value: Any) -> str | None:
@@ -105,6 +107,33 @@ def _to_bool(value: Any) -> tuple[bool, bool]:
     if lowered in {"false", "0", "no", "n", "off"}:
         return False, True
     return False, False
+
+
+def _extract_fw_details(raw: Any) -> dict | None:
+    """Extract and normalize FW details dict. Converts ms fields to seconds (AUT-1020).
+
+    FW sends: {"reason": str, "limit_ms": int, "remaining_ms": int}
+    Returns:  {"reason": str, "configured_seconds": int, "retry_after_seconds": int}
+    """
+    if not isinstance(raw, dict):
+        return None
+    result: dict = {}
+    reason = _to_text(raw.get("reason"))
+    if reason:
+        result["reason"] = reason
+    limit_ms = raw.get("limit_ms")
+    if limit_ms is not None:
+        try:
+            result["configured_seconds"] = int(limit_ms) // 1000
+        except (TypeError, ValueError):
+            pass
+    remaining_ms = raw.get("remaining_ms")
+    if remaining_ms is not None:
+        try:
+            result["retry_after_seconds"] = max(0, int(remaining_ms) // 1000)
+        except (TypeError, ValueError):
+            pass
+    return result or None
 
 
 def canonicalize_config_response(
@@ -298,4 +327,6 @@ def canonicalize_actuator_response(
         raw_esp_id=raw_esp_id,
         raw_gpio=raw_gpio,
         raw_success=payload.get("success"),
+        # AUT-1020: pass through FW safety details (ms→s), None if absent or on contract violation
+        details=_extract_fw_details(payload.get("details")) if not is_contract_violation else None,
     )

@@ -12,7 +12,6 @@ All endpoints require Operator role (JWT).
 
 import asyncio
 import os
-import sys
 from concurrent.futures import ThreadPoolExecutor
 
 from fastapi import APIRouter, HTTPException
@@ -31,7 +30,12 @@ from ...schemas.flash import (
     SecretsBuildResponse,
     SecretsWriteResponse,
 )
-from ...services.flash.device_scanner import is_usb_scanning_supported, scan_usb_devices
+from ...services.flash.device_scanner import (
+    HOST_LINUX,
+    detect_runtime_host,
+    is_usb_scanning_supported,
+    scan_usb_devices,
+)
 
 # board_type from device_scanner → firmware_builds subdirectory name
 _BOARD_DIR_MAP: dict[str, str] = {
@@ -85,7 +89,7 @@ async def get_flash_env(current_user: OperatorUser) -> FlashEnvResponse:
 )
 async def list_flash_devices(current_user: OperatorUser) -> DeviceListResponse:
     if not is_usb_scanning_supported():
-        if sys.platform == "linux":
+        if detect_runtime_host() == HOST_LINUX:
             platform_note = "linux-no-serial-device"
             detail_msg = (
                 "Kein USB-Gerät erkannt. Mögliche Ursachen: "
@@ -96,12 +100,12 @@ async def list_flash_devices(current_user: OperatorUser) -> DeviceListResponse:
         else:
             platform_note = "docker-windows-degraded"
             detail_msg = (
-                "USB serial scanning is not available. "
-                "Server is running in a Docker container on Windows without USB passthrough. "
-                "To enable scanning: (1) configure usbipd-win and set "
-                "USB_SCANNING_AVAILABLE=true, or (2) run the server natively on Windows "
-                "(uvicorn outside Docker). "
-                "On Raspberry Pi: add device-binds to docker-compose.override.yml."
+                "USB-Scan nicht verfügbar. Der Server läuft in einem Docker-Container "
+                "auf Windows/macOS ohne USB-Durchreichung — der Linux-Container sieht die "
+                "COM-Ports des Hosts nicht (ein Container-Neustart hilft hier nicht). "
+                "Zum Flashen: (1) Server für den Flash-Vorgang nativ auf Windows starten "
+                "(uvicorn außerhalb von Docker, COM-Ports werden direkt erkannt), oder "
+                "(2) usbipd-win einrichten und USB_SCANNING_AVAILABLE=true setzen."
             )
         raise HTTPException(
             status_code=503,
@@ -248,7 +252,7 @@ async def build_flash_secrets(
         "Flashes the pre-built NVS binary to an ESP32 via esptool (synchronous). "
         "Run POST /flash/secrets/{env}/build first to generate the binary. "
         "Port exclusivity: no other process may hold the serial port during flash. "
-        "Returns 400 if env=field and confirm is not True. "
+        "Returns 400 if env=pi-elbherb and confirm is not True. "
         "Returns 422 with error code 3102 if the NVS binary does not exist. "
         "Returns 500 with error code 3105 if esptool fails."
     ),
@@ -257,12 +261,12 @@ async def execute_flash(
     request: FlashExecuteRequest,
     current_user: OperatorUser,
 ) -> FlashExecuteResponse:
-    if request.env == NvsEnv.field and not request.confirm:
+    if request.env == NvsEnv.pi_elbherb and not request.confirm:
         raise HTTPException(
             status_code=400,
             detail={
                 "detail": (
-                    "confirm=true is required for env=field (strict environment). "
+                    "confirm=true is required for env=pi-elbherb (STRICT production environment). "
                     "Set confirm=true in the request body to proceed."
                 ),
             },

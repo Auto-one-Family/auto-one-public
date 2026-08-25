@@ -51,6 +51,7 @@ from ...db.repositories import (
     SubzoneRepository,
 )
 from ...services.calibration_payloads import resolve_calibration_for_processor
+from ...sensors.adc_normalization import ADC_SOURCE_ADS1115, ADC_SOURCE_INTERNAL
 from ...services.device_scope_service import DeviceScopeService
 from ...db.session import resilient_session
 from ...schemas.sensor import QUALITY_LEVELS
@@ -328,7 +329,7 @@ class SensorDataHandler:
                     ec_extra_params: dict = {}
                     ph_extra_params: dict = {}
 
-                    if sensor_config and sensor_config.pi_enhanced and raw_mode:
+                    if sensor_config and sensor_config.pi_enhanced and raw_mode and quality != "warming_up":
                         # Pi-Enhanced processing needed
                         processing_mode = "pi_enhanced"
 
@@ -511,8 +512,9 @@ class SensorDataHandler:
                         )
 
                     # Fallback: if no processing branch produced a value,
-                    # use raw_value so processed_value is never NULL in DB
-                    if processed_value is None:
+                    # use raw_value so processed_value is never NULL in DB.
+                    # Exception: warming_up readings keep processed_value=None (AUT-975).
+                    if processed_value is None and quality != "warming_up":
                         processed_value = raw_value
 
                     # Step 8b: Physical range validation (post-processing)
@@ -633,6 +635,60 @@ class SensorDataHandler:
                         )
                         sensor_metadata["temp_source"] = ph_atc_source_meta
 
+                    # AUT-723 E3: warming_up is quality-only. Firmware often
+                    # publishes value=0 during warmup; persisting that raw 0
+                    # becomes a fake chart Y (pH 0.00). Skip save_data; keep
+                    # live WS with value=None (AUT-975 '--').
+                    if quality == "warming_up":
+                        logger.info(
+                            "Skipping sensor_data persist for warming_up "
+                            "(AUT-723 E3, no numeric chart Y): esp_id=%s gpio=%s",
+                            esp_id_str,
+                            gpio,
+                        )
+                        await self._update_last_seen_throttled(esp_id_str, esp_repo)
+                        await session.commit()
+                        try:
+                            from ...websocket.manager import WebSocketManager
+
+                            ws_manager = await WebSocketManager.get_instance()
+                            message = format_sensor_message(
+                                sensor_type=sensor_type,
+                                gpio=gpio,
+                                value=None,
+                                unit=unit,
+                            )
+                            await ws_manager.broadcast(
+                                "sensor_data",
+                                {
+                                    "esp_id": esp_id_str,
+                                    "message": message,
+                                    "severity": "info",
+                                    "device_id": esp_id_str,
+                                    "gpio": gpio,
+                                    "sensor_type": sensor_type,
+                                    "value": None,
+                                    "unit": unit,
+                                    "quality": quality,
+                                    "timestamp": esp32_timestamp_raw,
+                                    "zone_id": zone_id,
+                                    "subzone_id": subzone_id,
+                                    "config_id": (
+                                        str(sensor_config.id) if sensor_config else None
+                                    ),
+                                    "i2c_address": i2c_address if i2c_address else None,
+                                    "onewire_address": (
+                                        onewire_address if onewire_address else None
+                                    ),
+                                    **sampling_metadata,
+                                },
+                            )
+                        except Exception as e:
+                            logger.warning(
+                                "Failed to broadcast warming_up via WebSocket: %s", e
+                            )
+                        return True
+
                     sensor_data = await sensor_repo.save_data(
                         esp_id=esp_device.id,
                         gpio=gpio,
@@ -717,8 +773,10 @@ class SensorDataHandler:
                         ws_manager = await WebSocketManager.get_instance()
 
                         # Einheitliche Message generieren (Server-Centric)
+                        # warming_up: keep value=None so frontend shows '--' (AUT-975)
                         display_value = (
-                            processed_value if processed_value is not None else raw_value
+                            None if quality == "warming_up"
+                            else (processed_value if processed_value is not None else raw_value)
                         )
                         message = format_sensor_message(
                             sensor_type=sensor_type,
@@ -843,6 +901,7 @@ class SensorDataHandler:
                                             value=processed_value or raw_value,
                                             zone_id=zone_id,
                                             subzone_id=subzone_id,
+                                            quality=quality,
                                         )
                                     else:
                                         logger.debug(
@@ -1850,6 +1909,30 @@ class SensorDataHandler:
                 proc_calibration = resolve_calibration_for_processor(
                     sensor_config.calibration_data
                 )
+
+            # AUT-948 B1+B4: sensor_configs.adc_source is the SSOT for current
+            # hardware routing. calibration_data.derived carries provenance only
+            # (what ADC was active at calibration time). Inject the DB column so
+            # resolve_adc_descriptor() in ph_sensor/ec_sensor uses the correct
+            # RAW->voltage formula regardless of when calibration was performed.
+            if sensor_config:
+                if proc_calibration is None:
+                    proc_calibration = {}
+                db_src = sensor_config.adc_source  # NOT NULL, "internal"|"ads1115"
+                cal_src = proc_calibration.get("adc_source", ADC_SOURCE_INTERNAL)
+                if cal_src != db_src:
+                    logger.warning(
+                        "[AUT-948] adc_source mismatch esp_id=%s gpio=%d: "
+                        "calibration_data.derived=%r vs sensor_configs=%r "
+                        "— using column SSOT; recalibration recommended",
+                        esp_id,
+                        gpio,
+                        cal_src,
+                        db_src,
+                    )
+                proc_calibration["adc_source"] = db_src
+                if db_src == ADC_SOURCE_ADS1115 and sensor_config.pga_gain is not None:
+                    proc_calibration["pga_gain"] = sensor_config.pga_gain
 
             result = processor.process(
                 raw_value=raw_value,

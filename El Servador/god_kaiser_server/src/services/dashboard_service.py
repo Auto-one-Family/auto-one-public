@@ -2,16 +2,19 @@
 Dashboard Service
 
 Business logic for dashboard CRUD operations.
-Handles ownership checks and shared dashboard access.
+Handles ownership checks, shared dashboard access, and explicit user
+assignments (n:m) introduced in AUT-1095.
 """
 
 import uuid
 from typing import Optional
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.logging_config import get_logger
 from ..db.models.dashboard import Dashboard
+from ..db.models.dashboard_assignment import DashboardUserAssignment
 from ..db.repositories.dashboard_repo import DashboardRepository
 from ..schemas.dashboard import DashboardCreate, DashboardUpdate
 
@@ -80,6 +83,10 @@ class DashboardService:
 
         # Access check: owner, shared, or admin
         if dashboard.owner_id == user_id or dashboard.is_shared or is_admin:
+            return dashboard
+
+        # Third path (AUT-1095): explicit per-user assignment
+        if await self.repo.is_user_assigned(dashboard_id, user_id):
             return dashboard
 
         logger.warning(
@@ -223,3 +230,99 @@ class DashboardService:
 
         logger.info(f"Dashboard deleted: {dashboard_id} by user {user_id}")
         return deleted
+
+    # =========================================================================
+    # Assignment operations (AUT-1095)
+    # =========================================================================
+
+    async def assign_user(
+        self,
+        dashboard_id: uuid.UUID,
+        user_id: int,
+        operator_id: int,
+    ) -> Optional[DashboardUserAssignment]:
+        """
+        Assign a user to a dashboard (explicit per-user grant).
+
+        Returns None if the dashboard does not exist.
+        Raises ValueError on duplicate assignment (for HTTP 409 mapping).
+
+        Args:
+            dashboard_id: Dashboard UUID
+            user_id: User ID to assign
+            operator_id: ID of the operator making the assignment
+
+        Returns:
+            Created DashboardUserAssignment or None if dashboard not found
+        """
+        dashboard = await self.repo.get_by_id(dashboard_id)
+        if dashboard is None:
+            return None
+
+        try:
+            assignment = await self.repo.assign_user(
+                dashboard_id=dashboard_id,
+                user_id=user_id,
+                assigned_by=operator_id,
+            )
+            await self.session.commit()
+        except IntegrityError:
+            await self.session.rollback()
+            raise ValueError(
+                f"User {user_id} is already assigned to dashboard {dashboard_id}"
+            )
+
+        logger.info(
+            f"Dashboard {dashboard_id} assigned to user {user_id} by operator {operator_id}"
+        )
+        return assignment
+
+    async def unassign_user(
+        self,
+        dashboard_id: uuid.UUID,
+        user_id: int,
+        operator_id: int,
+    ) -> bool:
+        """
+        Remove a user's explicit assignment from a dashboard.
+
+        Args:
+            dashboard_id: Dashboard UUID
+            user_id: User ID to unassign
+            operator_id: ID of the operator making the change
+
+        Returns:
+            True if the assignment was removed, False if it did not exist
+        """
+        deleted = await self.repo.unassign_user(
+            dashboard_id=dashboard_id,
+            user_id=user_id,
+        )
+        if deleted:
+            await self.session.commit()
+            logger.info(
+                f"Dashboard {dashboard_id} unassigned from user {user_id} "
+                f"by operator {operator_id}"
+            )
+        return deleted
+
+    async def list_assignments(
+        self,
+        dashboard_id: uuid.UUID,
+    ) -> Optional[list[DashboardUserAssignment]]:
+        """
+        List all explicit user assignments for a dashboard.
+
+        Returns None if the dashboard does not exist.
+
+        Args:
+            dashboard_id: Dashboard UUID
+
+        Returns:
+            List of DashboardUserAssignment instances or None if dashboard not found
+        """
+        dashboard = await self.repo.get_by_id(dashboard_id)
+        if dashboard is None:
+            return None
+
+        return await self.repo.get_assignments_for_dashboard(dashboard_id)

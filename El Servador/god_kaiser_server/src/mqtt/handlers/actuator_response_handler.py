@@ -68,7 +68,7 @@ def _agent_debug_log(
         }
         line = json.dumps(entry, ensure_ascii=True) + "\n"
         for candidate_path in (
-            "/home/robin/.cursor/debug-eea42f.log",
+            "/tmp/debug.log",
             "/app/logs/debug-eea42f.log",
         ):
             try:
@@ -273,6 +273,22 @@ class ActuatorResponseHandler:
                         correlation_id=correlation_id,
                     )
 
+                # AUT-1385: Nachfüllpumpe OFF → measure ON→OFF window → ledger
+                # (flow sensor remains counter-only; no rule trigger here).
+                if success and is_off_response:
+                    from ...services.refill_volume_ledger import (
+                        maybe_record_refill_volume_to_ledger,
+                    )
+
+                    await maybe_record_refill_volume_to_ledger(
+                        session,
+                        device_id=esp_id_str,
+                        esp_uuid=esp_device.id,
+                        gpio=gpio,
+                        off_at=esp32_timestamp,
+                        correlation_id=correlation_id,
+                    )
+
                 # Commit transaction
                 await session.commit()
                 # #region agent log
@@ -332,6 +348,10 @@ class ActuatorResponseHandler:
                             "raw_success": canonical.raw_success,
                         }
                     )
+                    # AUT-1020: forward FW safety-rejection details (reason, configured_seconds,
+                    # retry_after_seconds) additively when present
+                    if canonical.details:
+                        broadcast_data["details"] = canonical.details
                     await ws_manager.broadcast(
                         "actuator_response",
                         broadcast_data,

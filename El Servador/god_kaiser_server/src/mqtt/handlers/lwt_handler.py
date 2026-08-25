@@ -39,7 +39,10 @@ from ...db.repositories import CommandContractRepository, ESPRepository
 from ...db.repositories.actuator_repo import ActuatorRepository
 from ...db.repositories.audit_log_repo import AuditLogRepository
 from ...db.session import resilient_session
-from ...services.event_contract_serializers import serialize_esp_health_event
+from ...services.event_contract_serializers import (
+    extract_last_known_health_metrics,
+    serialize_esp_health_event,
+)
 from ...services.intent_outcome_contract import serialize_intent_outcome_row
 from ...services.system_event_contract import canonicalize_lwt
 from ...services.state_adoption_service import get_state_adoption_service
@@ -415,6 +418,12 @@ class LWTHandler:
                             if esp_device.last_seen
                             else resolved_lwt_timestamp
                         )
+                        # AUT-884: carry last-known metrics into the offline broadcast so
+                        # the frontend keeps the last shown heap/rssi/uptime instead of
+                        # flashing 0/0/0 (default-0 + nullish-coalescing overwrite).
+                        last_metrics = extract_last_known_health_metrics(
+                            esp_device.device_metadata
+                        )
                         broadcast_payload = serialize_esp_health_event(
                             esp_id=esp_id_str,
                             status="offline",
@@ -422,6 +431,7 @@ class LWTHandler:
                             source="lwt",
                             timestamp=broadcast_ts,
                             actuator_states_reset=reset_count,
+                            **last_metrics,
                         )
                         broadcast_payload["raw_reason"] = canonical.raw_fields.get("raw_reason")
                         broadcast_payload["contract_violation"] = canonical.is_contract_violation

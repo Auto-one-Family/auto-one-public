@@ -227,7 +227,12 @@ class LogicRepository(BaseRepository[CrossESPLogic]):
 
     async def get_last_execution(self, rule_id: uuid.UUID) -> Optional[LogicExecutionHistory]:
         """
-        Get the last execution record for a rule.
+        Get the last real execution record for a rule (cooldown/settle reference).
+
+        Excludes self-generated cooldown/settle/rate-limit skip markers
+        (AUT-1020, is_skip=True) — including them would let a rule's own skip
+        log entries perpetually refresh the cooldown reference and prevent the
+        cooldown from ever expiring.
 
         Args:
             rule_id: UUID of the logic rule
@@ -237,7 +242,10 @@ class LogicRepository(BaseRepository[CrossESPLogic]):
         """
         stmt = (
             select(LogicExecutionHistory)
-            .where(LogicExecutionHistory.logic_rule_id == rule_id)
+            .where(
+                LogicExecutionHistory.logic_rule_id == rule_id,
+                LogicExecutionHistory.is_skip == False,
+            )
             .order_by(LogicExecutionHistory.timestamp.desc())
             .limit(1)
         )
@@ -276,6 +284,57 @@ class LogicRepository(BaseRepository[CrossESPLogic]):
             .select_from(LogicExecutionHistory)
             .where(LogicExecutionHistory.logic_rule_id == rule_id)
         )
+        result = await self.session.execute(stmt)
+        return result.scalar_one()
+
+    async def get_execution_count_last_24h(self, rule_id: uuid.UUID) -> int:
+        """
+        Zählt erfolgreiche Executions der letzten 24 Stunden für Tages-Rate-Limiting.
+
+        Args:
+            rule_id: UUID of the logic rule
+
+        Returns:
+            Count of successful executions in the last 24 hours
+        """
+        from datetime import datetime, timedelta
+        from sqlalchemy import func, select
+        from ..models.logic import LogicExecutionHistory
+
+        twenty_four_hours_ago = datetime.now(timezone.utc) - timedelta(hours=24)
+
+        stmt = select(func.count(LogicExecutionHistory.id)).where(
+            LogicExecutionHistory.logic_rule_id == rule_id,
+            LogicExecutionHistory.timestamp >= twenty_four_hours_ago,
+            LogicExecutionHistory.success == True,
+        )
+
+        result = await self.session.execute(stmt)
+        return result.scalar_one()
+
+    async def get_dose_ml_last_24h(self, rule_id: uuid.UUID) -> float:
+        """
+        Summiert dispensed dose_ml der letzten 24 Stunden für Tages-ml-Limiting (AO-5-abhängig:
+        liefert 0.0 solange dose_ml nicht befüllt wird — blockiert dann nichts fälschlich).
+
+        Args:
+            rule_id: UUID of the logic rule
+
+        Returns:
+            Sum of dose_ml over the last 24 hours (0.0 if none recorded)
+        """
+        from datetime import datetime, timedelta
+        from sqlalchemy import func, select
+        from ..models.logic import LogicExecutionHistory
+
+        twenty_four_hours_ago = datetime.now(timezone.utc) - timedelta(hours=24)
+
+        stmt = select(func.coalesce(func.sum(LogicExecutionHistory.dose_ml), 0.0)).where(
+            LogicExecutionHistory.logic_rule_id == rule_id,
+            LogicExecutionHistory.timestamp >= twenty_four_hours_ago,
+            LogicExecutionHistory.success == True,
+        )
+
         result = await self.session.execute(stmt)
         return result.scalar_one()
 
@@ -329,6 +388,9 @@ class LogicRepository(BaseRepository[CrossESPLogic]):
         execution_ms: int,
         error_message: Optional[str] = None,
         metadata: Optional[dict] = None,
+        dose_ml: Optional[float] = None,
+        flow_rate_ml_s_snapshot: Optional[float] = None,
+        is_skip: bool = False,
     ) -> LogicExecutionHistory:
         """
         Log rule execution to history.
@@ -341,6 +403,11 @@ class LogicRepository(BaseRepository[CrossESPLogic]):
             execution_ms: Execution duration in milliseconds
             error_message: Optional error message if execution failed
             metadata: Optional additional execution metadata
+            dose_ml: AO-5: Dispensed volume in ml. None for time-only dispatch.
+            flow_rate_ml_s_snapshot: AO-5: Flow rate snapshot ml/s at execution time.
+            is_skip: AUT-1020: True for cooldown/settle/rate-limit skip markers —
+                excluded from get_last_execution() so they can't self-extend the
+                cooldown window they were themselves blocked by.
 
         Returns:
             Created LogicExecutionHistory instance
@@ -353,6 +420,9 @@ class LogicRepository(BaseRepository[CrossESPLogic]):
             error_message=error_message,
             execution_time_ms=execution_ms,
             execution_metadata=metadata,
+            dose_ml=dose_ml,
+            flow_rate_ml_s_snapshot=flow_rate_ml_s_snapshot,
+            is_skip=is_skip,
         )
         self.session.add(history)
         await self.session.flush()

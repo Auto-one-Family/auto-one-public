@@ -51,7 +51,7 @@ def _agent_debug_log(
         }
         line = json.dumps(entry, ensure_ascii=True) + "\n"
         for candidate_path in (
-            "/home/robin/.cursor/debug-eea42f.log",
+            "/tmp/debug.log",
             "/app/logs/debug-eea42f.log",
         ):
             try:
@@ -749,16 +749,27 @@ class ActuatorService:
                     from ..websocket.manager import WebSocketManager
 
                     ws_manager = await WebSocketManager.get_instance()
+                    # AUT-1020: structured safety context additively forwarded to frontend
+                    _failed_payload: dict = {
+                        "esp_id": esp_id,
+                        "gpio": gpio,
+                        "command": command,
+                        "error": safety_result.error,
+                        "issued_by": issued_by,
+                        "correlation_id": correlation_id,
+                        "reason": safety_result.reason,
+                        "safety_layer": safety_result.safety_layer,
+                        "configured_in": safety_result.configured_in,
+                        "retry_after_seconds": safety_result.retry_after_seconds,
+                    }
+                    # AUT-1020: last_seen as Epoch timestamp (AUT-592 pattern, lwt_handler.py:417)
+                    if safety_result.last_seen_ts is not None:
+                        _failed_payload["last_seen"] = int(
+                            safety_result.last_seen_ts.timestamp()
+                        )
                     await ws_manager.broadcast(
                         "actuator_command_failed",
-                        {
-                            "esp_id": esp_id,
-                            "gpio": gpio,
-                            "command": command,
-                            "error": safety_result.error,
-                            "issued_by": issued_by,
-                            "correlation_id": correlation_id,
-                        },
+                        _failed_payload,
                         correlation_id=correlation_id,
                     )
                 except Exception:
@@ -933,6 +944,11 @@ class ActuatorService:
                             "error": "MQTT publish failed",
                             "issued_by": issued_by,
                             "correlation_id": correlation_id,
+                            # AUT-1020: reason for MQTT-layer failure; no safety context
+                            "reason": "mqtt_publish_failed",
+                            "safety_layer": None,
+                            "configured_in": None,
+                            "retry_after_seconds": None,
                         },
                         correlation_id=correlation_id,
                     )

@@ -14,7 +14,9 @@ Provides:
 from datetime import date, datetime
 from typing import List, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from ..services.growth_phase_vocabulary import normalize_growth_phase
 
 from .common import BaseResponse
 
@@ -57,9 +59,22 @@ class ZoneContextUpdate(BaseModel):
     growth_phase: Optional[str] = Field(
         None,
         max_length=50,
-        description="Current growth phase",
-        examples=["flower_week_5"],
+        description="Current growth phase (canonical PLANT_PHASES key)",
+        examples=["bluete-bulk"],
     )
+
+    @field_validator("growth_phase")
+    @classmethod
+    def validate_growth_phase(cls, v: Optional[str]) -> Optional[str]:
+        if v is None or v == "":
+            return None
+        canonical = normalize_growth_phase(v)
+        if canonical is None:
+            raise ValueError(
+                f"Unknown growth_phase '{v}'. Use a PLANT_PHASES key "
+                "(e.g. veg-frueh, bluete-bulk) or a known legacy alias."
+            )
+        return canonical
     planted_date: Optional[date] = Field(
         None,
         description="Date current cycle was planted",
@@ -98,7 +113,7 @@ class ZoneContextUpdate(BaseModel):
                 "plant_count": 24,
                 "variety": "Wedding Cake",
                 "substrate": "Coco/Perlite 70/30",
-                "growth_phase": "flower_week_5",
+                "growth_phase": "bluete-bulk",
                 "planted_date": "2026-01-15",
                 "expected_harvest": "2026-04-15",
                 "responsible_person": "Robin",
@@ -124,7 +139,24 @@ class ZoneContextResponse(BaseModel):
     plant_count: Optional[int] = Field(None, description="Number of plants")
     variety: Optional[str] = Field(None, description="Plant variety")
     substrate: Optional[str] = Field(None, description="Growing medium")
-    growth_phase: Optional[str] = Field(None, description="Current growth phase")
+    growth_phase: Optional[str] = Field(
+        None, description="Stored growth phase (canonical PLANT_PHASES key)"
+    )
+    resolved_growth_phase: Optional[str] = Field(
+        None,
+        description=(
+            "Active plant phase for this zone (majority of plants), "
+            "else the stored zone-context value."
+        ),
+    )
+    growth_phase_source: Optional[str] = Field(
+        None,
+        description="Where resolved_growth_phase comes from: plant | zone_context",
+    )
+    active_plant_id: Optional[str] = Field(
+        None,
+        description="Representative plant whose phase matches resolved_growth_phase",
+    )
     planted_date: Optional[date] = Field(None, description="Planted date")
     expected_harvest: Optional[date] = Field(None, description="Expected harvest date")
     responsible_person: Optional[str] = Field(None, description="Responsible person")

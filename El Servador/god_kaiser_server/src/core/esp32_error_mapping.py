@@ -666,6 +666,35 @@ ESP32_ACTUATOR_ERROR_MESSAGES: Dict[int, Dict[str, Any]] = {
         "recoverable": True,
         "user_action_required": True,
     },
+    # AUT-1020: Safety-rejection codes (reason transparently forwarded via actuator/response)
+    1054: {
+        "category": "HARDWARE",
+        "severity": "WARNING",
+        "message_de": "Aktor-Befehl abgelehnt: Mindest-Pause aktiv",
+        "message_user_de": "Sicherheits-Pause: Aktor darf jetzt nicht aktiviert werden (Cooldown aktiv). Bitte Restzeit abwarten.",
+        "troubleshooting_de": [
+            "1. Restzeit abwarten (retry_after_seconds im Payload)",
+            "2. Aktor-Mindest-Pause anpassen: Hardware → Aktor → Mindest-Pause",
+            "3. Bei Bedarf Cooldown auf 0 setzen (deaktiviert Schutz)",
+        ],
+        "docs_link": "/docs/actuators#cooldown",
+        "recoverable": True,
+        "user_action_required": False,
+    },
+    1056: {
+        "category": "HARDWARE",
+        "severity": "ERROR",
+        "message_de": "Aktor-Befehl abgelehnt: Notfall-Stopp aktiv",
+        "message_user_de": "Notfall-Stopp ist aktiv. Aktor kann erst nach Freigabe aktiviert werden.",
+        "troubleshooting_de": [
+            "1. Notfall-Stopp freigeben: REST /safety/emergency-stop (DELETE) oder UI",
+            "2. Ursache des Notfall-Stopps klären (Laufzeit-Überschreitung, manuell?)",
+            "3. Aktor-Zustand prüfen bevor Freigabe",
+        ],
+        "docs_link": "/docs/actuators#emergency-stop",
+        "recoverable": True,
+        "user_action_required": True,
+    },
 }
 
 

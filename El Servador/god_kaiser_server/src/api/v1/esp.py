@@ -33,6 +33,7 @@ from fastapi import APIRouter, Depends, Query, status
 
 from ...schemas.alert_config import DeviceAlertConfigUpdate
 
+from ...core.constants import domain_allows_tank
 from ...core.logging_config import get_logger
 from ...db.models.audit_log import AuditEventType, AuditSeverity
 from ...db.repositories import ActuatorRepository, ESPRepository, SensorRepository
@@ -64,7 +65,7 @@ from ...schemas.esp import (
     GpioUsageItem,
     SubzoneSummary,
 )
-from ...services.gpio_validation_service import GpioValidationService, SYSTEM_RESERVED_PINS
+from ...services.gpio_validation_service import GpioValidationService
 from ...schemas.common import PaginationMeta
 from ...core.exceptions import DuplicateESPError, ESPNotFoundError, ValidationException
 from ..deps import ActiveUser, DBSession, OperatorUser, get_mqtt_publisher
@@ -266,6 +267,8 @@ async def list_devices(
                 status=device.status,
                 last_seen=device.last_seen,
                 metadata=device.device_metadata,
+                domain=device.domain,
+                tank_id=device.tank_id,
                 sensor_count=sensor_count,
                 actuator_count=actuator_count,
                 auto_heartbeat=auto_heartbeat,
@@ -444,6 +447,8 @@ async def get_device(
         status=device.status,
         last_seen=device.last_seen,
         metadata=device.device_metadata,
+        domain=device.domain,
+        tank_id=device.tank_id,
         sensor_count=sensor_count,
         actuator_count=actuator_count,
         auto_heartbeat=auto_heartbeat,
@@ -542,6 +547,8 @@ async def register_device(
         status=device.status,
         last_seen=device.last_seen,
         metadata=device.device_metadata,
+        domain=device.domain,
+        tank_id=device.tank_id,
         sensor_count=0,
         actuator_count=0,
         auto_heartbeat=auto_heartbeat,
@@ -592,10 +599,30 @@ async def update_device(
     if not device:
         raise ESPNotFoundError(esp_id)
 
+    # Capture old domain value before any mutations (for audit log)
+    old_domain = device.domain
+
     # Update fields
     update_data = request.model_dump(exclude_unset=True)
     for field, value in update_data.items():
         setattr(device, field, value)
+
+    # AUT-1328: Domain != wasser => tank_id must be cleared (exclude_unset
+    # otherwise leaves a stale membership after PATCH {domain} only).
+    if not domain_allows_tank(device.domain):
+        device.tank_id = None
+
+    # Insert domain change audit record when domain actually changed
+    if "domain" in update_data and update_data["domain"] != old_domain:
+        from ...db.models.device_domain_change import DeviceDomainChange
+
+        db.add(
+            DeviceDomainChange(
+                esp_id=device.device_id,
+                old_domain=old_domain,
+                new_domain=update_data["domain"],
+            )
+        )
 
     await db.flush()
     await db.commit()
@@ -641,6 +668,8 @@ async def update_device(
         status=device.status,
         last_seen=device.last_seen,
         metadata=device.device_metadata,
+        domain=device.domain,
+        tank_id=device.tank_id,
         sensor_count=sensor_count,
         actuator_count=actuator_count,
         auto_heartbeat=auto_heartbeat,
@@ -1015,6 +1044,18 @@ async def get_gpio_status(
     if not device:
         raise ESPNotFoundError(esp_id)
 
+    # Resolve hardware type and board constraints up front — used for I2C pins, available GPIOs, system pins
+    hardware_type = device.hardware_type or "ESP32_WROOM"
+    last_esp_report = None
+    if device.device_metadata:
+        last_esp_report = device.device_metadata.get("gpio_status_updated_at")
+
+    gpio_validator = GpioValidationService(
+        session=db, sensor_repo=sensor_repo, actuator_repo=actuator_repo, esp_repo=esp_repo
+    )
+    board_constraints = gpio_validator._get_board_constraints(hardware_type)
+    board_system_pins, _ = gpio_validator._get_system_reserved_pins(hardware_type)
+
     # Get all sensors for this ESP
     all_sensors = await sensor_repo.get_by_esp(device.id)
 
@@ -1026,12 +1067,13 @@ async def get_gpio_status(
     # Reserved GPIOs (only Analog/Digital)
     reserved_gpios = [s.gpio for s in analog_digital if s.gpio is not None]
 
-    # I2C Bus Info
+    # I2C Bus Info — board-aware SDA/SCL pins
     i2c_bus_info = None
     if i2c_sensors:
+        i2c_sorted = sorted(board_constraints.i2c_bus_pins)
         i2c_bus_info = {
-            "sda_pin": 21,
-            "scl_pin": 22,
+            "sda_pin": i2c_sorted[0] if len(i2c_sorted) >= 1 else 21,
+            "scl_pin": i2c_sorted[1] if len(i2c_sorted) >= 2 else 22,
             "is_available": True,  # I2C bus is always shareable
             "devices": [
                 {
@@ -1044,9 +1086,9 @@ async def get_gpio_status(
         }
 
     # OneWire Bus Info (group by GPIO)
-    onewire_by_gpio = {}
+    onewire_by_gpio: dict[int, list] = {}
     for sensor in onewire_sensors:
-        gpio = sensor.gpio or 4  # Default to GPIO 4 if NULL
+        gpio = sensor.gpio if sensor.gpio is not None else 4
         if gpio not in onewire_by_gpio:
             onewire_by_gpio[gpio] = []
         onewire_by_gpio[gpio].append(
@@ -1062,18 +1104,14 @@ async def get_gpio_status(
         for gpio, devices in onewire_by_gpio.items()
     ]
 
-    # Calculate available GPIOs
-    # All GPIOs except reserved ones are available
-    # ESP32 WROOM: GPIO 0-39 (exclude input-only 34-39 for output)
-    all_gpios = set(range(0, 40))
+    # Calculate available GPIOs using board-specific range and constraints
+    all_gpios = set(range(0, board_constraints.gpio_max + 1))
     available_gpios = [
-        g for g in all_gpios if g not in reserved_gpios and g not in [34, 35, 36, 37, 38, 39]
+        g for g in all_gpios
+        if g not in reserved_gpios
+        and g not in board_constraints.input_only_pins
+        and g not in board_system_pins
     ]
-
-    # Use GpioValidationService for backwards-compat "reserved" field
-    gpio_validator = GpioValidationService(
-        session=db, sensor_repo=sensor_repo, actuator_repo=actuator_repo, esp_repo=esp_repo
-    )
 
     used_gpios = await gpio_validator.get_all_used_gpios(device.id)
     reserved_items = [
@@ -1088,20 +1126,14 @@ async def get_gpio_status(
         for g in used_gpios
     ]
 
-    # Get hardware type and last ESP report timestamp
-    hardware_type = device.hardware_type or "ESP32_WROOM"
-    last_esp_report = None
-    if device.device_metadata:
-        last_esp_report = device.device_metadata.get("gpio_status_updated_at")
-
     return GpioStatusResponse(
         esp_id=esp_id,
         available=sorted(available_gpios),
-        reserved=reserved_items,  # Backwards-compat
-        system=sorted(SYSTEM_RESERVED_PINS),
-        reserved_gpios=sorted(reserved_gpios),  # New: Analog/Digital only
-        i2c_bus=i2c_bus_info,  # New: I2C bus status
-        onewire_buses=onewire_buses,  # New: OneWire buses
+        reserved=reserved_items,
+        system=sorted(board_system_pins),
+        reserved_gpios=sorted(reserved_gpios),
+        i2c_bus=i2c_bus_info,
+        onewire_buses=onewire_buses,
         hardware_type=hardware_type,
         last_esp_report=last_esp_report,
     )

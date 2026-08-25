@@ -145,6 +145,46 @@ class ActuatorConfig(Base, TimestampMixin):
         doc="AUT-482: Force OFF on disconnect when true (product default for manual actuators)",
     )
 
+    # AO-1: Pump flow rate calibration for server-side dose_ml -> duration_s
+    # conversion (AO-2). NULL = uncalibrated. Never sent to ESP32 firmware.
+    flow_rate_ml_s: Mapped[Optional[float]] = mapped_column(
+        Float,
+        nullable=True,
+        doc="Pump flow rate in ml/s (NULL = uncalibrated)",
+    )
+
+    # AUT-1355 U4-a: Empiric concentration SSOT on the pump (µS/cm rise per ml
+    # per L). NULL = unset → runtime fallback to dose_config.components[].concentration.
+    # Never sent to ESP32 firmware (same pattern as flow_rate_ml_s).
+    concentration: Mapped[Optional[float]] = mapped_column(
+        Float,
+        nullable=True,
+        doc="Empiric µS/cm rise per ml per L (NULL = unset; fallback dose_config)",
+    )
+
+    # AUT-1355 U4-a: Structured recipe role for Salzrechner A/B + seed identity.
+    # Values: part_a | part_b | ph_down | generic. NULL = unset.
+    # Positional components[i]→action i match remains for LogicEngine.
+    dose_role: Mapped[Optional[str]] = mapped_column(
+        String(32),
+        nullable=True,
+        doc="Recipe role: part_a | part_b | ph_down | generic (NULL = unset)",
+    )
+
+    # AUT-1410 SR-1: Soft identity of the stock currently attached to this pump.
+    # Display/traceability only — never used to derive or recall concentration.
+    # Soft UUID (no hard FK) → stock_mix_recipes.id; distinct from plan recipe_ref.
+    stock_recipe_ref: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        nullable=True,
+        doc="Soft ref to stock_mix_recipes.id (NULL = unset; display only)",
+    )
+    stock_prepared_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        doc="When stock was last confirmed newly prepared (NULL = unset)",
+    )
+
     # Metadata
     actuator_metadata: Mapped[dict] = mapped_column(
         JSON,
@@ -191,7 +231,11 @@ class ActuatorConfig(Base, TimestampMixin):
         JSON,
         default=list,
         nullable=True,
-        doc="JSON list of subzone_ids for static multi-zone assignment",
+        doc=(
+            "DEPRECATED (AUT-227): legacy field, not consumed by business logic. "
+            "Subzone assignment is owned by subzone_configs.assigned_gpios. "
+            "Candidate for DROP COLUMN after evidence period."
+        ),
     )
 
     # =========================================================================

@@ -6,6 +6,7 @@ Safety validation for actuator commands, emergency stop handling.
 
 import asyncio
 from dataclasses import dataclass
+from datetime import datetime
 from enum import Enum
 from typing import Optional
 
@@ -42,11 +43,22 @@ class SafetyCheckResult:
         valid: Whether the command is safe to execute
         error: Error message if validation failed
         warnings: Optional list of warnings
+        reason: Machine-readable rejection reason enum value (AUT-1020)
+        safety_layer: Human-readable safety layer name (AUT-1020)
+        configured_in: Where this safety rule is configured (AUT-1020)
+        retry_after_seconds: Seconds until retry allowed; None if no timer (AUT-1020)
+        last_seen_ts: Last known online timestamp for esp_offline rejections (AUT-1020)
     """
 
     valid: bool
     error: Optional[str] = None
     warnings: Optional[list[str]] = None
+    # AUT-1020: structured rejection context for actuator_command_failed WS payload
+    reason: Optional[str] = None
+    safety_layer: Optional[str] = None
+    configured_in: Optional[str] = None
+    retry_after_seconds: Optional[int] = None
+    last_seen_ts: Optional[datetime] = None
 
 
 class SafetyService:
@@ -116,6 +128,11 @@ class SafetyService:
                 return SafetyCheckResult(
                     valid=False,
                     error=f"Emergency stop is active for ESP {esp_id}",
+                    # AUT-1020: structured context for WS actuator_command_failed payload
+                    reason="emergency_stop",
+                    safety_layer="emergency_stop",
+                    configured_in="REST /safety/emergency-stop",
+                    retry_after_seconds=None,
                 )
 
             # Check global emergency stop
@@ -123,6 +140,11 @@ class SafetyService:
                 return SafetyCheckResult(
                     valid=False,
                     error="Global emergency stop is active",
+                    # AUT-1020: structured context for WS actuator_command_failed payload
+                    reason="emergency_stop",
+                    safety_layer="emergency_stop",
+                    configured_in="REST /safety/emergency-stop",
+                    retry_after_seconds=None,
                 )
 
             # Validate value range
@@ -171,6 +193,13 @@ class SafetyService:
             return SafetyCheckResult(
                 valid=False,
                 error=f"ESP device is offline: {esp_id} (status={esp_device.status})",
+                # AUT-1020: structured context for WS actuator_command_failed payload
+                reason="esp_offline",
+                safety_layer="online_guard",
+                configured_in="Automatisch (Heartbeat-Timeout)",
+                retry_after_seconds=None,
+                # AUT-1020: last_seen available without extra DB query (AUT-592 pattern)
+                last_seen_ts=esp_device.last_seen,
             )
 
         # Lookup actuator config

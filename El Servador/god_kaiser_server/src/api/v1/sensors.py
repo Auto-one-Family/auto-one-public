@@ -27,9 +27,9 @@ import io
 import uuid
 from collections.abc import AsyncGenerator
 from datetime import datetime, timedelta, timezone
-from typing import Annotated, Literal, Optional
+from typing import Annotated, Any, Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -69,6 +69,8 @@ from ...schemas import (
     TriggerMeasurementResponse,
 )
 from ...schemas.alert_config import (
+    CustomThresholds,
+    SensorAlertConfigUpdate,
     SensorAlertConfigViewResponse,
     SensorRuntimeUpdateResponse,
     SensorRuntimeViewResponse,
@@ -87,6 +89,7 @@ from ..deps import (
     DBSession,
     MQTTPublisher,
     OperatorUser,
+    ViewerUser,
     get_esp_service,
     get_mqtt_publisher,
     get_sensor_service,
@@ -97,6 +100,7 @@ from ...services.sensor_service import SensorService
 from ...services.gpio_validation_service import GpioValidationService
 from ...services.subzone_service import SubzoneService
 from ...services.calibration_payloads import canonicalize_calibration_data
+from ...services.config_builder import ConfigConflictError
 from ...mqtt.topics import TopicBuilder
 from ...utils.subzone_helpers import normalize_subzone_id
 
@@ -155,6 +159,7 @@ def _model_to_response(
     - pi_enhanced (model) -> processing_mode (schema)
     - calibration_data (model) -> calibration (schema)
     - thresholds dict (model) -> threshold_min/max/warning_min/max (schema)
+    - alert_config.custom_thresholds dict (model) -> custom_thresholds (schema)
     - sensor_metadata (model) -> metadata (schema)
     - interface_type, i2c_address, onewire_address, provides_values (multi-value support)
     """
@@ -164,6 +169,15 @@ def _model_to_response(
     threshold_max = thresholds.get("max")
     warning_min = thresholds.get("warning_min")
     warning_max = thresholds.get("warning_max")
+
+    # AUT-1104: alert_config.custom_thresholds passthrough (same source
+    # alert_suppression_service.get_effective_thresholds() prioritizes over
+    # `thresholds` above). None if unset — CustomThresholds() would produce an
+    # all-None object instead, which the frontend can't distinguish from "unset".
+    custom_thresholds_raw = (sensor.alert_config or {}).get("custom_thresholds")
+    custom_thresholds = (
+        CustomThresholds(**custom_thresholds_raw) if custom_thresholds_raw else None
+    )
 
     # Convert pi_enhanced boolean to processing_mode string
     processing_mode = "pi_enhanced" if sensor.pi_enhanced else "raw"
@@ -196,12 +210,14 @@ def _model_to_response(
         adc_source=getattr(sensor, "adc_source", None),
         adc_channel=getattr(sensor, "adc_channel", None),
         pga_gain=getattr(sensor, "pga_gain", None),
+        polarity=getattr(sensor, "polarity", None),
         # =========================================================================
         calibration=sensor.calibration_data,  # Model: calibration_data -> Schema: calibration
         threshold_min=threshold_min,
         threshold_max=threshold_max,
         warning_min=warning_min,
         warning_max=warning_max,
+        custom_thresholds=custom_thresholds,
         metadata=sensor.sensor_metadata,  # Model: sensor_metadata -> Schema: metadata
         description=(sensor.sensor_metadata or {}).get("description"),
         unit=(sensor.sensor_metadata or {}).get("unit"),
@@ -293,6 +309,7 @@ def _schema_to_model_fields(request: SensorConfigCreate) -> dict:
         "adc_source": request.adc_source or "internal",
         "adc_channel": request.adc_channel,
         "pga_gain": request.pga_gain,
+        "polarity": request.polarity or "active_low",
         # =========================================================================
         # OPERATING MODE FIELDS (Phase 2F)
         # =========================================================================
@@ -932,36 +949,42 @@ async def create_or_update_sensor(
         # OneWire sensors can share GPIO (bus pin)
         # No GPIO validation needed
     else:  # ANALOG or DIGITAL
-        # Analog/Digital: Check GPIO conflict (exclusive)
-        gpio_validator = GpioValidationService(
-            session=db, sensor_repo=sensor_repo, actuator_repo=actuator_repo, esp_repo=esp_repo
-        )
-
-        validation_result = await gpio_validator.validate_gpio_available(
-            esp_db_id=esp_device.id,
-            gpio=gpio,
-            exclude_sensor_id=existing.id if existing else None,
-            purpose="sensor",
-            interface_type=interface_type,
-        )
-
-        if not validation_result.available:
-            logger.warning(
-                f"GPIO conflict for ESP {esp_id}, GPIO {gpio}: "
-                f"{validation_result.conflict_type} - {validation_result.message}"
+        # ADS1115 sensors use gpio=0 as convention meaning "no direct GPIO" —
+        # the actual ADC chip is connected via I2C (SDA/SCL), not a GPIO pin.
+        # Skip system-pin check; the ADS1115 i2c_address conflict check is
+        # handled implicitly (same sensor_type + gpio=0 lookup above).
+        _is_ads1115 = gpio == 0 and request.adc_source == "ads1115"
+        if not _is_ads1115:
+            # Analog/Digital: Check GPIO conflict (exclusive)
+            gpio_validator = GpioValidationService(
+                session=db, sensor_repo=sensor_repo, actuator_repo=actuator_repo, esp_repo=esp_repo
             )
-            raise GpioConflictError(
+
+            validation_result = await gpio_validator.validate_gpio_available(
+                esp_db_id=esp_device.id,
                 gpio=gpio,
-                conflict_type=validation_result.conflict_type.value,
-                conflict_component=validation_result.conflict_component,
-                conflict_id=(
-                    str(validation_result.conflict_id) if validation_result.conflict_id else None
-                ),
-                message=validation_result.message,
+                exclude_sensor_id=existing.id if existing else None,
+                purpose="sensor",
+                interface_type=interface_type,
             )
 
-        if validation_result.warning:
-            logger.info(f"GPIO warning for ESP {esp_id}, GPIO {gpio}: {validation_result.warning}")
+        if not _is_ads1115:
+            if not validation_result.available:
+                logger.warning(
+                    f"GPIO conflict for ESP {esp_id}, GPIO {gpio}: "
+                    f"{validation_result.conflict_type} - {validation_result.message}"
+                )
+                raise GpioConflictError(
+                    gpio=gpio,
+                    conflict_type=validation_result.conflict_type.value,
+                    conflict_component=validation_result.conflict_component,
+                    conflict_id=(
+                        str(validation_result.conflict_id) if validation_result.conflict_id else None
+                    ),
+                    message=validation_result.message,
+                )
+            if validation_result.warning:
+                logger.info(f"GPIO warning for ESP {esp_id}, GPIO {gpio}: {validation_result.warning}")
     # =========================================================================
 
     # Convert schema fields to model fields
@@ -1049,6 +1072,8 @@ async def create_or_update_sensor(
             existing.adc_channel = request.adc_channel
         if request.pga_gain is not None:
             existing.pga_gain = request.pga_gain
+        if request.polarity is not None:
+            existing.polarity = request.polarity
         # =========================================================================
         # WRITE-AFTER-VERIFICATION: Reset config_status to pending
         # Status will be updated to "applied" or "failed" by config_handler
@@ -1213,6 +1238,9 @@ async def create_or_update_sensor(
         )
         mqtt_correlation_id = schedule_result.get("correlation_id")
         logger.info("Config push coalesced for ESP %s after sensor create/update", esp_id)
+    except ConfigConflictError as e:
+        logger.error(f"Failed to publish config to ESP {esp_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=409, detail=f"GPIO-Konflikt: {e}")
     except Exception as e:
         # Log error but don't fail the request (DB save was successful)
         logger.error(f"Failed to publish config to ESP {esp_id}: {e}", exc_info=True)
@@ -1406,6 +1434,48 @@ async def delete_sensor(
 # =============================================================================
 
 
+def _aggregated_row_to_reading(row: Any) -> Optional[SensorReading]:
+    """Map an aggregated query row to SensorReading.
+
+    AUT-723 E3: do not coerce missing avg_raw to 0.0. Skip the bucket when
+    both avg_raw and avg_processed are None (no numeric chart Y).
+    """
+    raw_value = float(row.avg_raw) if row.avg_raw is not None else None
+    processed_value = float(row.avg_processed) if row.avg_processed is not None else None
+    if raw_value is None and processed_value is None:
+        return None
+    return SensorReading(
+        timestamp=row.bucket,
+        raw_value=raw_value,
+        processed_value=processed_value,
+        unit=row.unit,
+        quality="aggregated",
+        sensor_type=row.sensor_type,
+        min_value=float(row.min_val) if row.min_val is not None else None,
+        max_value=float(row.max_val) if row.max_val is not None else None,
+        sample_count=int(row.sample_count),
+    )
+
+
+def _raw_row_to_reading(row: Any) -> Optional[SensorReading]:
+    """Map a raw SensorData row to SensorReading.
+
+    AUT-723 E3: warming_up is quality-only — never a numeric chart Y.
+    """
+    if row.quality == "warming_up":
+        return None
+    return SensorReading(
+        timestamp=row.timestamp,
+        raw_value=row.raw_value,
+        processed_value=row.processed_value,
+        unit=row.unit,
+        quality=row.quality,
+        sensor_type=row.sensor_type,
+        zone_id=row.zone_id,
+        subzone_id=row.subzone_id,
+    )
+
+
 @router.get(
     "/data",
     response_model=SensorDataResponse,
@@ -1477,10 +1547,11 @@ async def query_sensor_data(
     if before_timestamp and before_timestamp.tzinfo is None:
         before_timestamp = before_timestamp.replace(tzinfo=timezone.utc)
 
-    # Get ESP device ID if specified
+    # Get ESP device ID if specified.
+    # include_deleted: historical rows remain after soft-delete; deep-links must not 404.
     esp_db_id = None
     if esp_id:
-        esp_device = await esp_repo.get_by_device_id(esp_id)
+        esp_device = await esp_repo.get_by_device_id(esp_id, include_deleted=True)
         if not esp_device:
             raise ESPNotFoundError(esp_id)
         esp_db_id = esp_device.id
@@ -1516,36 +1587,19 @@ async def query_sensor_data(
         before_timestamp=before_timestamp,
     )
 
-    # Convert to response format
+    # Convert to response format (skip rows without a chartable Y — AUT-723 E3)
     if is_aggregated:
         # Aggregated rows: (bucket, avg_raw, avg_processed, min_val, max_val, sample_count, sensor_type, unit)
         reading_responses = [
-            SensorReading(
-                timestamp=r.bucket,
-                raw_value=float(r.avg_raw) if r.avg_raw is not None else 0.0,
-                processed_value=float(r.avg_processed) if r.avg_processed is not None else None,
-                unit=r.unit,
-                quality="aggregated",
-                sensor_type=r.sensor_type,
-                min_value=float(r.min_val) if r.min_val is not None else None,
-                max_value=float(r.max_val) if r.max_val is not None else None,
-                sample_count=int(r.sample_count),
-            )
-            for r in readings
+            reading
+            for reading in (_aggregated_row_to_reading(r) for r in readings)
+            if reading is not None
         ]
     else:
         reading_responses = [
-            SensorReading(
-                timestamp=r.timestamp,
-                raw_value=r.raw_value,
-                processed_value=r.processed_value,
-                unit=r.unit,
-                quality=r.quality,
-                sensor_type=r.sensor_type,
-                zone_id=r.zone_id,
-                subzone_id=r.subzone_id,
-            )
-            for r in readings
+            reading
+            for reading in (_raw_row_to_reading(r) for r in readings)
+            if reading is not None
         ]
 
     # Cursor pagination metadata
@@ -1621,10 +1675,10 @@ async def get_sensor_data_by_source(
     esp_repo = ESPRepository(db)
     sensor_repo = SensorRepository(db)
 
-    # Get ESP device ID if specified
+    # Get ESP device ID if specified (history may reference soft-deleted ESPs)
     esp_db_id = None
     if esp_id:
-        esp_device = await esp_repo.get_by_device_id(esp_id)
+        esp_device = await esp_repo.get_by_device_id(esp_id, include_deleted=True)
         if not esp_device:
             raise ESPNotFoundError(esp_id)
         esp_db_id = esp_device.id
@@ -1636,19 +1690,11 @@ async def get_sensor_data_by_source(
         esp_id=esp_db_id,
     )
 
-    # Convert to response format
+    # Convert to response format (skip warming_up — AUT-723 E3)
     reading_responses = [
-        SensorReading(
-            timestamp=r.timestamp,
-            raw_value=r.raw_value,
-            processed_value=r.processed_value,
-            unit=r.unit,
-            quality=r.quality,
-            sensor_type=r.sensor_type,
-            zone_id=r.zone_id,
-            subzone_id=r.subzone_id,
-        )
-        for r in readings
+        reading
+        for reading in (_raw_row_to_reading(r) for r in readings)
+        if reading is not None
     ]
 
     return SensorDataResponse(
@@ -2399,32 +2445,61 @@ async def _validate_onewire_config(
 )
 async def update_sensor_alert_config(
     sensor_id: uuid.UUID,
-    body: dict,
+    body: SensorAlertConfigUpdate,
     session: DBSession,
-    user: OperatorUser,
+    user: ViewerUser,
 ) -> SensorAlertConfigViewResponse:
     """
     Update per-sensor alert configuration (suppression, thresholds, severity).
 
     The alert_config is a JSONB field — partial updates merge with existing config.
+
+    Role-based field access (AUT-1097):
+    - viewer: may only write ``custom_thresholds``.
+    - operator / admin: all fields allowed.
+
+    Field-presence is determined via ``exclude_unset=True`` so that an explicit
+    ``null`` value in the payload is treated as "field was set" (= delete the key).
     """
+    # Field-level role check: viewer may only touch custom_thresholds (AUT-1097).
+    # Whitelist approach: any field NOT in ALLOWED_VIEWER_FIELDS triggers 403.
+    # This prevents future new fields from becoming viewer-writable by default.
+    ALLOWED_VIEWER_FIELDS: set[str] = {"custom_thresholds"}
+    is_operator_or_above = user.role in ("admin", "operator")
+
+    if not is_operator_or_above:
+        sent_fields = set(body.model_dump(exclude_unset=True).keys())
+        forbidden = sent_fields - ALLOWED_VIEWER_FIELDS
+        if forbidden:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    f"Insufficient permissions. Fields {sorted(forbidden)} require "
+                    "operator role. Viewers may only write custom_thresholds."
+                ),
+            )
+
     sensor_repo = SensorRepository(session)
     sensor = await sensor_repo.get_by_id(sensor_id)
     if not sensor:
         raise SensorNotFoundException(str(sensor_id))
 
-    # Merge with existing config
+    # Merge with existing config (partial update — only sent fields change).
+    # exclude_unset=True: only fields explicitly present in the request are merged.
     existing = dict(sensor.alert_config or {})
-    for key, value in body.items():
+    for key, value in body.model_dump(exclude_unset=True).items():
         if value is None:
+            # Explicit null → remove the key from alert_config
             existing.pop(key, None)
         else:
+            # Nested Pydantic models (e.g. CustomThresholds) are already dicts
+            # after model_dump(); no extra serialization needed.
             existing[key] = value
 
     sensor.alert_config = existing
     await session.commit()
 
-    logger.info(f"Alert config updated: sensor {sensor_id}, config={existing}")
+    logger.info(f"Alert config updated: sensor {sensor_id}, user={user.username}, config={existing}")
     return SensorAlertConfigViewResponse(status="ok", alert_config=existing)
 
 
@@ -2651,12 +2726,12 @@ async def export_sensor_data(
             detail="start_time muss vor end_time liegen.",
         )
 
-    # Resolve esp_id string → internal UUID
+    # Resolve esp_id string → internal UUID (export allows soft-deleted history)
     esp_repo = ESPRepository(db)
     sensor_repo = SensorRepository(db)
     esp_db_id: Optional[uuid.UUID] = None
     if esp_id:
-        esp_device = await esp_repo.get_by_device_id(esp_id)
+        esp_device = await esp_repo.get_by_device_id(esp_id, include_deleted=True)
         if not esp_device:
             raise ESPNotFoundError(esp_id)
         esp_db_id = esp_device.id

@@ -203,13 +203,24 @@ if "multispeq" not in MULTI_VALUE_SENSORS:
     }
 
 
+# SSOT for canonical unit (+ optional mock defaults / plausible threshold ranges)
+# per sensor_type. Read via get_unit_for_sensor_type() / get_plausible_range_for_sensor_type().
+# Logic-rule thresholds and processed sensor values must use the same unit (AUT-1269).
+#
 # Plausible physical default start values for mock sensors.
 # Applied when the user does NOT provide a raw_value (None).
 # Keyed by the SPLIT sensor_type (e.g., "sht31_temp"), not the base type ("sht31").
+# Optional plausible_min/plausible_max: typical operating range in the canonical unit
+# for non-blocking rule-threshold warnings (AUT-1274) — tighter than absolute sensor clamps.
 SENSOR_TYPE_MOCK_DEFAULTS: Dict[str, Dict[str, object]] = {
     # Temperature: typical room temperature
     "sht31_temp": {"raw_value": 22.0, "unit": "°C"},
-    "ds18b20": {"raw_value": 20.0, "unit": "°C"},
+    "ds18b20": {
+        "raw_value": 20.0,
+        "unit": "°C",
+        "plausible_min": -55.0,
+        "plausible_max": 125.0,
+    },
     "bmp280_temp": {"raw_value": 22.0, "unit": "°C"},
     "bme280_temp": {"raw_value": 22.0, "unit": "°C"},
     "temperature": {"raw_value": 22.0, "unit": "°C"},
@@ -224,16 +235,31 @@ SENSOR_TYPE_MOCK_DEFAULTS: Dict[str, Dict[str, object]] = {
     "bmp280_pressure": {"raw_value": 1013.25, "unit": "hPa"},
     "bme280_pressure": {"raw_value": 1013.25, "unit": "hPa"},
     "pressure": {"raw_value": 1013.25, "unit": "hPa"},
-    # Nutrient solution
-    "ph": {"raw_value": 6.2, "unit": "pH"},
-    "ec": {"raw_value": 1500.0, "unit": "µS/cm"},
+    # Nutrient solution (canonical EC unit = µS/cm — E1 AUT-1268)
+    "ph": {
+        "raw_value": 6.2,
+        "unit": "pH",
+        "plausible_min": 0.0,
+        "plausible_max": 14.0,
+    },
+    "ec": {
+        "raw_value": 1500.0,
+        "unit": "µS/cm",
+        "plausible_min": 100.0,
+        "plausible_max": 10000.0,
+    },
     # Environment
     "co2": {"raw_value": 800.0, "unit": "ppm"},
     "mhz19_co2": {"raw_value": 800.0, "unit": "ppm"},
     "scd30_co2": {"raw_value": 800.0, "unit": "ppm"},
     "light": {"raw_value": 25000.0, "unit": "lux"},
-    # Flow: pump off = 0 is correct
-    "flow": {"raw_value": 0.0, "unit": "L/min"},
+    # Flow: pump off = 0 is correct; FS300A Messbereich 1–60 L/min (AUT-849)
+    "flow": {
+        "raw_value": 0.0,
+        "unit": "L/min",
+        "plausible_min": 0.0,
+        "plausible_max": 60.0,
+    },
     # Liquid level: binary 0=empty / 1=full
     "liquid_level": {"raw_value": 0.0, "unit": ""},
     # VPD: computed from temperature + humidity (optimal range ~0.8-1.2 kPa)
@@ -296,21 +322,50 @@ def normalize_sensor_type(sensor_type: str) -> str:
 
 def get_unit_for_sensor_type(sensor_type: str) -> Optional[str]:
     """
-    Get the canonical unit for a sensor type from the registry.
+    SSOT accessor: canonical unit for a sensor type (AUT-1269).
 
-    Looks up SENSOR_TYPE_MOCK_DEFAULTS and MULTI_VALUE_SENSORS for the unit.
+    Looks up SENSOR_TYPE_MOCK_DEFAULTS for the unit. Logic-rule thresholds and
+    processed sensor values must be expressed in this unit (EC → µS/cm).
 
     Args:
-        sensor_type: Normalized sensor type (e.g., "ds18b20", "sht31_temp")
+        sensor_type: Normalized sensor type (e.g., "ds18b20", "sht31_temp", "ec")
 
     Returns:
-        Unit string (e.g., "°C", "%RH") or None if unknown
+        Unit string (e.g., "°C", "%RH", "µS/cm") or None if unknown
     """
     key = sensor_type.lower()
     defaults = SENSOR_TYPE_MOCK_DEFAULTS.get(key)
     if defaults and "unit" in defaults:
         return str(defaults["unit"])
     return None
+
+
+def get_plausible_range_for_sensor_type(
+    sensor_type: str,
+) -> Optional[Dict[str, float]]:
+    """
+    SSOT accessor: typical operating range in the canonical unit (AUT-1269/F5).
+
+    Used for non-blocking rule-threshold plausibility warnings. Not the absolute
+    sensor clamp (e.g. EC library 0–20000) — tighter so mS-magnitude mistakes
+    like ``1.6`` in a µS/cm field are flagged.
+
+    Args:
+        sensor_type: Normalized sensor type (e.g., "ec", "ph", "ds18b20")
+
+    Returns:
+        ``{"min": float, "max": float}`` or None if no range is defined
+    """
+    key = sensor_type.lower()
+    defaults = SENSOR_TYPE_MOCK_DEFAULTS.get(key)
+    if not defaults:
+        return None
+    if "plausible_min" not in defaults or "plausible_max" not in defaults:
+        return None
+    return {
+        "min": float(defaults["plausible_min"]),
+        "max": float(defaults["plausible_max"]),
+    }
 
 
 def sanitize_unit_encoding(unit: str) -> str:

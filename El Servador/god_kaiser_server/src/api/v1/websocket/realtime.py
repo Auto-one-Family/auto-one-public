@@ -11,6 +11,7 @@ from ....core.logging_config import get_logger
 from ....core.security import verify_token
 from ....db.models.audit_log import AuditSourceType
 from ....db.repositories.audit_log_repo import AuditLogRepository
+from ....db.repositories.dashboard_repo import DashboardRepository
 from ....db.repositories.token_blacklist_repo import TokenBlacklistRepository
 from ....db.repositories.user_repo import UserRepository
 from ....db.session import get_session
@@ -125,11 +126,56 @@ async def websocket_realtime(websocket: WebSocket, client_id: str):
             return
 
         # Authentication successful - proceed with connection
+
+        # AUT-1096: Precompute viewer sensor-allow-sets (once per connect, no DB
+        # call during broadcast). admin/operator stay unrestricted (None).
+        allowed_sensor_keys = None  # None = unrestricted
+        allowed_esp_ids = None
+        if user.role not in ("admin", "operator"):
+            # viewer: build frozenset of "{esp_id}:{gpio}" from all visible dashboard widgets
+            dashboard_repo = DashboardRepository(session)
+            dashboards = await dashboard_repo.get_user_dashboards(owner_id=user_id)
+            sensor_keys: set = set()
+            esp_ids_set: set = set()
+            for dash in dashboards:
+                for widget in (dash.widgets or []):
+                    if not isinstance(widget, dict):
+                        continue
+                    config = widget.get("config") or {}
+                    if not isinstance(config, dict):
+                        continue
+                    # sensorId format: "{esp_id}:{gpio}:{sensor_type}" or "{esp_id}:{gpio}"
+                    sid = config.get("sensorId") or ""
+                    parts = sid.split(":")
+                    # parts[1] is gpio as str; must be digit to be a valid sensor key
+                    if len(parts) >= 2 and parts[0] and parts[1].isdigit():
+                        sensor_keys.add(f"{parts[0]}:{parts[1]}")
+                        esp_ids_set.add(parts[0])
+                    # espId: direct device reference (device-level widgets)
+                    eid = config.get("espId") or ""
+                    if eid:
+                        esp_ids_set.add(eid)
+            allowed_sensor_keys = frozenset(sensor_keys)
+            allowed_esp_ids = frozenset(esp_ids_set)
+            logger.debug(
+                "viewer user_id=%s allowed_sensor_keys=%d allowed_esp_ids=%d",
+                user_id,
+                len(sensor_keys),
+                len(esp_ids_set),
+            )
+
         # Break out of session context (session will be cleaned up automatically)
         break
 
     manager = await WebSocketManager.get_instance()
-    await manager.connect(websocket, client_id)
+    await manager.connect(
+        websocket,
+        client_id,
+        user_id=user_id,
+        role=user.role,
+        allowed_sensor_keys=allowed_sensor_keys,
+        allowed_esp_ids=allowed_esp_ids,
+    )
 
     try:
         while True:

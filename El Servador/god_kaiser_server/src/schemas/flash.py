@@ -45,8 +45,8 @@ class NvsEnv(str, Enum):
     """Valid flash environments for NVS credential management."""
 
     dev_local = "dev-local"
-    lab = "lab"
-    field = "field"
+    pi_home = "pi-home"
+    pi_elbherb = "pi-elbherb"
 
 
 class NvsSecretsCreate(BaseModel):
@@ -140,7 +140,7 @@ class FlashExecuteRequest(BaseModel):
     )
     confirm: bool = Field(
         default=False,
-        description="Must be True for env=field (strict environment)",
+        description="Must be True for env=pi-elbherb (STRICT environment)",
     )
     erase_confirm: bool = Field(
         default=False,

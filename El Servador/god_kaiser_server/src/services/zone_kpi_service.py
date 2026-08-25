@@ -63,13 +63,20 @@ class ZoneKPIService:
         self.session = session
         self.ctx_repo = ZoneContextRepository(session)
 
-    async def calculate_vpd(self, zone_id: str) -> Optional[dict]:
-        """VPD from latest temperature + humidity sensors in the zone."""
+    async def calculate_vpd(self, zone_id: str, domain: Optional[str] = None) -> Optional[dict]:
+        """VPD from latest temperature + humidity sensors in the zone.
+
+        Args:
+            zone_id: Zone identifier.
+            domain: Optional report domain pre-filter (AUT-1087).  When set,
+                only devices with ``ESPDevice.domain == domain`` contribute.
+                ``None`` (default) preserves the existing zone-wide behaviour.
+        """
         temp_val = await self._get_latest_sensor_value(
-            zone_id, ["sht31_temp", "bmp280_temp", "ds18b20"]
+            zone_id, ["sht31_temp", "bmp280_temp", "ds18b20"], domain=domain
         )
         hum_val = await self._get_latest_sensor_value(
-            zone_id, ["sht31_humidity", "bmp280_humidity"]
+            zone_id, ["sht31_humidity", "bmp280_humidity"], domain=domain
         )
 
         if temp_val is None or hum_val is None:
@@ -78,17 +85,23 @@ class ZoneKPIService:
         vpd = _calculate_vpd(temp_val, hum_val)
         return VPDResult(vpd, temp_val, hum_val).to_dict()
 
-    async def calculate_dli(self, zone_id: str) -> Optional[dict]:
+    async def calculate_dli(self, zone_id: str, domain: Optional[str] = None) -> Optional[dict]:
         """Daily Light Integral from light sensor data (last 24h).
+
+        Args:
+            zone_id: Zone identifier.
+            domain: Optional report domain pre-filter (AUT-1087).
 
         DLI = sum of (PPFD * interval_seconds) / 1_000_000 over 24h
         Simplified: average PPFD * 3600 * photoperiod_hours / 1_000_000
         """
-        light_readings = await self._get_sensor_readings_24h(zone_id, ["light", "par", "lux"])
+        light_readings = await self._get_sensor_readings_24h(
+            zone_id, ["light", "par", "lux"], domain=domain
+        )
         if not light_readings:
             return None
 
-        avg_ppfd = sum(r for r in light_readings) / len(light_readings)
+        avg_ppfd = sum(light_readings) / len(light_readings)
         dli = avg_ppfd * 3600 * 24 / 1_000_000
         return {
             "dli_mol_m2_day": round(dli, 2),
@@ -123,7 +136,10 @@ class ZoneKPIService:
 
     async def get_zone_health_score(self, zone_id: str) -> Optional[dict]:
         """Aggregated health score (0-100) from all devices in the zone."""
-        stmt = select(ESPDevice).where(ESPDevice.zone_id == zone_id)
+        stmt = select(ESPDevice).where(
+            ESPDevice.zone_id == zone_id,
+            ESPDevice.deleted_at.is_(None),
+        )
         result = await self.session.execute(stmt)
         devices = list(result.scalars().all())
 
@@ -143,10 +159,17 @@ class ZoneKPIService:
             "lowest_score": round(min(scores), 1) if scores else 0,
         }
 
-    async def get_all_kpis(self, zone_id: str) -> dict:
-        """All KPIs in one call."""
-        vpd = await self.calculate_vpd(zone_id)
-        dli = await self.calculate_dli(zone_id)
+    async def get_all_kpis(self, zone_id: str, domain: Optional[str] = None) -> dict:
+        """All KPIs in one call.
+
+        Args:
+            zone_id: Zone identifier.
+            domain: Optional report domain pre-filter (AUT-1087).  Forwarded to
+                ``calculate_vpd`` and ``calculate_dli`` only.  Zone health and
+                growth progress are always zone-wide (by design).
+        """
+        vpd = await self.calculate_vpd(zone_id, domain=domain)
+        dli = await self.calculate_dli(zone_id, domain=domain)
         growth = await self.calculate_growth_progress(zone_id)
         health = await self.get_zone_health_score(zone_id)
 
@@ -162,9 +185,28 @@ class ZoneKPIService:
     # ─── Internal helpers ─────────────────────────────────────────────
 
     async def _get_latest_sensor_value(
-        self, zone_id: str, sensor_types: List[str]
+        self,
+        zone_id: str,
+        sensor_types: List[str],
+        domain: Optional[str] = None,
     ) -> Optional[float]:
-        """Get latest processed_value from any sensor of given types in the zone."""
+        """Get latest processed_value from any sensor of given types in the zone.
+
+        Args:
+            zone_id: Zone identifier.
+            sensor_types: Accepted sensor type names (OR condition).
+            domain: Optional report domain pre-filter (AUT-1087).  When set,
+                restricts to devices whose ``ESPDevice.domain`` matches.
+        """
+        conditions = [
+            ESPDevice.zone_id == zone_id,
+            ESPDevice.deleted_at.is_(None),
+            SensorData.sensor_type.in_(sensor_types),
+            SensorData.processed_value.isnot(None),
+        ]
+        if domain is not None:
+            conditions.append(ESPDevice.domain == domain)
+
         stmt = (
             select(SensorData.processed_value)
             .join(
@@ -175,11 +217,7 @@ class ZoneKPIService:
                 ),
             )
             .join(ESPDevice, SensorConfig.esp_id == ESPDevice.id)
-            .where(
-                ESPDevice.zone_id == zone_id,
-                SensorData.sensor_type.in_(sensor_types),
-                SensorData.processed_value.isnot(None),
-            )
+            .where(*conditions)
             .order_by(SensorData.timestamp.desc())
             .limit(1)
         )
@@ -187,9 +225,31 @@ class ZoneKPIService:
         row = result.scalar_one_or_none()
         return float(row) if row is not None else None
 
-    async def _get_sensor_readings_24h(self, zone_id: str, sensor_types: List[str]) -> List[float]:
-        """Get all sensor readings from the last 24h."""
+    async def _get_sensor_readings_24h(
+        self,
+        zone_id: str,
+        sensor_types: List[str],
+        domain: Optional[str] = None,
+    ) -> List[float]:
+        """Get all sensor readings from the last 24h.
+
+        Args:
+            zone_id: Zone identifier.
+            sensor_types: Accepted sensor type names (OR condition).
+            domain: Optional report domain pre-filter (AUT-1087).  When set,
+                restricts to devices whose ``ESPDevice.domain`` matches.
+        """
         since = datetime.now(timezone.utc) - timedelta(hours=24)
+        conditions = [
+            ESPDevice.zone_id == zone_id,
+            ESPDevice.deleted_at.is_(None),
+            SensorData.sensor_type.in_(sensor_types),
+            SensorData.processed_value.isnot(None),
+            SensorData.timestamp >= since,
+        ]
+        if domain is not None:
+            conditions.append(ESPDevice.domain == domain)
+
         stmt = (
             select(SensorData.processed_value)
             .join(
@@ -200,12 +260,7 @@ class ZoneKPIService:
                 ),
             )
             .join(ESPDevice, SensorConfig.esp_id == ESPDevice.id)
-            .where(
-                ESPDevice.zone_id == zone_id,
-                SensorData.sensor_type.in_(sensor_types),
-                SensorData.processed_value.isnot(None),
-                SensorData.timestamp >= since,
-            )
+            .where(*conditions)
         )
         result = await self.session.execute(stmt)
         return [float(r) for r in result.scalars().all()]

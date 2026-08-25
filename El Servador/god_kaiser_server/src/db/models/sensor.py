@@ -140,6 +140,21 @@ class SensorConfig(Base, TimestampMixin):
         doc="ADS1115 PGA full-scale range in volts as string, e.g. '4.096' (only for adc_source='ads1115'; NULL for internal ADC)",
     )
 
+    # =========================================================================
+    # DIGITAL SENSOR POLARITY (liquid_level)
+    # =========================================================================
+    # Signal polarity for digital switch sensors. 'active_low' (NPN, e.g.
+    # XKC-Y25-NPN) is the default and reproduces the pre-existing behavior.
+    # 'active_high' (PNP, e.g. XKC-Y26S-PNP) inverts the firmware's interpretation.
+
+    polarity: Mapped[str] = mapped_column(
+        String(16),
+        default="active_low",
+        server_default="active_low",
+        nullable=False,
+        doc="Signal polarity for digital sensors: 'active_low' (NPN, default) or 'active_high' (PNP)",
+    )
+
     provides_values: Mapped[Optional[list]] = mapped_column(
         JSON,
         nullable=True,
@@ -277,7 +292,11 @@ class SensorConfig(Base, TimestampMixin):
         JSON,
         default=list,
         nullable=True,
-        doc="JSON list of subzone_ids for static multi-zone assignment",
+        doc=(
+            "DEPRECATED (AUT-227): legacy field, not consumed by business logic. "
+            "Subzone assignment is owned by subzone_configs.assigned_gpios. "
+            "Candidate for DROP COLUMN after evidence period."
+        ),
     )
 
     # =========================================================================

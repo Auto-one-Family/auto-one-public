@@ -1,4 +1,4 @@
-"""Add plants, plants_species_extension, plant_lifecycle_events (AUT-222)
+"""Add plants, plants_cannabis_extension, plant_lifecycle_events (AUT-222)
 
 Adds three new tables for the Phyta Plants integration plus a nullable
 ``plant_id`` column on ``sensor_data`` for MultispeQ snapshot association.
@@ -10,7 +10,7 @@ a formal tenant FK.
 
 Changes:
 1. Create ``plants`` table (soft-delete + partial unique indexes).
-2. Create ``plants_species_extension`` table (1:1 with plants).
+2. Create ``plants_cannabis_extension`` table (1:1 with plants).
 3. Create ``plant_lifecycle_events`` table (append-only event log).
 4. Add ``sensor_data.plant_id`` (FK, nullable, indexed).
 
@@ -172,10 +172,10 @@ def upgrade() -> None:
     )
 
     # ---------------------------------------------------------------------
-    # 2. plants_species_extension
+    # 2. plants_cannabis_extension
     # ---------------------------------------------------------------------
     op.create_table(
-        "plants_species_extension",
+        "plants_cannabis_extension",
         sa.Column("extension_id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("plant_id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("kaiser_id", sa.String(length=50), nullable=True),
@@ -207,9 +207,9 @@ def upgrade() -> None:
             ["plant_id"],
             ["plants.plant_id"],
             ondelete="RESTRICT",
-            name="fk_species_extension_plant_id_plants",
+            name="fk_cannabis_extension_plant_id_plants",
         ),
-        sa.UniqueConstraint("plant_id", name="uq_species_extension_plant_id"),
+        sa.UniqueConstraint("plant_id", name="uq_cannabis_extension_plant_id"),
     )
 
     # ---------------------------------------------------------------------
@@ -302,7 +302,7 @@ def downgrade() -> None:
     op.drop_index("idx_lifecycle_plant_id", table_name="plant_lifecycle_events")
     op.drop_table("plant_lifecycle_events")
 
-    op.drop_table("plants_species_extension")
+    op.drop_table("plants_cannabis_extension")
 
     op.drop_index("uq_plants_external_plant_id_kaiser", table_name="plants")
     op.drop_index("uq_plants_qr_code_kaiser", table_name="plants")

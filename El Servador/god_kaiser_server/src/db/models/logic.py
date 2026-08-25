@@ -9,6 +9,7 @@ from typing import Optional
 from pydantic import ValidationError
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     DateTime,
     Float,
     ForeignKey,
@@ -25,6 +26,32 @@ from sqlalchemy.orm import Mapped, mapped_column, validates
 
 from ..base import Base, TimestampMixin
 from .logic_validation import validate_actions, validate_conditions
+
+# AUT-1173 (TAX-5): fixed rule_group catalog — single source of truth shared by the
+# DB CheckConstraint (below) and the Pydantic schemas (schemas/logic.py). A
+# user-benennbarer Katalog ist bewusst NICHT Teil dieser Welle.
+#
+# Variante C (AUT-1163 Entscheidung): Messgröße als Primärachse, "sicherheit" als
+# einzige feste Ausnahme (Risikoeinstufung schlägt Messgröße). Die 9 Messgrößen-Werte
+# sind 1:1 gespiegelt von AggCategory (El Frontend/src/utils/sensorDefaults.ts:1610-1654)
+# — deutschsprachig benannt, siehe LogicService._sensor_type_to_messgroesse(). "alarm"
+# und "dosierung" entfallen als eigene Gruppen (Regelausführung wird ein Kennzeichen
+# innerhalb der Messgrößen-Gruppe, AUT-1176/TAX-8 — nicht hier).
+RULE_GROUP_CATALOG: tuple[str, ...] = (
+    "ph",
+    "ec",
+    "bodenfeuchte",
+    "luftfeuchte",
+    "temperatur",
+    "co2",
+    "luftdruck",
+    "licht",
+    "durchfluss",
+    "zeitplan",
+    "sicherheit",
+    "sonstiges",
+)
+_RULE_GROUP_CHECK = f"rule_group IN ({', '.join(repr(g) for g in RULE_GROUP_CATALOG)})"
 
 
 class CrossESPLogic(Base, TimestampMixin):
@@ -127,10 +154,38 @@ class CrossESPLogic(Base, TimestampMixin):
         doc="Minimum time between executions (prevents spam)",
     )
 
+    settle_after_rule_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        nullable=True,
+        doc=(
+            "AUT-1115: Wait for settle_seconds after the last execution of THIS "
+            "other rule before evaluating. NULL = no settle dependency."
+        ),
+    )
+
+    settle_seconds: Mapped[Optional[int]] = mapped_column(
+        Integer,
+        nullable=True,
+        doc=(
+            "AUT-1115: Settle window in seconds, evaluated against "
+            "settle_after_rule_id's last execution. NULL = no settle wait."
+        ),
+    )
+
     max_executions_per_hour: Mapped[Optional[int]] = mapped_column(
         Integer,
         nullable=True,
         doc="Maximum executions per hour (rate limit)",
+    )
+    max_executions_per_day: Mapped[Optional[int]] = mapped_column(
+        Integer,
+        nullable=True,
+        doc="Maximum executions per day (rolling 24h window)",
+    )
+    max_dose_ml_per_day: Mapped[Optional[float]] = mapped_column(
+        Float,
+        nullable=True,
+        doc="Maximum total dose ml per day (rolling 24h window, requires AO-5 dose_ml audit field)",
     )
 
     last_triggered: Mapped[Optional[datetime]] = mapped_column(
@@ -177,6 +232,51 @@ class CrossESPLogic(Base, TimestampMixin):
         doc="Reason for degraded state (e.g. 'target_esp_offline:ESP_AABB')",
     )
 
+    # AUT-1145 (S0): explicit display-group override (see RULE_GROUP_CATALOG).
+    # NULL = no override, group is derived from the rule's mechanic
+    # (LogicService.derive_rule_group() — the only place this may happen,
+    # never re-implemented in the frontend). No backfill for existing rows.
+    rule_group: Mapped[Optional[str]] = mapped_column(
+        String(20),
+        nullable=True,
+        doc="Explicit rule_group override (see RULE_GROUP_CATALOG). NULL = auto-derived.",
+    )
+
+    # AUT-1232 (Welle 5 T2): Opt-in plan subscription. Default False — existing
+    # rules stay non-subscribing after migration. Engine wiring is T3.
+    follows_plan: Mapped[bool] = mapped_column(
+        Boolean,
+        default=False,
+        nullable=False,
+        doc="AUT-1232: When True, rule may read plan_segment@now (T3); default False",
+    )
+
+    plan_zone_id: Mapped[Optional[str]] = mapped_column(
+        String(50),
+        ForeignKey("zones.zone_id", ondelete="SET NULL"),
+        nullable=True,
+        doc="AUT-1232: Zone reference for plan subscription (nullable)",
+    )
+
+    plan_subzone_config_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("subzone_configs.id", ondelete="SET NULL"),
+        nullable=True,
+        doc="AUT-1232: Optional subzone_config scope for plan subscription",
+    )
+
+    plan_domain: Mapped[Optional[str]] = mapped_column(
+        String(32),
+        nullable=True,
+        doc="AUT-1232: Plan domain (see PLAN_DOMAINS); NULL when not subscribed",
+    )
+
+    plan_measure: Mapped[Optional[str]] = mapped_column(
+        String(32),
+        nullable=True,
+        doc="AUT-1232: Plan measure (see PLAN_MEASURES); NULL when not subscribed",
+    )
+
     # Indices
     __table_args__ = (
         Index("idx_rule_enabled_priority", "enabled", "priority"),
@@ -186,6 +286,7 @@ class CrossESPLogic(Base, TimestampMixin):
             "degraded_since",
             postgresql_where=text("degraded_since IS NOT NULL"),
         ),
+        CheckConstraint(_RULE_GROUP_CHECK, name="ck_cross_esp_logic_rule_group"),
     )
 
     # Alias properties for API compatibility
@@ -293,6 +394,7 @@ class LogicExecutionHistory(Base):
         trigger_data: JSON snapshot of sensor data that triggered rule
         actions_executed: JSON snapshot of actions that were executed
         success: Whether execution succeeded
+        is_skip: True for self-generated cooldown/settle/rate-limit skip markers
         error_message: Error message if failed
         execution_time_ms: Execution duration in milliseconds
         timestamp: Execution timestamp
@@ -338,6 +440,17 @@ class LogicExecutionHistory(Base):
         doc="Whether execution succeeded",
     )
 
+    # AUT-1020 skip markers (cooldown/settle/rate-limit) vs. real execution attempts
+    is_skip: Mapped[bool] = mapped_column(
+        Boolean,
+        default=False,
+        nullable=False,
+        doc=(
+            "True for self-generated cooldown/settle/rate-limit skip markers "
+            "(AUT-1020) — excluded from get_last_execution()"
+        ),
+    )
+
     error_message: Mapped[Optional[str]] = mapped_column(
         String(500),
         nullable=True,
@@ -365,6 +478,23 @@ class LogicExecutionHistory(Base):
         JSON,
         nullable=True,
         doc="Additional execution metadata (retry_count, etc.)",
+    )
+
+    # AO-5: Dosier-Audit Felder
+    dose_ml: Mapped[Optional[float]] = mapped_column(
+        Float,
+        nullable=True,
+        doc="Dispensed volume in ml. NULL for time-only dispatch or non-pump actions.",
+    )
+
+    flow_rate_ml_s_snapshot: Mapped[Optional[float]] = mapped_column(
+        Float,
+        nullable=True,
+        doc=(
+            "Flow rate snapshot in ml/s at execution time. Immutable audit "
+            "record — independent from actuator_configs.flow_rate_ml_s which "
+            "may change later."
+        ),
     )
 
     # Time-Series Optimized Indices

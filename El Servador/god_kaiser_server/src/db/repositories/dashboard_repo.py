@@ -2,15 +2,17 @@
 Dashboard Repository
 
 CRUD operations for dashboard layouts with owner/shared filtering.
+Includes assignment methods for the n:m dashboard-user relation (AUT-1095).
 """
 
 import uuid
 from typing import Optional
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models.dashboard import Dashboard
+from ..models.dashboard_assignment import DashboardUserAssignment
 from .base_repo import BaseRepository
 
 
@@ -63,6 +65,11 @@ class DashboardRepository(BaseRepository[Dashboard]):
                 or_(
                     Dashboard.owner_id == owner_id,
                     Dashboard.is_shared == True,
+                    Dashboard.id.in_(
+                        select(DashboardUserAssignment.dashboard_id)
+                        .where(DashboardUserAssignment.user_id == owner_id)
+                        .scalar_subquery()
+                    ),
                 )
             )
             .order_by(Dashboard.updated_at.desc())
@@ -89,6 +96,11 @@ class DashboardRepository(BaseRepository[Dashboard]):
                 or_(
                     Dashboard.owner_id == owner_id,
                     Dashboard.is_shared == True,
+                    Dashboard.id.in_(
+                        select(DashboardUserAssignment.dashboard_id)
+                        .where(DashboardUserAssignment.user_id == owner_id)
+                        .scalar_subquery()
+                    ),
                 )
             )
         )
@@ -168,6 +180,109 @@ class DashboardRepository(BaseRepository[Dashboard]):
             .where(
                 Dashboard.id == dashboard_id,
                 Dashboard.owner_id == user_id,
+            )
+        )
+        result = await self.session.execute(stmt)
+        return result.scalar_one() > 0
+
+    # =========================================================================
+    # Assignment methods (AUT-1095): n:m dashboard-user relation
+    # =========================================================================
+
+    async def assign_user(
+        self,
+        dashboard_id: uuid.UUID,
+        user_id: int,
+        assigned_by: int,
+    ) -> DashboardUserAssignment:
+        """
+        Create an assignment between a dashboard and a user.
+
+        Raises:
+            IntegrityError: If the assignment already exists (duplicate).
+
+        Args:
+            dashboard_id: Dashboard UUID
+            user_id: User ID to assign
+            assigned_by: ID of the operator creating the assignment
+
+        Returns:
+            Created DashboardUserAssignment instance
+        """
+        assignment = DashboardUserAssignment(
+            dashboard_id=dashboard_id,
+            user_id=user_id,
+            assigned_by=assigned_by,
+        )
+        self.session.add(assignment)
+        await self.session.flush()
+        await self.session.refresh(assignment)
+        return assignment
+
+    async def unassign_user(
+        self,
+        dashboard_id: uuid.UUID,
+        user_id: int,
+    ) -> bool:
+        """
+        Remove an assignment between a dashboard and a user.
+
+        Args:
+            dashboard_id: Dashboard UUID
+            user_id: User ID to unassign
+
+        Returns:
+            True if a row was deleted, False if none existed
+        """
+        stmt = delete(DashboardUserAssignment).where(
+            DashboardUserAssignment.dashboard_id == dashboard_id,
+            DashboardUserAssignment.user_id == user_id,
+        )
+        result = await self.session.execute(stmt)
+        return result.rowcount > 0
+
+    async def get_assignments_for_dashboard(
+        self,
+        dashboard_id: uuid.UUID,
+    ) -> list[DashboardUserAssignment]:
+        """
+        List all user assignments for a dashboard.
+
+        Args:
+            dashboard_id: Dashboard UUID
+
+        Returns:
+            List of DashboardUserAssignment instances ordered by assigned_at
+        """
+        stmt = (
+            select(DashboardUserAssignment)
+            .where(DashboardUserAssignment.dashboard_id == dashboard_id)
+            .order_by(DashboardUserAssignment.assigned_at)
+        )
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def is_user_assigned(
+        self,
+        dashboard_id: uuid.UUID,
+        user_id: int,
+    ) -> bool:
+        """
+        Check whether a user has an explicit assignment to a dashboard.
+
+        Args:
+            dashboard_id: Dashboard UUID
+            user_id: User ID
+
+        Returns:
+            True if an assignment row exists
+        """
+        stmt = (
+            select(func.count())
+            .select_from(DashboardUserAssignment)
+            .where(
+                DashboardUserAssignment.dashboard_id == dashboard_id,
+                DashboardUserAssignment.user_id == user_id,
             )
         )
         result = await self.session.execute(stmt)

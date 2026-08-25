@@ -9,8 +9,9 @@ Prevents runtime errors from malformed JSON in production.
 """
 
 from typing import Any, List, Literal, Optional, Union
+from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 # =============================================================================
 # CONDITION MODELS
@@ -313,6 +314,74 @@ class MetadataFilterCondition(BaseModel):
         return v
 
 
+class NotRunningCondition(BaseModel):
+    """
+    Not-Running Condition (AUT-1245 evaluator / AUT-1333 persistence).
+
+    True when the named sequence or actuator is idle. Used as a lightweight
+    feed-/peer-interlock via AND-chained trigger_conditions — no new subsystem.
+
+    Runtime evaluator: ``services/logic/conditions/running_state_evaluator.py``.
+
+    Examples:
+        {
+            "type": "not_running",
+            "target": "sequence",
+            "rule_id": "4df64c75-17e2-4f57-8772-24f71663f6f0"
+        }
+        {
+            "type": "not_running",
+            "target": "actuator",
+            "esp_id": "af2fc332-dc7f-4cea-b32d-758a4508361e",
+            "gpio": 25
+        }
+    """
+
+    type: Literal["not_running"] = Field(
+        ..., description="Condition type (must be 'not_running')"
+    )
+    target: Literal["sequence", "actuator"] = Field(
+        ..., description="Idle-check target (sequence or actuator)"
+    )
+    rule_id: Optional[str] = Field(
+        None,
+        description="Logic rule UUID when target=sequence",
+        min_length=36,
+        max_length=36,
+    )
+    esp_id: Optional[str] = Field(
+        None,
+        description="ESP device UUID when target=actuator (not ESP_XXXX string)",
+        min_length=36,
+        max_length=36,
+    )
+    gpio: Optional[int] = Field(
+        None, description="GPIO pin when target=actuator", ge=0, le=50
+    )
+
+    @field_validator("rule_id", "esp_id")
+    @classmethod
+    def validate_uuid_format(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        try:
+            return str(UUID(v))
+        except (ValueError, TypeError) as exc:
+            raise ValueError(f"Invalid UUID format: {v}") from exc
+
+    @model_validator(mode="after")
+    def validate_target_fields(self) -> "NotRunningCondition":
+        if self.target == "sequence":
+            if not self.rule_id:
+                raise ValueError("rule_id is required when target='sequence'")
+        elif self.target == "actuator":
+            if not self.esp_id:
+                raise ValueError("esp_id is required when target='actuator'")
+            if self.gpio is None:
+                raise ValueError("gpio is required when target='actuator'")
+        return self
+
+
 class CompoundCondition(BaseModel):
     """
     Compound Condition (AND/OR logic).
@@ -340,6 +409,7 @@ ConditionType = Union[
     HysteresisCondition,
     SensorDiffCondition,
     MetadataFilterCondition,
+    NotRunningCondition,
     CompoundCondition,
 ]
 
@@ -349,7 +419,34 @@ ConditionType = Union[
 # =============================================================================
 
 
-class ActuatorCommandAction(BaseModel):
+class ActionRoutingFields(BaseModel):
+    """
+    AUT-1317 (R-S2): optional per-action condition binding.
+
+    Absent/null/[] condition_refs → legacy global rule gate (D4).
+    Non-empty condition_refs → per-action gate under condition_op
+    (default = rule.logic_operator). Not an LX-02 group id (AUT-795).
+    """
+
+    condition_refs: Optional[List[int]] = Field(
+        None,
+        description=(
+            "Optional indices into trigger_conditions[]. "
+            "Absent/null/[] = global rule gate (legacy). "
+            "Non-empty = per-action gate under condition_op."
+        ),
+    )
+    condition_op: Optional[Literal["AND", "OR"]] = Field(
+        None,
+        description=(
+            "Operator for condition_refs subset. "
+            "Default at evaluate-time = rule.logic_operator. "
+            "Thin index-list operator — not an LX-02 group primitive."
+        ),
+    )
+
+
+class ActuatorCommandAction(ActionRoutingFields):
     """
     Actuator Command Action.
 
@@ -383,9 +480,17 @@ class ActuatorCommandAction(BaseModel):
     )
     value: float = Field(..., description="Command value (0.0-1.0)", ge=0.0, le=1.0)
     duration_seconds: int = Field(0, description="Duration in seconds (0 = unlimited)", ge=0)
+    is_safety_critical: bool = Field(
+        False,
+        description=(
+            "AUT-1317: When True with command=OFF and non-empty condition_refs, "
+            "evaluator bypasses rule cooldown for this action only "
+            "(not the rule-wide hysteresis OFF path)."
+        ),
+    )
 
 
-class NotificationAction(BaseModel):
+class NotificationAction(ActionRoutingFields):
     """
     Notification Action.
 
@@ -400,7 +505,7 @@ class NotificationAction(BaseModel):
     message_template: str = Field("", description="Message template with {placeholders}")
 
 
-class DelayAction(BaseModel):
+class DelayAction(ActionRoutingFields):
     """
     Delay Action.
 
@@ -411,7 +516,7 @@ class DelayAction(BaseModel):
     seconds: int = Field(..., description="Delay duration in seconds", ge=1, le=3600)
 
 
-class SequenceAction(BaseModel):
+class SequenceAction(ActionRoutingFields):
     """
     Sequence Action.
 
@@ -422,7 +527,7 @@ class SequenceAction(BaseModel):
     steps: List[Any] = Field(..., description="List of action steps", min_length=1)
 
 
-class PluginTriggerAction(BaseModel):
+class PluginTriggerAction(ActionRoutingFields):
     """
     Plugin Trigger Action.
 
@@ -487,6 +592,8 @@ def validate_condition(condition: dict) -> ConditionType:
         return SensorDiffCondition(**condition)
     elif cond_type == "metadata_filter":
         return MetadataFilterCondition(**condition)
+    elif cond_type == "not_running":
+        return NotRunningCondition(**condition)
     elif "logic" in condition and "conditions" in condition:
         # Compound condition - recursively validate sub-conditions
         validated_sub_conditions = [

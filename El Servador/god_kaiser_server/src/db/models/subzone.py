@@ -37,7 +37,8 @@ class SubzoneConfig(Base, TimestampMixin):
         esp_id: Foreign key to esp_devices.device_id
         subzone_id: Unique subzone identifier within ESP
         subzone_name: Human-readable name
-        parent_zone_id: Zone this subzone belongs to (must match ESP zone_id)
+        position_label: Optional free-text spatial position (AUT-1241; not display-sort)
+        parent_zone_id: Zone this subzone belongs to (NULL if not yet zone-assigned)
         assigned_gpios: JSON array of GPIO pin numbers
         assigned_sensor_config_ids: JSON array of sensor_config UUIDs (for I2C gpio=0 sensors)
         is_active: Whether subzone is active within its zone
@@ -79,12 +80,19 @@ class SubzoneConfig(Base, TimestampMixin):
         doc="Human-readable subzone name",
     )
 
-    # Zone Hierarchy
-    parent_zone_id: Mapped[str] = mapped_column(
+    # AUT-1241 Option B: coarse spatial hint for operators (not display-sort, not CAD/XY)
+    position_label: Mapped[Optional[str]] = mapped_column(
+        String(128),
+        nullable=True,
+        doc="Optional free-text spatial position (e.g. 'Reihe 2, oberes Regal')",
+    )
+
+    # Zone Hierarchy (AUT-1156: nullable — subzone may be created before zone assignment)
+    parent_zone_id: Mapped[Optional[str]] = mapped_column(
         String(50),
-        nullable=False,
+        nullable=True,
         index=True,
-        doc="Parent zone ID (must match ESP's zone_id)",
+        doc="Parent zone ID (NULL = not yet assigned to a zone; set on first zone transfer)",
     )
 
     # GPIO Assignment

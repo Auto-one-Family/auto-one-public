@@ -329,6 +329,12 @@ class SensorSchedulerService:
         job_id = self.build_job_id(esp_id, gpio)
         full_job_id = self.build_full_job_id(esp_id, gpio)
 
+        # AUT-1024: sensor types without a periodic job (e.g. liquid_level) never
+        # appear in _active_jobs — skip the scheduler call so it doesn't log a
+        # misleading "Job ... not found" warning on every CRUD operation.
+        if full_job_id not in self._active_jobs:
+            return True
+
         try:
             # Remove from scheduler (with category prefix)
             removed = self.scheduler.remove_job(job_id, category=JobCategory.SENSOR_SCHEDULE)
