@@ -174,7 +174,11 @@ function mergeLiveSensorLists(
       last_read: pickFresherIso(incomingSensor.last_read, liveSensor.last_read) ?? incomingSensor.last_read,
       last_event_at: pickFresherIso(incomingSensor.last_event_at, liveSensor.last_event_at) ?? incomingSensor.last_event_at,
       last_reading_at: pickFresherIso(incomingSensor.last_reading_at, liveSensor.last_reading_at) ?? incomingSensor.last_reading_at,
-      multi_values: liveSensor.multi_values ?? incomingSensor.multi_values,
+      // AUT-1010 F4: is_multi_value + multi_values must stay an atomic pair from one
+      // source — never flag from the REST snapshot with values from the live state.
+      ...(liveSensor.is_multi_value && liveSensor.multi_values
+        ? { is_multi_value: true, multi_values: liveSensor.multi_values }
+        : { is_multi_value: incomingSensor.is_multi_value, multi_values: incomingSensor.multi_values }),
       is_stale: liveSensor.is_stale ?? incomingSensor.is_stale,
       metadata: liveSensor.metadata ?? incomingSensor.metadata,
     }
@@ -196,7 +200,17 @@ function mergeLiveActuatorLists(
   return incoming.map((incomingActuator) => {
     if (existing && actStore.isActuatorCommandPending(espId, incomingActuator.gpio)) {
       const liveActuator = existing.find((candidate) => candidate.gpio === incomingActuator.gpio)
-      return liveActuator ? { ...incomingActuator, state: liveActuator.state, pwm_value: liveActuator.pwm_value } : incomingActuator
+      return liveActuator
+        ? {
+            ...incomingActuator,
+            state: liveActuator.state,
+            pwm_value: liveActuator.pwm_value,
+            last_command_at:
+              pickFresherIso(incomingActuator.last_command_at, liveActuator.last_command_at)
+              ?? liveActuator.last_command_at
+              ?? incomingActuator.last_command_at,
+          }
+        : incomingActuator
     }
 
     const liveActuator = existing?.find((candidate) => candidate.gpio === incomingActuator.gpio)
@@ -1032,9 +1046,18 @@ function findDeviceByEspIdDefensive(espId: string): { index: number; device: ESP
           // =========================================================================
           interface_type: config.interface_type || interfaceType,
           // I2C: Use address from config (user selection), fallback to registry default
-          i2c_address: interfaceType === 'I2C' ? (config.i2c_address ?? defaultI2CAddress) : null,
+          // ADS1115: pass its I2C address even though interface_type is ANALOG
+          i2c_address: interfaceType === 'I2C'
+            ? (config.i2c_address ?? defaultI2CAddress)
+            : (config.adc_source === 'ads1115' ? (config.i2c_address ?? null) : null),
           // OneWire: Use provided ROM address (from scan) or null (server auto-generates)
           onewire_address: config.onewire_address || null,
+          // =========================================================================
+          // ADS1115 External ADC Support
+          // =========================================================================
+          adc_source: config.adc_source ?? null,
+          adc_channel: config.adc_channel ?? null,
+          pga_gain: config.pga_gain ?? null,
           // =========================================================================
           // Operating Mode Felder (Phase 2B)
           // =========================================================================
@@ -1264,7 +1287,7 @@ function findDeviceByEspIdDefensive(espId: string): { index: number; device: ESP
           metadata: {
             created_via: 'dashboard_drag_drop',
             ...(config.aux_gpio != null && config.aux_gpio !== 255 ? { aux_gpio: config.aux_gpio } : {}),
-            ...(config.inverted_logic ? { inverted_logic: true } : {}),
+            inverted_logic: !!config.inverted_logic,
           }
         }
         await actuatorsApi.createOrUpdate(deviceId, config.gpio, realConfig)
@@ -2275,26 +2298,29 @@ function findDeviceByEspIdDefensive(espId: string): { index: number; device: ESP
     deviceId: string,
     gpio: number,
     command: 'ON' | 'OFF' | 'PWM' | 'TOGGLE',
-    value?: number
+    value?: number,
+    // AUT-995 Feld 6 (AO-5): optional auto-off timer in seconds (e.g. "Jetzt dosieren"). Real ESP only.
+    duration?: number
   ): Promise<void> {
     const toast = useToast()
     const actStore = useActuatorStore()
 
-    if (actStore.isActuatorCommandInCooldown(deviceId, gpio)) {
-      const remainingSec = Math.ceil(actStore.getActuatorCooldownRemainingMs(deviceId, gpio) / 1000)
-      toast.warning(
-        `Bitte ${remainingSec}s warten — kurze Pause zwischen Schaltbefehlen (GPIO ${gpio}).`,
-        { dedupeKey: `actuator-cooldown:${deviceId}:${gpio}` },
-      )
-      return
-    }
-
     if (isMock(deviceId)) {
       // Mock path: use debug API
       try {
-        const state = command === 'ON' || command === 'TOGGLE'
-        await debugApi.setActuatorState(deviceId, gpio, state, value)
-        actStore.recordActuatorCommandSent(deviceId, gpio)
+        if (command === 'PWM') {
+          const normalized = value ?? 0
+          await debugApi.setActuatorState(
+            deviceId,
+            gpio,
+            normalized > 0,
+            Math.round(normalized * 255),
+          )
+        } else {
+          const state = command === 'ON' || command === 'TOGGLE'
+          const pwmForMock = command === 'ON' ? 255 : command === 'OFF' ? 0 : undefined
+          await debugApi.setActuatorState(deviceId, gpio, state, pwmForMock)
+        }
         await fetchDevice(deviceId)
         toast.success(`[Simulation] Befehl ausgeführt: ${command} an ${deviceId} GPIO ${gpio}`, {
           dedupeKey: `sim-actuator-command:${deviceId}:${gpio}:${command}:${value ?? 'na'}`,
@@ -2325,20 +2351,29 @@ function findDeviceByEspIdDefensive(espId: string): { index: number; device: ESP
       const response = await actuatorsApi.sendCommand(deviceId, gpio, {
         command,
         value: value ?? (command === 'ON' ? 1.0 : 0.0),
+        // Only include duration when explicitly requested, so normal toggles keep their previous payload.
+        ...(duration != null ? { duration } : {}),
       })
-      actStore.recordActuatorCommandSent(deviceId, gpio)
       const responseData = response as unknown as Record<string, unknown>
       const correlationId = typeof responseData.correlation_id === 'string' ? responseData.correlation_id : undefined
       const requestId = typeof responseData.request_id === 'string' ? responseData.request_id : undefined
       actStore.registerCommandIntent(deviceId, gpio, command, correlationId, requestId)
-      // Optimistic update: flip actuator.state immediately so the toggle reacts before
-      // the WS actuator_command event arrives (avoids dead-toggle on slow/reconnected WS).
-      if (command === 'ON' || command === 'OFF') {
+      // Optimistic update: reflect command immediately before WS actuator_command arrives.
+      if (command === 'ON' || command === 'OFF' || command === 'PWM') {
+        const commandAt = new Date().toISOString()
         applyDevicePatch(deviceId, (device) => ({
           ...device,
-          actuators: (device.actuators ?? []).map((a) =>
-            a.gpio === gpio ? { ...a, state: command === 'ON' } : a
-          ),
+          actuators: (device.actuators ?? []).map((a) => {
+            if (a.gpio !== gpio) return a
+            if (command === 'ON') {
+              return { ...a, state: true, pwm_value: 1, last_command_at: commandAt }
+            }
+            if (command === 'OFF') {
+              return { ...a, state: false, pwm_value: 0, last_command_at: commandAt }
+            }
+            const normalized = value ?? 0
+            return { ...a, state: normalized > 0, pwm_value: normalized, last_command_at: commandAt }
+          }),
         }))
       }
     } catch (err: unknown) {

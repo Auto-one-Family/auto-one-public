@@ -187,6 +187,13 @@ function navigateToDevice(device: ESPDevice) {
   background: var(--glass-bg-light);
 }
 
+/* AUT-1100: Touch targets — enlarge device rows to 44px (WCAG 2.5.5) */
+@media (pointer: coarse), (hover: none) {
+  .esp-health-widget__device {
+    min-height: 44px;
+  }
+}
+
 .esp-health-widget__dot {
   width: 6px;
   height: 6px;

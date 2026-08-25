@@ -1,5 +1,6 @@
 import api from './index'
 import type {
+  CustomThresholds,
   SensorConfigCreate,
   SensorConfigResponse,
   SensorDataQuery,
@@ -413,12 +414,7 @@ export interface AlertConfigUpdate {
   suppression_reason?: string
   suppression_note?: string
   suppression_until?: string | null
-  custom_thresholds?: {
-    warning_min?: number | null
-    warning_max?: number | null
-    critical_min?: number | null
-    critical_max?: number | null
-  }
+  custom_thresholds?: CustomThresholds
   severity_override?: string | null
 }
 

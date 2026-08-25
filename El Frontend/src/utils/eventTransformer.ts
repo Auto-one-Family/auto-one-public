@@ -13,6 +13,7 @@
 
 import type { UnifiedEvent } from '@/types/websocket-events'
 import { CONTRACT_OPERATOR_ACTION, extractIntegrationIssueSnapshot } from '@/utils/contractEventMapper'
+import { getSystemEventLabel } from '@/utils/eventTypeLabels'
 
 // ============================================================================
 // Types
@@ -106,6 +107,13 @@ export function actuatorDutyToDisplayPercent(value: number): number {
   return Math.min(100, Math.max(0, Math.round(value)))
 }
 
+/** UI-Prozent 0–100 → REST/MQTT-Command 0.0–1.0 (AUT-925/AUT-926). */
+export function pwmPercentToNormalizedCommand(percent: number): number {
+  if (!Number.isFinite(percent)) return 0
+  const clamped = Math.min(100, Math.max(0, percent))
+  return clamped / 100
+}
+
 /** Relais/Ventil/Digital-Ausgang: keine redundanten %-Zusätze wie EIN (0 %) / EIN (100 %). */
 function isBinaryStyleActuator(actuatorType: string, hardwareType?: string): boolean {
   const a = actuatorType.toLowerCase()
@@ -195,20 +203,24 @@ export function formatMemory(bytes: number): string {
 }
 
 /**
- * Formatiert Sensor-Wert je nach Typ
+ * Formatiert den Sensor-Wert je nach Typ — liefert NUR die Zahl mit typ-spezifischer
+ * Nachkommastelle. Die Einheit kommt ausschliesslich aus den Event-Daten (`data.unit`,
+ * vom Server aus der Registry aufgeloest) und wird vom Aufrufer angehaengt — analog zum
+ * kanonischen Pattern in SensorValueCard.vue (Zahl und Einheit getrennt). Eine einzige
+ * Einheiten-Quelle verhindert die Dopplung (z.B. "353 µS/cm µS/cm"). AUT-885.
  */
 export function formatSensorValue(value: number, sensorType?: string): string {
   if (sensorType === 'temperature' || sensorType === 'ds18b20') {
-    return `${value.toFixed(1)} °C`
+    return value.toFixed(1)
   }
   if (sensorType === 'humidity') {
-    return `${Math.round(value)}%`
+    return `${Math.round(value)}`
   }
   if (sensorType === 'ph') {
     return value.toFixed(2)
   }
   if (sensorType === 'ec') {
-    return `${value.toFixed(0)} µS/cm`
+    return value.toFixed(0)
   }
   return value.toFixed(1)
 }
@@ -257,6 +269,8 @@ export function transformEventMessage(event: UnifiedEvent): TransformedMessage {
       return transformDeviceApproved(event, data)
     case 'lwt_received':
       return transformLWT(event, data)
+    case 'system_event':
+      return transformSystemEvent(event, data)
     default:
       return transformDefault(event, category)
   }
@@ -680,6 +694,54 @@ function transformConfigPublished(event: UnifiedEvent, data: Record<string, unkn
     summary: `Config an ${espId} gesendet`,
     description: `Konfiguration an ${espId} gesendet. Keys: ${configKeys.join(', ') || 'keine'}`,
     icon: 'Settings',
+    category: 'system',
+  }
+}
+
+/**
+ * System-Ereignisse tragen den konkreten Subtyp im verschachtelten Feld
+ * `data.event` (Server-Broadcast) bzw. `data.event_type` (Contract). Ohne
+ * Aufloesung zeigte die Default-Transformation nur "system_event" /
+ * "Keine Details verfügbar". Diese Transformation macht den Subtyp sichtbar.
+ */
+function transformSystemEvent(_event: UnifiedEvent, data: Record<string, unknown>): TransformedMessage {
+  const subEvent = String(data.event ?? data.event_type ?? '').trim()
+  const label = getSystemEventLabel(subEvent)
+  const serverMessage = typeof data.message === 'string' ? data.message.trim() : ''
+
+  let summary = serverMessage
+  let description = serverMessage
+  let icon = 'Server'
+
+  switch (subEvent) {
+    case 'mqtt_disconnected':
+      icon = 'WifiOff'
+      summary = summary || 'Broker-Verbindung getrennt — Reconnect läuft'
+      description = description
+        || 'Der Server hat die Verbindung zum MQTT-Broker verloren. Der automatische Reconnect läuft; Broker und Netzwerkanbindung prüfen.'
+      break
+    case 'database_restore_status': {
+      const phase = String(data.phase ?? '').trim()
+      const status = String(data.status ?? '').trim()
+      icon = 'DatabaseBackup'
+      const parts = [phase && `Phase: ${phase}`, status && `Status: ${status}`].filter(Boolean)
+      const detail = parts.length ? ` (${parts.join(', ')})` : ''
+      summary = summary || `${label}${detail}`
+      description = description || `${label}${detail}.`
+      break
+    }
+    default:
+      summary = summary || label
+      description = description || `System-Ereignis: ${label}`
+  }
+
+  return {
+    type: 'system_event',
+    title: label.toUpperCase(),
+    titleDE: label,
+    summary,
+    description,
+    icon,
     category: 'system',
   }
 }

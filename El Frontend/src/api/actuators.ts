@@ -103,6 +103,38 @@ export const actuatorsApi = {
   },
 
   /**
+   * AUT-1412 SR-2: Atomic „Stock neu angesetzt" reset on the existing upsert path.
+   * Sets concentration=null + stock identity in one call; does not invent a second
+   * update mechanism. Other fields are re-sent from the current config so the
+   * create schema stays valid without clobbering flow_rate / dose_role / name.
+   */
+  async resetStockPrepared(
+    espId: string,
+    gpio: number,
+    recipeId: string,
+    preparedAt: string = new Date().toISOString(),
+  ): Promise<ActuatorConfigResponse> {
+    const current = await actuatorsApi.get(espId, gpio)
+    return actuatorsApi.createOrUpdate(espId, gpio, {
+      esp_id: espId,
+      gpio,
+      actuator_type: current.actuator_type,
+      name: current.name,
+      enabled: current.enabled,
+      max_runtime_seconds: current.max_runtime_seconds,
+      cooldown_seconds: current.cooldown_seconds,
+      flow_rate_ml_s: current.flow_rate_ml_s ?? null,
+      dose_role: current.dose_role ?? null,
+      metadata: current.metadata ?? null,
+      device_scope: current.device_scope ?? undefined,
+      assigned_zones: current.assigned_zones ?? null,
+      concentration: null,
+      stock_recipe_ref: recipeId,
+      stock_prepared_at: preparedAt,
+    })
+  },
+
+  /**
    * Delete actuator configuration
    */
   async delete(espId: string, gpio: number): Promise<ActuatorConfigResponse> {

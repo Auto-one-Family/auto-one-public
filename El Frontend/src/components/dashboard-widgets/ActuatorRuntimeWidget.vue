@@ -30,6 +30,7 @@ import {
   ACTUATOR_TIME_RANGE_MS,
   ACTUATOR_TIME_RANGE_LIMITS,
   isActuatorOn,
+  isConfigAckEntry,
   type ActuatorTimeRange,
 } from '@/composables/useActuatorHistory'
 import type { MockActuator } from '@/types'
@@ -292,7 +293,11 @@ async function loadHistory(): Promise<void> {
       include_aggregation: true,
     })
 
-    historyEntries.value = response.entries
+    // AUT-1132 (A2): config-push ack entries (value=null) are not switch events —
+    // isActuatorOn/isActuatorOff below would misread them as OFF and corrupt the
+    // runtime timeline. Server-side aggregation already excludes them via an
+    // explicit command_type allowlist; the frontend has no such allowlist here.
+    historyEntries.value = response.entries.filter(e => !isConfigAckEntry(e))
     aggregation.value = response.aggregation
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Fehler beim Laden'
@@ -601,6 +606,13 @@ onUnmounted(() => {
   background: rgba(167, 139, 250, 0.12);
   color: var(--color-iridescent-1);
   border-color: var(--color-iridescent-1);
+}
+
+/* AUT-1100: Touch targets — enlarge time-range buttons to 44px (WCAG 2.5.5) */
+@media (pointer: coarse), (hover: none) {
+  .runtime-widget__range-btn {
+    min-height: 44px;
+  }
 }
 
 /* Timeline Chart */

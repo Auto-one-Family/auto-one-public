@@ -285,8 +285,14 @@ export const useSensorStore = defineStore('sensor', () => {
       const existingSensor = sensors.find(s => s.gpio === gpio)
       if (
         existingSensor &&
+        // AUT-1010: config-less events (server found no sensor_config, config_id=null)
+        // and blank-type events must never promote an existing single sensor.
+        !!data.config_id &&
+        normalizeSensorType(sensorType) !== '' &&
         normalizeSensorType(existingSensor.sensor_type) !== normalizeSensorType(sensorType) &&
-        !existingSensor.is_multi_value
+        !existingSensor.is_multi_value &&
+        // config_id mismatch signals a reconfigured GPIO, not a second sensor type
+        !(data.config_id && existingSensor.config_id && data.config_id !== existingSensor.config_id)
       ) {
         handleDynamicMultiValueSensor(existingSensor, data, eventReceivedAtIso)
         return { ...device, sensors }
@@ -383,7 +389,9 @@ export const useSensorStore = defineStore('sensor', () => {
               sensorType: existingSensor.sensor_type
             }
           }
-      existingSensor.name = `Multi-Sensor GPIO ${existingSensor.gpio}`
+      if (!existingSensor.name || existingSensor.name.trim() === '') {
+        existingSensor.name = `Multi-Sensor GPIO ${existingSensor.gpio}`
+      }
     }
 
     const multiValueKey = resolveMultiValueKey(existingSensor.multi_values!, data.sensor_type)
@@ -519,10 +527,18 @@ export const useSensorStore = defineStore('sensor', () => {
       }
 
       if (event.is_stale) {
-        logger.warn(`Sensor stale: ${event.esp_id} GPIO ${event.gpio} ` +
-          `(${event.sensor_type}) - ${event.stale_reason}, ` +
-          `overdue by ${event.seconds_overdue}s`
-        )
+        const isContinuous = !event.operating_mode || event.operating_mode === 'continuous'
+        if (isContinuous) {
+          logger.warn(`Sensor stale: ${event.esp_id} GPIO ${event.gpio} ` +
+            `(${event.sensor_type}) - ${event.stale_reason}, ` +
+            `overdue by ${event.seconds_overdue}s`
+          )
+        } else {
+          logger.debug(`Sensor stale: ${event.esp_id} GPIO ${event.gpio} ` +
+            `(${event.sensor_type}) - ${event.stale_reason}, ` +
+            `overdue by ${event.seconds_overdue}s`
+          )
+        }
       } else {
         logger.debug(`Sensor health updated: ${event.esp_id} GPIO ${event.gpio} ` +
           `is_stale=${event.is_stale}`

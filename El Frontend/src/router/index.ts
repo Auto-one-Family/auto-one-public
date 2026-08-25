@@ -304,6 +304,43 @@ const router = createRouter({
           meta: { title: 'Automatisierung' },
         },
         {
+          path: 'plants',
+          name: 'plants',
+          component: lazyView(() => import('@/views/PlantsView.vue')),
+          meta: { title: 'Pflanzen' },
+        },
+        {
+          path: 'plants/:plantId',
+          name: 'plant-detail',
+          component: lazyView(() => import('@/views/PlantsView.vue')),
+          meta: { title: 'Pflanzen' },
+        },
+        // AUT-1338 Tank-P4: Nährlösungs-Tab Shell (Detail-Inhalt = P5)
+        {
+          path: 'nutrient-solution',
+          name: 'nutrient-solution',
+          component: lazyView(() => import('@/views/NutrientSolutionView.vue')),
+          meta: { title: 'Nährlösung' },
+        },
+        {
+          path: 'nutrient-solution/:tankId',
+          name: 'nutrient-solution-tank',
+          component: lazyView(() => import('@/views/NutrientSolutionView.vue')),
+          meta: { title: 'Nährlösung' },
+        },
+        {
+          path: 'plan-timeline',
+          name: 'plan-timeline',
+          component: lazyView(() => import('@/views/PlanTimelineView.vue')),
+          meta: { title: 'Planung' },
+        },
+        {
+          path: 'domains',
+          name: 'domains',
+          component: lazyView(() => import('@/views/DomainAuswertungView.vue')),
+          meta: { title: 'Domänen' },
+        },
+        {
           path: 'settings',
           name: 'settings',
           component: lazyView(() => import('@/views/SettingsView.vue')),
@@ -313,7 +350,7 @@ const router = createRouter({
           path: 'calibration',
           name: 'calibration',
           component: lazyView(() => import('@/views/CalibrationView.vue')),
-          meta: { requiresAdmin: true, title: 'Kalibrierung' },
+          meta: { title: 'Kalibrierung' },
         },
         // DEPRECATED 2026-03-01: SensorHistoryView → Monitor (integriert in Monitor L3 SlideOver)
         {

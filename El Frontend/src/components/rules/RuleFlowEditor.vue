@@ -41,12 +41,44 @@ import {
   Stethoscope,
   ArrowLeftRight,
   ListOrdered,
+  ShieldOff,
 } from 'lucide-vue-next'
 import type { Component } from 'vue'
-import type { LogicRule, SensorCondition, TimeCondition, HysteresisCondition, CompoundCondition, ActuatorAction, NotificationAction, DelayAction, PluginAction, DiagnosticsCondition, DiagnosticsAction, LogicCondition, LogicAction, SensorDiffCondition, SequenceAction, SequenceStepServer, SequenceStepDraft } from '@/types/logic'
+import type { LogicRule, SensorCondition, TimeCondition, HysteresisCondition, CompoundCondition, ActuatorAction, NotificationAction, DelayAction, PluginAction, DiagnosticsCondition, DiagnosticsAction, LogicCondition, LogicAction, SensorDiffCondition, NotRunningCondition, SequenceAction, SequenceStepServer, SequenceStepDraft } from '@/types/logic'
+import type { MeasureBinding } from '@/types/measureBinding'
 import { useLogicStore } from '@/shared/stores/logic.store'
 import { useEspStore } from '@/stores/esp'
+import { parseLocaleNumber } from '@/utils/parseLocaleNumber'
+import {
+  effectiveBandFromPlan,
+  formatDeadbandEdge,
+  nodeBandFromFlowSensorData,
+  planMeasureToSensorType,
+  type NodeBandKind,
+} from '@/utils/planDeadbandDisplay'
 import { useToast } from '@/composables/useToast'
+import { getSensorAggCategory, getSensorUnit, inferInterfaceType } from '@/utils/sensorDefaults'
+import {
+  createEmptyMeasureBindingNodeData,
+  getMeasureBindings,
+  isTwoSensorMeasureFormula,
+  measureBindingFromNodeData,
+  measureBindingToNodeData,
+} from '@/utils/measureBindings'
+import {
+  sequenceStepNumber,
+  sequenceStepTypeLabel,
+  sequenceStepPrimaryLabel,
+  sequenceStepDetailLabel,
+} from '@/utils/sequenceStepDisplay'
+import {
+  faceActuatorPrimary as faceActuatorPrimaryLabel,
+  faceSensorPrimary as faceSensorPrimaryLabel,
+  faceDeviceGpioSecondary,
+  faceNotRunningPrimary as faceNotRunningPrimaryLabel,
+  faceNotRunningSecondary as faceNotRunningSecondaryLabel,
+  faceSensorDiffLabel as faceSensorDiffLabelUtil,
+} from '@/utils/ruleNodeDisplay'
 import { tokens } from '@/utils/cssTokens'
 
 // Vue Flow CSS
@@ -60,15 +92,25 @@ interface Props {
   metadata?: {
     priority?: number
     cooldown_seconds?: number
+    max_dose_ml_per_day?: number
   }
+  /** AUT-1389: Plan-Abo — Knoten zeigt plan-abgeleitete Schwellen statt Node-Static. */
+  followsPlan?: boolean
+  planMeasure?: string | null
+  /** Aktueller Plan-Soll (Plan@now / applied), null = noch kein Wert */
+  planValue?: number | null
 }
 
-const props = defineProps<Props>()
+const props = withDefaults(defineProps<Props>(), {
+  followsPlan: false,
+  planMeasure: null,
+  planValue: null,
+})
 
 const emit = defineEmits<{
   'node-selected': [node: Node | null]
   'graph-changed': []
-  'metadata-restored': [metadata: { priority?: number; cooldown_seconds?: number }]
+  'metadata-restored': [metadata: { priority?: number; cooldown_seconds?: number; max_dose_ml_per_day?: number }]
 }>()
 
 const logicStore = useLogicStore()
@@ -121,8 +163,11 @@ const NODE_INIT_DIMS: Record<string, { width: number; height: number }> = {
   delay: { width: 210, height: 80 },
   plugin: { width: 210, height: 100 },
   diagnostics_status: { width: 210, height: 100 },
+  not_running: { width: 220, height: 110 },
   run_diagnostic: { width: 210, height: 80 },
-  sequence: { width: 240, height: 110 },
+  // AUT-1281: breiter + hoeher fuer die Schritt-Abfolge im Node-Gesicht (siehe #node-sequence).
+  // Statischer Init-Wert nur zur Crash-Vermeidung — Vue Flow misst danach die reale Hoehe.
+  sequence: { width: 260, height: 190 },
 }
 
 // Fit view only after Vue Flow has measured node dimensions
@@ -150,7 +195,8 @@ const SENSOR_CONFIG: Record<string, SensorMeta> = {
   bme280_humidity:{ icon: Droplets,   unit: '%RH',  label: 'Luftfeuchte' },
   bme280_pressure:{ icon: Gauge,      unit: 'hPa',  label: 'Druck' },
   pH:            { icon: Gauge,       unit: 'pH',   label: 'pH-Wert' },
-  EC:            { icon: Zap,          unit: 'mS',   label: 'Leitfähigkeit' },
+  // AUT-1271: unit display comes from getSensorUnit (SSOT µS/cm); local unit is fallback only
+  EC:            { icon: Zap,          unit: 'µS/cm', label: 'Leitfähigkeit' },
   moisture:      { icon: Waves,        unit: '%',    label: 'Bodenfeuchte' },
   light:         { icon: Sun,          unit: 'lux',  label: 'Licht' },
   co2:           { icon: Wind,         unit: 'ppm',  label: 'CO₂' },
@@ -158,17 +204,48 @@ const SENSOR_CONFIG: Record<string, SensorMeta> = {
   level:         { icon: Leaf,         unit: '%',    label: 'Füllstand' },
 }
 
-// Helper accessors for template readability
-function sensorIcon(type: string): Component {
-  return SENSOR_CONFIG[type]?.icon ?? Thermometer
+function sensorConfigEntry(type: string): SensorMeta | undefined {
+  if (!type) return undefined
+  return SENSOR_CONFIG[type] ?? SENSOR_CONFIG[type.toLowerCase()] ?? SENSOR_CONFIG[type.toUpperCase()]
 }
 
+// Helper accessors for template readability
+function sensorIcon(type: string): Component {
+  return sensorConfigEntry(type)?.icon ?? Thermometer
+}
+
+/** AUT-1271: canonical unit from sensorDefaults (case-insensitive); EC → µS/cm */
 function sensorUnit(type: string): string {
-  return SENSOR_CONFIG[type]?.unit ?? ''
+  const fromDefaults = getSensorUnit(type)
+  if (fromDefaults && fromDefaults !== 'raw') return fromDefaults
+  return sensorConfigEntry(type)?.unit ?? ''
 }
 
 function sensorLabel(type: string): string {
-  return SENSOR_CONFIG[type]?.label ?? type
+  return sensorConfigEntry(type)?.label ?? type
+}
+
+/** AUT-1389: Plan-abgeleitete Knoten-Anzeige (Breite aus Node, Mitte aus Plan). */
+function planFaceForSensor(data: Record<string, unknown>): {
+  kind: NodeBandKind
+  low: number
+  high: number
+  setpoint: number
+} | null {
+  if (!props.followsPlan || props.planValue == null || !Number.isFinite(props.planValue)) {
+    return null
+  }
+  const planSt = planMeasureToSensorType(props.planMeasure)
+  if (!planSt) return null
+  const nodeSt = String(data.sensorType ?? '')
+  const matches =
+    nodeSt.toLowerCase() === planSt.toLowerCase() ||
+    getSensorAggCategory(nodeSt) === planSt
+  if (!matches) return null
+  const band = nodeBandFromFlowSensorData(data)
+  if (!band) return null
+  const eff = effectiveBandFromPlan(props.planValue, band, 'plan_segment')
+  return { kind: band.kind, low: eff.low, high: eff.high, setpoint: eff.setpoint }
 }
 
 // Operator display mapping
@@ -200,6 +277,17 @@ const channelDisplay: Record<string, string> = {
 // Format GPIO pin number
 function formatGpio(gpio: number | undefined): string {
   if (gpio === undefined || gpio === null) return '—'
+  return `GPIO ${gpio}`
+}
+
+// AUT-1134 (B7-Nebenbefund): ANALOG sensors (pH, EC, moisture, ...) are read via an internal
+// ADC or external ADS1115 channel, not a dedicated GPIO pin — showing "GPIO 0" for two different
+// sensors sharing the same channel index is misleading. Label those as "Kanal" instead.
+function formatSensorGpio(gpio: number | undefined, sensorType: string | undefined): string {
+  if (gpio === undefined || gpio === null) return '—'
+  if (sensorType && inferInterfaceType(sensorType) === 'ANALOG') {
+    return `Kanal ${gpio}`
+  }
   return `GPIO ${gpio}`
 }
 
@@ -321,6 +409,14 @@ function getDefaultNodeData(type: string, defaults: Record<string, unknown> = {}
         operator: defaults.operator || '==',
         ...defaults,
       }
+    case 'not_running':
+      return {
+        target: defaults.target || 'actuator',
+        ruleId: defaults.ruleId || '',
+        espId: defaults.espId || '',
+        gpio: defaults.gpio ?? null,
+        ...defaults,
+      }
     case 'run_diagnostic':
       return {
         checkName: defaults.checkName || '',
@@ -331,6 +427,12 @@ function getDefaultNodeData(type: string, defaults: Record<string, unknown> = {}
         steps: defaults.steps ?? [],
         abortOnFailure: defaults.abortOnFailure ?? true,
         maxDurationSeconds: defaults.maxDurationSeconds ?? 300,
+        ...defaults,
+      }
+    case 'sensor_diff':
+      // AUT-1399: Mess-Bindung (umgewidmet) — measure_bindings, nie trigger_conditions
+      return {
+        ...createEmptyMeasureBindingNodeData(),
         ...defaults,
       }
     default:
@@ -428,6 +530,8 @@ function ruleToGraph(rule: LogicRule): { nodes: Node[]; edges: Edge[] } {
           value: sc.value,
           min: sc.min,
           max: sc.max,
+          // AUT-995 Feld 4: round-trip freshness gate so the toggle reflects saved state on reload.
+          require_fresh_data: sc.require_fresh_data,
         },
       })
       nodeRow++
@@ -491,18 +595,20 @@ function ruleToGraph(rule: LogicRule): { nodes: Node[]; edges: Edge[] } {
       })
       nodeRow++
     } else if (cond.type === 'sensor_diff') {
+      // AUT-1399: skip in conditionIds — loaded as Mess-Bindung nodes below (never Trigger)
+    } else if (cond.type === 'not_running') {
+      // AUT-1333: Interlock-Condition — Round-Trip, sonst streicht Save die API-Config
       conditionIds.push(id)
-      const sdc = cond as SensorDiffCondition
+      const nr = cond as NotRunningCondition
       resultNodes.push({
         id,
-        type: 'sensor_diff',
+        type: 'not_running',
         position: { x: 50, y: 60 + nodeRow * ROW_SPACING },
         data: {
-          sensorAId: sdc.sensor_a_id,
-          sensorBId: sdc.sensor_b_id,
-          operator: sdc.operator,
-          threshold: sdc.value,
-          consecutiveCount: sdc.consecutive_count ?? 1,
+          target: nr.target,
+          ruleId: nr.rule_id || '',
+          espId: nr.esp_id || '',
+          gpio: nr.gpio ?? null,
         },
       })
       nodeRow++
@@ -535,37 +641,86 @@ function ruleToGraph(rule: LogicRule): { nodes: Node[]; edges: Edge[] } {
     }
   })
 
-  // Always create logic gate for consistent graph structure
-  let sourceIds = conditionIds
-  const logicId = 'logic-0'
-  const avgY = conditionIds.length > 0
-    ? (conditionIds.length - 1) * ROW_SPACING / 2 + 60
-    : 60
-  resultNodes.push({
-    id: logicId,
-    type: 'logic',
-    position: { x: 50 + COLUMN_SPACING, y: avgY },
-    data: { operator: rule.logic_operator },
-  })
-
-  // Connect conditions → logic gate
-  conditionIds.forEach((condId) => {
-    resultEdges.push({
-      id: `e-${condId}-${logicId}`,
-      source: condId,
-      target: logicId,
-      animated: true,
-      type: 'smoothstep',
-      markerEnd: MarkerType.ArrowClosed,
+  // AUT-1399: Mess-Bindung-Knoten aus measure_bindings (primär); Legacy sensor_diff-Conditions nur Fallback.
+  // Nie in conditionIds — Kanten erzeugen keine condition_refs.
+  const metaBindings = getMeasureBindings(rule.rule_metadata)
+  if (metaBindings.length > 0) {
+    metaBindings.forEach((binding, mi) => {
+      const id = `measure-${mi}`
+      resultNodes.push({
+        id,
+        type: 'sensor_diff',
+        position: { x: 50, y: 60 + nodeRow * ROW_SPACING },
+        data: measureBindingToNodeData(binding),
+      })
+      nodeRow++
     })
-  })
+  } else {
+    rule.conditions.forEach((cond, i) => {
+      if (cond.type !== 'sensor_diff') return
+      const sdc = cond as SensorDiffCondition
+      const id = `measure-legacy-${i}`
+      const legacyData = createEmptyMeasureBindingNodeData()
+      // Best-effort: alte config_ids nur als Label-Hinweis (keine Trigger-Semantik)
+      legacyData.label = 'Mess-Bindung'
+      if (sdc.sensor_a_id) {
+        legacyData.sensorType = 'legacy'
+        legacyData.sensorEspId = sdc.sensor_a_id
+      }
+      resultNodes.push({
+        id,
+        type: 'sensor_diff',
+        position: { x: 50, y: 60 + nodeRow * ROW_SPACING },
+        data: legacyData,
+      })
+      nodeRow++
+    })
+  }
 
-  sourceIds = [logicId]
+  // AUT-1318 (R-S4): reconstruct edges from condition_refs when present.
+  // Legacy (no refs): Conditions → Logic → all Actions (flat gate, D4).
+  // Routed: Condition[i] → Action with refs; flat actions still via Logic.
+  const actionHasRefs = (action: LogicAction): boolean =>
+    Array.isArray(action.condition_refs) && action.condition_refs.length > 0
+  const anyRouted = rule.actions.some(actionHasRefs)
+  const anyFlat = rule.actions.length === 0 || rule.actions.some((a) => !actionHasRefs(a))
+
+  let logicId: string | null = null
+  if (!anyRouted || anyFlat) {
+    const flatLogicId = 'logic-0'
+    logicId = flatLogicId
+    const avgY = conditionIds.length > 0
+      ? (conditionIds.length - 1) * ROW_SPACING / 2 + 60
+      : 60
+    resultNodes.push({
+      id: flatLogicId,
+      type: 'logic',
+      position: { x: 50 + COLUMN_SPACING, y: avgY },
+      data: { operator: rule.logic_operator },
+    })
+
+    conditionIds.forEach((condId) => {
+      resultEdges.push({
+        id: `e-${condId}-${flatLogicId}`,
+        source: condId,
+        target: flatLogicId,
+        animated: true,
+        type: 'smoothstep',
+        markerEnd: MarkerType.ArrowClosed,
+      })
+    })
+  }
 
   // Create action nodes (right column)
   const actionX = 50 + COLUMN_SPACING * 2
   rule.actions.forEach((action, i) => {
     const id = `action-${i}`
+    const routingData = {
+      ...(action.condition_op ? { condition_op: action.condition_op } : {}),
+      ...(Array.isArray(action.condition_refs) && action.condition_refs.length > 0
+        ? { condition_refs: [...action.condition_refs] }
+        : {}),
+    }
 
     if (action.type === 'actuator' || action.type === 'actuator_command') {
       const aa = action as ActuatorAction
@@ -579,6 +734,10 @@ function ruleToGraph(rule: LogicRule): { nodes: Node[]; edges: Edge[] } {
           command: aa.command,
           pwmValue: aa.value !== undefined ? Math.round(aa.value * 100) : undefined,
           duration: aa.duration ?? aa.duration_seconds,
+          // AUT-995 Feld 2: round-trip dose_ml so the input reflects saved state on reload.
+          dose_ml: aa.dose_ml,
+          ...(aa.is_safety_critical ? { is_safety_critical: true } : {}),
+          ...routingData,
         },
       })
     } else if (action.type === 'notification') {
@@ -591,6 +750,7 @@ function ruleToGraph(rule: LogicRule): { nodes: Node[]; edges: Edge[] } {
           channel: na.channel,
           target: na.target,
           messageTemplate: na.message_template,
+          ...routingData,
         },
       })
     } else if (action.type === 'delay') {
@@ -599,7 +759,7 @@ function ruleToGraph(rule: LogicRule): { nodes: Node[]; edges: Edge[] } {
         id,
         type: 'delay',
         position: { x: actionX, y: 60 + i * ROW_SPACING },
-        data: { seconds: da.seconds },
+        data: { seconds: da.seconds, ...routingData },
       })
     } else if (action.type === 'plugin' || action.type === 'autoops_trigger') {
       const pa = action as PluginAction
@@ -616,6 +776,7 @@ function ruleToGraph(rule: LogicRule): { nodes: Node[]; edges: Edge[] } {
           pluginId: pa.plugin_id,
           config: cfg,
           ...cfgFields,
+          ...routingData,
         },
       })
     } else if (action.type === 'run_diagnostic') {
@@ -626,6 +787,7 @@ function ruleToGraph(rule: LogicRule): { nodes: Node[]; edges: Edge[] } {
         position: { x: actionX, y: 60 + i * ROW_SPACING },
         data: {
           checkName: da.check_name || '',
+          ...routingData,
         },
       })
     } else if (action.type === 'sequence') {
@@ -655,24 +817,45 @@ function ruleToGraph(rule: LogicRule): { nodes: Node[]; edges: Edge[] } {
               gpio: act?.gpio ?? 0,
               command: cmd,
               duration: act?.duration_seconds ?? act?.duration ?? 0,
+              // AUT-1281: dose_ml round-trip (AUT-1111 engine bereits wirksam; Frontend zog nicht nach)
+              dose_ml: act?.dose_ml,
+              // AUT-1390: FE-Intent Modus Roundtrip (Step-Meta, kein Server-Dosier-Pfad)
+              dose_mode: step.dose_mode,
               onFailure: step.on_failure ?? 'abort',
+              // AUT-1306: before/after am Aktor-Schritt nur Roundtrip-Preserve (kein UI-Neubau)
+              delay_before_seconds: step.delay_before_seconds,
+              delay_after_seconds: step.delay_after_seconds,
             }
           }),
+          ...routingData,
         },
       })
     }
 
-    // Connect source → action
-    sourceIds.forEach((srcId) => {
+    // AUT-1318: routed actions ← condition_refs; flat actions ← logic gate
+    if (actionHasRefs(action)) {
+      for (const ref of action.condition_refs as number[]) {
+        const condId = conditionIds[ref]
+        if (!condId) continue
+        resultEdges.push({
+          id: `e-${condId}-${id}`,
+          source: condId,
+          target: id,
+          animated: true,
+          type: 'smoothstep',
+          markerEnd: MarkerType.ArrowClosed,
+        })
+      }
+    } else if (logicId) {
       resultEdges.push({
-        id: `e-${srcId}-${id}`,
-        source: srcId,
+        id: `e-${logicId}-${id}`,
+        source: logicId,
         target: id,
         animated: true,
         type: 'smoothstep',
         markerEnd: MarkerType.ArrowClosed,
       })
-    })
+    }
   })
 
   // Set initial dimensions on all nodes to prevent Vue Flow clampNodeExtent crash
@@ -696,13 +879,17 @@ function graphToRuleData(): {
   logic_operator: 'AND' | 'OR'
   priority?: number
   cooldown_seconds?: number
+  max_dose_ml_per_day?: number
   conditionNodeIds: string[]
   actionNodeIds: string[]
+  /** AUT-1399: from sensor_diff nodes — exclusively measure_bindings, never trigger_conditions */
+  measure_bindings: MeasureBinding[]
 } {
   const conditions: LogicCondition[] = []
   const actions: LogicAction[] = []
   const conditionNodeIds: string[] = []
   const actionNodeIds: string[] = []
+  const measure_bindings: MeasureBinding[] = []
   let logicOperator: 'AND' | 'OR' = 'AND'
 
   for (const node of nodes.value) {
@@ -718,25 +905,37 @@ function graphToRuleData(): {
             ...(node.data.sensorType ? { sensor_type: node.data.sensorType as string } : {}),
           }
           if (node.data.activateAbove != null && node.data.deactivateBelow != null) {
-            hyst.activate_above = Number(node.data.activateAbove)
-            hyst.deactivate_below = Number(node.data.deactivateBelow)
+            hyst.activate_above = parseLocaleNumber(node.data.activateAbove as string | number)
+            hyst.deactivate_below = parseLocaleNumber(node.data.deactivateBelow as string | number)
           }
           if (node.data.activateBelow != null && node.data.deactivateAbove != null) {
-            hyst.activate_below = Number(node.data.activateBelow)
-            hyst.deactivate_above = Number(node.data.deactivateAbove)
+            hyst.activate_below = parseLocaleNumber(node.data.activateBelow as string | number)
+            hyst.deactivate_above = parseLocaleNumber(node.data.deactivateAbove as string | number)
           }
           conditions.push(hyst)
           conditionNodeIds.push(node.id)
         } else {
+          const sensorValue = node.data.value
+          const sensorMin = node.data.min
+          const sensorMax = node.data.max
           conditions.push({
             type: 'sensor',
             esp_id: node.data.espId || '',
             gpio: node.data.gpio || 0,
             sensor_type: node.data.sensorType || 'DS18B20',
             operator: node.data.operator || '>',
-            value: node.data.value ?? 0,
-            ...(node.data.min !== undefined ? { min: node.data.min } : {}),
-            ...(node.data.max !== undefined ? { max: node.data.max } : {}),
+            value:
+              sensorValue === '' || sensorValue == null
+                ? 0
+                : parseLocaleNumber(sensorValue as string | number),
+            ...(sensorMin !== undefined && sensorMin !== ''
+              ? { min: parseLocaleNumber(sensorMin as string | number) }
+              : {}),
+            ...(sensorMax !== undefined && sensorMax !== ''
+              ? { max: parseLocaleNumber(sensorMax as string | number) }
+              : {}),
+            // AUT-995 Feld 4: require_fresh_data (additive) — server freshness gate (AO-3).
+            ...(node.data.require_fresh_data ? { require_fresh_data: true } : {}),
           } as SensorCondition)
           conditionNodeIds.push(node.id)
         }
@@ -787,6 +986,12 @@ function graphToRuleData(): {
           command: cmd,
           value: pwmVal,
           ...(node.data.duration ? { duration_seconds: node.data.duration } : { duration_seconds: 0 }),
+          // AUT-995 Feld 2c: dose_ml (additive) — server (AO-2) resolves to duration_seconds via flow_rate_ml_s.
+          ...(node.data.dose_ml ? { dose_ml: node.data.dose_ml } : {}),
+          ...(node.data.is_safety_critical ? { is_safety_critical: true } : {}),
+          ...(node.data.condition_op === 'AND' || node.data.condition_op === 'OR'
+            ? { condition_op: node.data.condition_op }
+            : {}),
         } as ActuatorAction)
         actionNodeIds.push(node.id)
         break
@@ -798,6 +1003,9 @@ function graphToRuleData(): {
           channel: node.data.channel || 'websocket',
           target: node.data.target || '',
           message_template: node.data.messageTemplate || '',
+          ...(node.data.condition_op === 'AND' || node.data.condition_op === 'OR'
+            ? { condition_op: node.data.condition_op }
+            : {}),
         } as NotificationAction)
         actionNodeIds.push(node.id)
         break
@@ -806,6 +1014,9 @@ function graphToRuleData(): {
         actions.push({
           type: 'delay',
           seconds: node.data.seconds || 60,
+          ...(node.data.condition_op === 'AND' || node.data.condition_op === 'OR'
+            ? { condition_op: node.data.condition_op }
+            : {}),
         } as DelayAction)
         actionNodeIds.push(node.id)
         break
@@ -822,6 +1033,9 @@ function graphToRuleData(): {
           type: 'plugin',
           plugin_id: node.data.pluginId || '',
           config,
+          ...(node.data.condition_op === 'AND' || node.data.condition_op === 'OR'
+            ? { condition_op: node.data.condition_op }
+            : {}),
         } as PluginAction)
         actionNodeIds.push(node.id)
         break
@@ -841,6 +1055,9 @@ function graphToRuleData(): {
         actions.push({
           type: 'run_diagnostic',
           ...(node.data.checkName ? { check_name: node.data.checkName as string } : {}),
+          ...(node.data.condition_op === 'AND' || node.data.condition_op === 'OR'
+            ? { condition_op: node.data.condition_op }
+            : {}),
         } as DiagnosticsAction)
         actionNodeIds.push(node.id)
         break
@@ -855,6 +1072,9 @@ function graphToRuleData(): {
             }
           }
           const cmd = (step.command ?? 'ON').toUpperCase()
+          // AUT-1281: dose_ml gewinnt (analog Top-Level-Actuator, logic_engine.py:1330-1331) —
+          // duration_seconds bleibt optional erhalten (Fallback/Anzeige), Action-Type immer 'actuator'.
+          const hasDose = step.dose_ml != null && step.dose_ml > 0
           return {
             name: step.name || undefined,
             action: {
@@ -864,8 +1084,20 @@ function graphToRuleData(): {
               command: cmd,
               value: cmd === 'OFF' ? 0.0 : 1.0,
               duration_seconds: step.duration ?? 0,
+              ...(hasDose ? { dose_ml: step.dose_ml } : {}),
             },
             on_failure: step.onFailure ?? 'abort',
+            // AUT-1390: FE-Intent Modus am Step (nicht in action — validation List[Any])
+            ...(step.dose_mode
+              ? { dose_mode: step.dose_mode }
+              : {}),
+            // AUT-1306: Server-Felder delay_before/after nur durchreichen (kein UI)
+            ...(step.delay_before_seconds != null
+              ? { delay_before_seconds: step.delay_before_seconds }
+              : {}),
+            ...(step.delay_after_seconds != null
+              ? { delay_after_seconds: step.delay_after_seconds }
+              : {}),
           }
         })
         actions.push({
@@ -873,24 +1105,79 @@ function graphToRuleData(): {
           abort_on_failure: node.data.abortOnFailure ?? true,
           max_duration_seconds: node.data.maxDurationSeconds ?? 300,
           steps,
+          ...(node.data.condition_op === 'AND' || node.data.condition_op === 'OR'
+            ? { condition_op: node.data.condition_op }
+            : {}),
         } as SequenceAction)
         actionNodeIds.push(node.id)
         break
       }
 
       case 'sensor_diff':
-        conditions.push({
-          type: 'sensor_diff',
-          sensor_a_id: (node.data.sensorAId as string) || '',
-          sensor_b_id: (node.data.sensorBId as string) || '',
-          operator: (node.data.operator as SensorDiffCondition['operator']) || '>',
-          value: Number(node.data.threshold ?? 0),
-          ...(node.data.consecutiveCount !== undefined
-            ? { consecutive_count: Number(node.data.consecutiveCount) }
-            : {}),
-        } as SensorDiffCondition)
+        // AUT-1399: Mess-Bindung → measure_bindings only (never conditions / condition_refs)
+        measure_bindings.push(measureBindingFromNodeData(node.data))
+        break
+
+      case 'not_running': {
+        const target = (node.data.target as NotRunningCondition['target']) || 'actuator'
+        const nr: NotRunningCondition = { type: 'not_running', target }
+        if (target === 'sequence') {
+          nr.rule_id = (node.data.ruleId as string) || ''
+        } else {
+          nr.esp_id = (node.data.espId as string) || ''
+          nr.gpio = Number(node.data.gpio ?? 0)
+        }
+        conditions.push(nr)
         conditionNodeIds.push(node.id)
         break
+      }
+    }
+  }
+
+  // AUT-1318 (R-S4): edges → condition_refs (direct Condition→Action only).
+  // Edges via logic gate leave refs empty → legacy global gate (D4).
+  // AUT-1399: sensor_diff (Mess-Bindung) is NOT a condition — edges must not create condition_refs.
+  const CONDITION_NODE_TYPES = new Set([
+    'sensor',
+    'time',
+    'diagnostics_status',
+    'not_running',
+  ])
+  const ACTION_NODE_TYPES = new Set([
+    'actuator',
+    'notification',
+    'delay',
+    'plugin',
+    'run_diagnostic',
+    'sequence',
+  ])
+  const condIndexById = new Map(conditionNodeIds.map((id, i) => [id, i]))
+  const actionIndexById = new Map(actionNodeIds.map((id, i) => [id, i]))
+  const nodeTypeById = new Map(nodes.value.map((n) => [n.id, n.type || '']))
+  const refsByActionIndex = new Map<number, Set<number>>()
+
+  for (const edge of edges.value) {
+    const srcType = nodeTypeById.get(edge.source)
+    const tgtType = nodeTypeById.get(edge.target)
+    if (!srcType || !tgtType) continue
+    if (!CONDITION_NODE_TYPES.has(srcType) || !ACTION_NODE_TYPES.has(tgtType)) continue
+    const ci = condIndexById.get(edge.source)
+    const ai = actionIndexById.get(edge.target)
+    if (ci === undefined || ai === undefined) continue
+    let set = refsByActionIndex.get(ai)
+    if (!set) {
+      set = new Set<number>()
+      refsByActionIndex.set(ai, set)
+    }
+    set.add(ci)
+  }
+
+  for (const [ai, refs] of refsByActionIndex) {
+    if (refs.size === 0) continue
+    const sorted = Array.from(refs).sort((a, b) => a - b)
+    actions[ai] = {
+      ...actions[ai],
+      condition_refs: sorted,
     }
   }
 
@@ -900,8 +1187,10 @@ function graphToRuleData(): {
     logic_operator: logicOperator,
     priority: props.metadata?.priority,
     cooldown_seconds: props.metadata?.cooldown_seconds,
+    max_dose_ml_per_day: props.metadata?.max_dose_ml_per_day,
     conditionNodeIds,
     actionNodeIds,
+    measure_bindings,
   }
 }
 
@@ -1002,11 +1291,206 @@ function isNodeActive(_nodeId: string): boolean {
   return logicStore.isRuleActive(props.rule.id)
 }
 
-// Get ESP device name for display
+// AUT-632 / AUT-1248: Gerätename nur aus vorhandenem device.name — nie UUID-Fragment.
+function lookupDevice(espId: string | undefined) {
+  if (!espId) return undefined
+  // not_running speichert DB-UUID; Aktor/Sensor-Nodes nutzen device_id (ESP_XXXX)
+  return espStore.devices.find(
+    (d) => espStore.getDeviceId(d) === espId || d.id === espId,
+  )
+}
+
 function getEspName(espId: string): string {
-  if (!espId) return '?'
-  const device = espStore.devices.find((d) => espStore.getDeviceId(d) === espId)
-  return device?.name || espId.slice(-6)
+  if (!espId) return ''
+  const name = lookupDevice(espId)?.name?.trim()
+  return name || ''
+}
+
+function lookupActuator(espId: string | undefined, gpio: number | null | undefined) {
+  if (gpio == null) return undefined
+  return lookupDevice(espId)?.actuators?.find((a) => a.gpio === gpio)
+}
+
+function lookupSensor(
+  espId: string | undefined,
+  gpio: number | null | undefined,
+  sensorType?: string,
+) {
+  if (gpio == null) return undefined
+  const sensors = lookupDevice(espId)?.sensors || []
+  if (sensorType) {
+    const byType = sensors.find((s) => s.gpio === gpio && s.sensor_type === sensorType)
+    if (byType) return byType
+  }
+  return sensors.find((s) => s.gpio === gpio)
+}
+
+/** Nur echter Config-Name — kein erfundener Typ-Label (Leitplanke AUT-1334 R3). */
+function configuredActuatorName(
+  espId: string | undefined,
+  gpio: number | null | undefined,
+): string | null {
+  const name = lookupActuator(espId, gpio)?.name?.trim()
+  return name || null
+}
+
+function configuredSensorName(
+  espId: string | undefined,
+  gpio: number | null | undefined,
+  sensorType?: string,
+): string | null {
+  const name = lookupSensor(espId, gpio, sensorType)?.name?.trim()
+  return name || null
+}
+
+function faceSensorPrimary(data: {
+  espId?: string
+  gpio?: number | null
+  sensorType?: string
+}): string {
+  return faceSensorPrimaryLabel(
+    configuredSensorName(data.espId, data.gpio, data.sensorType),
+    sensorLabel(data.sensorType || ''),
+  )
+}
+
+function faceActuatorPrimary(data: { espId?: string; gpio?: number | null }): string {
+  return faceActuatorPrimaryLabel(configuredActuatorName(data.espId, data.gpio))
+}
+
+function faceSecondaryDeviceGpio(
+  espId: string | undefined,
+  gpioLabel: string,
+): { text: string; title: string } {
+  return faceDeviceGpioSecondary(espId ? getEspName(espId) : '', gpioLabel)
+}
+
+function faceNotRunningPrimary(data: {
+  target?: string
+  ruleId?: string
+  espId?: string
+  gpio?: number | null
+}): string {
+  const rule = data.ruleId ? logicStore.getRuleById?.(data.ruleId) : undefined
+  return faceNotRunningPrimaryLabel({
+    target: data.target,
+    actuatorName: configuredActuatorName(data.espId, data.gpio),
+    ruleName: rule?.name ?? null,
+  })
+}
+
+function faceNotRunningSecondary(data: {
+  target?: string
+  ruleId?: string
+  espId?: string
+  gpio?: number | null
+}): { text: string; title: string } {
+  return faceNotRunningSecondaryLabel({
+    target: data.target,
+    ruleId: data.ruleId,
+    espName: data.espId ? getEspName(data.espId) : '',
+    gpioLabel: formatGpio(data.gpio ?? undefined),
+  })
+}
+
+/** AUT-1399 Mess-Bindung: Sensor-Klarname aus esp_id/gpio/type (nie Rohtyp allein als Titel). */
+function faceMeasureSensorName(
+  espId: string | undefined,
+  gpio: number | null | undefined,
+  sensorType: string | undefined,
+): string {
+  if (!espId || gpio == null || !sensorType) {
+    return faceSensorDiffLabelUtil({ configId: '', resolved: false })
+  }
+  for (const device of espStore.devices) {
+    const deviceId = espStore.getDeviceId(device)
+    if (deviceId !== espId && device.id !== espId) continue
+    const sensor = (device.sensors || []).find(
+      (s) => s.gpio === gpio && s.sensor_type === sensorType,
+    )
+    if (!sensor) continue
+    return faceSensorDiffLabelUtil({
+      configId: `${espId}:${gpio}`,
+      resolved: true,
+      sensorName: sensor.name,
+      typeLabel: sensorLabel(sensor.sensor_type),
+    })
+  }
+  // Fallback: lesbarer Typ-Klarname, nicht UUID/Rohtyp allein
+  return sensorLabel(sensorType) || 'Sensor'
+}
+
+function faceMeasureBindingTitle(data: Record<string, unknown>): string {
+  const custom = typeof data.label === 'string' ? data.label.trim() : ''
+  if (custom) return custom
+  const name = faceMeasureSensorName(
+    data.sensorEspId as string | undefined,
+    data.sensorGpio as number | null | undefined,
+    data.sensorType as string | undefined,
+  )
+  if (name && name !== '—') return name
+  return 'Mess-Bindung'
+}
+
+function faceMeasurePointLabels(data: Record<string, unknown>): {
+  twoSensors: boolean
+  leftLabel: string
+  leftValue: string
+  rightLabel: string
+  rightValue: string
+  measureLine: string
+} {
+  const binding = measureBindingFromNodeData(data)
+  const twoSensors = isTwoSensorMeasureFormula(binding.sensor_refs.length)
+  const nameA = faceMeasureSensorName(
+    data.sensorEspId as string | undefined,
+    data.sensorGpio as number | null | undefined,
+    data.sensorType as string | undefined,
+  )
+  const nameB = faceMeasureSensorName(
+    data.sensorBEspId as string | undefined,
+    data.sensorBGpio as number | null | undefined,
+    data.sensorBType as string | undefined,
+  )
+  if (twoSensors) {
+    return {
+      twoSensors: true,
+      leftLabel: 'Erster',
+      leftValue: nameA,
+      rightLabel: 'Zweiter',
+      rightValue: nameB,
+      measureLine: `Differenz: ${nameB} minus ${nameA}`,
+    }
+  }
+  // Ein Sensor: Anfangs- und Endwert (Zeitpunkte = Häkchen im Panel, nicht die Linien)
+  return {
+    twoSensors: false,
+    leftLabel: 'Anfang',
+    leftValue: nameA,
+    rightLabel: 'Ende',
+    rightValue: nameA,
+    measureLine:
+      nameA && nameA !== '—'
+        ? `Misst den Unterschied von Anfang bis Ende (${nameA})`
+        : 'Misst den Unterschied von Anfang bis Ende',
+  }
+}
+
+// AUT-1281: Aktorname fuer Sequenz-Schritte aus espStore (devices -> actuators by espId/gpio),
+// Fallback auf den frei benannten Schritt-Namen bzw. GPIO-Anzeige.
+function getStepActuatorName(espId: string | undefined, gpio: number | undefined, fallbackName?: string): string {
+  if (fallbackName) return fallbackName
+  if (!espId || gpio == null) return 'Nicht konfiguriert'
+  return configuredActuatorName(espId, gpio) || `GPIO ${gpio}`
+}
+
+// AUT-1306: Node-Gesicht Nr · Typ · Primär · Detail (Helfer in sequenceStepDisplay.ts)
+function faceStepPrimary(step: SequenceStepDraft): string {
+  return sequenceStepPrimaryLabel(step, getStepActuatorName)
+}
+
+function faceStepDetail(step: SequenceStepDraft): string {
+  return sequenceStepDetailLabel(step, formatDuration)
 }
 
 // Format time with leading zero
@@ -1042,6 +1526,7 @@ function miniMapNodeColor(node: Node): string {
     delay: () => tokens.textMuted,
     plugin: () => tokens.warning,
     diagnostics_status: () => tokens.real,
+    not_running: () => tokens.warning,
     run_diagnostic: () => tokens.real,
   }
   return colors[node.type || '']?.() || tokens.textMuted
@@ -1135,6 +1620,20 @@ function loadFromRuleData(ruleData: {
   }
 }
 
+/** AUT-1399 Vitest: Kante setzen ohne UI-Drag (Nachweis: kein condition_ref). */
+function addEdgeForTest(sourceId: string, targetId: string): void {
+  addEdges([
+    {
+      id: `e-test-${sourceId}-${targetId}-${Date.now()}`,
+      source: sourceId,
+      target: targetId,
+      animated: true,
+      type: 'smoothstep',
+      markerEnd: MarkerType.ArrowClosed,
+    },
+  ])
+}
+
 defineExpose({
   graphToRuleData,
   updateNodeData,
@@ -1145,6 +1644,7 @@ defineExpose({
   setValidationErrors,
   clearValidationErrors,
   fitView: () => fitView({ padding: 0.3 }),
+  addEdgeForTest,
 })
 </script>
 
@@ -1233,40 +1733,65 @@ defineExpose({
               />
             </div>
             <div class="rule-node__header-text">
-              <span class="rule-node__type">{{ sensorLabel(data.sensorType) }}</span>
+              <span
+                class="rule-node__type"
+                :class="{ 'rule-node__face-name': !!configuredSensorName(data.espId, data.gpio, data.sensorType) }"
+              >{{ faceSensorPrimary(data) }}</span>
               <span class="rule-node__chip" :title="data.sensorType" style="display:none" aria-hidden="true">{{ data.sensorType }}</span>
             </div>
           </div>
           <div class="rule-node__body">
             <div class="rule-node__condition">
-              <template v-if="data.operator === 'hysteresis' || data.isHysteresis">
-                <template v-if="data.activateAbove != null && data.deactivateBelow != null">
-                  Ein &gt;{{ data.activateAbove }}<span class="rule-node__unit">{{ sensorUnit(data.sensorType) }}</span>
-                  · Aus &lt;{{ data.deactivateBelow }}<span class="rule-node__unit">{{ sensorUnit(data.sensorType) }}</span>
+              <!-- AUT-1389: Plan-Abo → plan-abgeleitete Schwellen; sonst Node-Static -->
+              <template v-for="face in [planFaceForSensor(data)]" :key="'sensor-face'">
+                <template v-if="face">
+                  <template v-if="face.kind === 'hysteresis_cooling'">
+                    Ein &gt;{{ formatDeadbandEdge(face.high, data.sensorType) }}<span class="rule-node__unit">{{ sensorUnit(data.sensorType) }}</span>
+                    · Aus &lt;{{ formatDeadbandEdge(face.low, data.sensorType) }}<span class="rule-node__unit">{{ sensorUnit(data.sensorType) }}</span>
+                  </template>
+                  <template v-else-if="face.kind === 'hysteresis_heating'">
+                    Ein &lt;{{ formatDeadbandEdge(face.low, data.sensorType) }}<span class="rule-node__unit">{{ sensorUnit(data.sensorType) }}</span>
+                    · Aus &gt;{{ formatDeadbandEdge(face.high, data.sensorType) }}<span class="rule-node__unit">{{ sensorUnit(data.sensorType) }}</span>
+                  </template>
+                  <template v-else-if="face.kind === 'between'">
+                    {{ formatDeadbandEdge(face.low, data.sensorType) }}<span class="rule-node__unit">{{ sensorUnit(data.sensorType) }}</span>
+                    {{ operatorDisplay.between }}
+                    {{ formatDeadbandEdge(face.high, data.sensorType) }}<span class="rule-node__unit">{{ sensorUnit(data.sensorType) }}</span>
+                  </template>
+                  <template v-else>
+                    Soll {{ formatDeadbandEdge(face.setpoint, data.sensorType) }}<span class="rule-node__unit">{{ sensorUnit(data.sensorType) }}</span>
+                  </template>
                 </template>
-                <template v-else-if="data.activateBelow != null && data.deactivateAbove != null">
-                  Ein &lt;{{ data.activateBelow }}<span class="rule-node__unit">{{ sensorUnit(data.sensorType) }}</span>
-                  · Aus &gt;{{ data.deactivateAbove }}<span class="rule-node__unit">{{ sensorUnit(data.sensorType) }}</span>
+                <template v-else-if="data.operator === 'hysteresis' || data.isHysteresis">
+                  <template v-if="data.activateAbove != null && data.deactivateBelow != null">
+                    Ein &gt;{{ formatDeadbandEdge(Number(data.activateAbove), data.sensorType) }}<span class="rule-node__unit">{{ sensorUnit(data.sensorType) }}</span>
+                    · Aus &lt;{{ formatDeadbandEdge(Number(data.deactivateBelow), data.sensorType) }}<span class="rule-node__unit">{{ sensorUnit(data.sensorType) }}</span>
+                  </template>
+                  <template v-else-if="data.activateBelow != null && data.deactivateAbove != null">
+                    Ein &lt;{{ formatDeadbandEdge(Number(data.activateBelow), data.sensorType) }}<span class="rule-node__unit">{{ sensorUnit(data.sensorType) }}</span>
+                    · Aus &gt;{{ formatDeadbandEdge(Number(data.deactivateAbove), data.sensorType) }}<span class="rule-node__unit">{{ sensorUnit(data.sensorType) }}</span>
+                  </template>
+                  <template v-else>
+                    Hysterese
+                  </template>
+                </template>
+                <template v-else-if="data.operator === 'between'">
+                  {{ formatDeadbandEdge(Number(data.min), data.sensorType) }}<span class="rule-node__unit">{{ sensorUnit(data.sensorType) }}</span>
+                  {{ operatorDisplay.between }}
+                  {{ formatDeadbandEdge(Number(data.max), data.sensorType) }}<span class="rule-node__unit">{{ sensorUnit(data.sensorType) }}</span>
                 </template>
                 <template v-else>
-                  Hysterese
+                  {{ operatorDisplay[data.operator] || data.operator }} {{ formatDeadbandEdge(Number(data.value), data.sensorType) }}<span class="rule-node__unit">{{ sensorUnit(data.sensorType) }}</span>
                 </template>
-              </template>
-              <template v-else-if="data.operator === 'between'">
-                {{ data.min }}<span class="rule-node__unit">{{ sensorUnit(data.sensorType) }}</span>
-                {{ operatorDisplay.between }}
-                {{ data.max }}<span class="rule-node__unit">{{ sensorUnit(data.sensorType) }}</span>
-              </template>
-              <template v-else>
-                {{ operatorDisplay[data.operator] || data.operator }} {{ data.value }}<span class="rule-node__unit">{{ sensorUnit(data.sensorType) }}</span>
               </template>
             </div>
           </div>
           <div class="rule-node__footer">
             <template v-if="data.espId">
-              <span class="rule-node__meta-item">{{ getEspName(data.espId) }}</span>
-              <span class="rule-node__meta-sep" />
-              <span class="rule-node__meta-item">{{ formatGpio(data.gpio) }}</span>
+              <span
+                class="rule-node__meta-item"
+                :title="faceSecondaryDeviceGpio(data.espId, formatSensorGpio(data.gpio, data.sensorType)).title"
+              >{{ faceSecondaryDeviceGpio(data.espId, formatSensorGpio(data.gpio, data.sensorType)).text }}</span>
             </template>
             <span v-else class="rule-node__unconfigured-hint">Nicht konfiguriert</span>
           </div>
@@ -1308,7 +1833,12 @@ defineExpose({
           class="rule-node rule-node--logic"
           :class="{ 'rule-node--active': isNodeActive(id), 'rule-node--validation-error': hasNodeValidationError(id) }"
         >
-          <Handle type="target" :position="Position.Left" class="handle-target" />
+          <Handle
+            type="target"
+            :position="Position.Left"
+            class="handle-target"
+            title="Weitere Bedingung hinzufügen — ziehe einen Bedingungsblock hierher."
+          />
           <Handle type="source" :position="Position.Right" class="handle-source" />
           <div class="rule-node__gate" :title="data.operator === 'AND' ? 'Alle Bedingungen müssen zutreffen' : 'Mindestens eine Bedingung muss zutreffen'">
             <div class="rule-node__icon-wrap rule-node__icon-wrap--logic">
@@ -1330,7 +1860,10 @@ defineExpose({
             <div class="rule-node__icon-wrap rule-node__icon-wrap--actuator">
               <Power class="rule-node__icon" />
             </div>
-            <span class="rule-node__type">Aktor</span>
+            <span
+              class="rule-node__type"
+              :class="{ 'rule-node__face-name': !!configuredActuatorName(data.espId, data.gpio) }"
+            >{{ faceActuatorPrimary(data) }}</span>
           </div>
           <div class="rule-node__body">
             <div class="rule-node__command" :class="`rule-node__command--${data.command?.toLowerCase()}`">
@@ -1348,9 +1881,10 @@ defineExpose({
           </div>
           <div class="rule-node__footer">
             <template v-if="data.espId">
-              <span class="rule-node__meta-item">{{ getEspName(data.espId) }}</span>
-              <span class="rule-node__meta-sep" />
-              <span class="rule-node__meta-item">{{ formatGpio(data.gpio) }}</span>
+              <span
+                class="rule-node__meta-item"
+                :title="faceSecondaryDeviceGpio(data.espId, formatGpio(data.gpio)).title"
+              >{{ faceSecondaryDeviceGpio(data.espId, formatGpio(data.gpio)).text }}</span>
             </template>
             <span v-else class="rule-node__unconfigured-hint">Nicht konfiguriert</span>
           </div>
@@ -1405,7 +1939,7 @@ defineExpose({
         </div>
       </template>
 
-      <!-- ======================== SEQUENCE NODE ======================== -->
+      <!-- ======================== SEQUENCE NODE (AUT-1281 Hybrid-Redesign) ======================== -->
       <template #node-sequence="{ data, id }">
         <div
           class="rule-node rule-node--sequence"
@@ -1420,14 +1954,27 @@ defineExpose({
           </div>
           <div class="rule-node__body">
             <template v-if="data.steps?.length">
-              <div class="rule-node__detail">
-                <span class="rule-node__detail-value">
-                  {{ data.steps.length }} Schritt{{ data.steps.length !== 1 ? 'e' : '' }}
-                </span>
+              <div class="rule-node__seq-steps" aria-label="Sequenz-Abfolge">
+                <div
+                  v-for="(step, idx) in (data.steps as SequenceStepDraft[])"
+                  :key="idx"
+                  class="rule-node__seq-step"
+                  :class="{ 'rule-node__seq-step--pause': step.stepType === 'delay' }"
+                >
+                  <span class="rule-node__seq-step-index">{{ sequenceStepNumber(idx) }}</span>
+                  <span
+                    class="rule-node__seq-step-type"
+                    :class="step.stepType === 'delay'
+                      ? 'rule-node__seq-step-type--pause'
+                      : 'rule-node__seq-step-type--actuator'"
+                  >{{ sequenceStepTypeLabel(step.stepType) }}</span>
+                  <span class="rule-node__seq-step-name">{{ faceStepPrimary(step) }}</span>
+                  <span class="rule-node__seq-step-detail">{{ faceStepDetail(step) }}</span>
+                </div>
               </div>
-              <div v-if="data.maxDurationSeconds" class="rule-node__duration">
+              <div v-if="data.maxDurationSeconds" class="rule-node__duration" title="Gesamtlimit aller Schritte">
                 <Timer class="rule-node__duration-icon" />
-                Max. {{ Math.floor(data.maxDurationSeconds / 60) }} Min.
+                MAX. LAUFZEIT {{ formatDuration(data.maxDurationSeconds) }}
               </div>
             </template>
             <span v-else class="rule-node__unconfigured-hint">Keine Schritte</span>
@@ -1499,28 +2046,68 @@ defineExpose({
         </div>
       </template>
 
-      <!-- ======================== SENSOR DIFF NODE (Condition) ======================== -->
+      <!-- ======================== MESS-BINDUNG (sensor_diff umgewidmet, AUT-1399) ======================== -->
       <template #node-sensor_diff="{ data, id }">
         <div
           class="rule-node rule-node--sensor"
           :class="{ 'rule-node--active': isNodeActive(id), 'rule-node--validation-error': hasNodeValidationError(id) }"
+          data-testid="node-measure-binding"
         >
+          <Handle type="target" :position="Position.Left" class="handle-target" />
           <Handle type="source" :position="Position.Right" class="handle-source" />
           <div class="rule-node__header">
             <div class="rule-node__icon-wrap rule-node__icon-wrap--sensor">
               <ArrowLeftRight class="rule-node__icon" />
             </div>
-            <span class="rule-node__type">Sensor-Differenz</span>
+            <span class="rule-node__type rule-node__type--measure">{{ faceMeasureBindingTitle(data) }}</span>
           </div>
           <div class="rule-node__body">
-            <div class="rule-node__condition">
-              <span class="rule-node__meta-item">A: {{ data.sensorAId || '—' }}</span>
+            <div class="rule-node__condition rule-node__condition--compact">
+              <span class="rule-node__meta-item" :title="faceMeasurePointLabels(data).leftValue">
+                {{ faceMeasurePointLabels(data).leftLabel }}:
+                {{ faceMeasurePointLabels(data).leftValue }}
+              </span>
               <span class="rule-node__meta-sep" />
-              <span class="rule-node__meta-item">B: {{ data.sensorBId || '—' }}</span>
+              <span class="rule-node__meta-item" :title="faceMeasurePointLabels(data).rightValue">
+                {{ faceMeasurePointLabels(data).rightLabel }}:
+                {{ faceMeasurePointLabels(data).rightValue }}
+              </span>
             </div>
-            <div class="rule-node__value">
-              (B−A) {{ operatorDisplay[data.operator] || data.operator }} {{ data.threshold }}
+            <div class="rule-node__value rule-node__value--measure">
+              {{ faceMeasurePointLabels(data).measureLine }}
             </div>
+          </div>
+        </div>
+      </template>
+
+      <!-- ======================== NOT RUNNING NODE (Interlock, AUT-1333) ======================== -->
+      <template #node-not_running="{ data, id }">
+        <div
+          class="rule-node rule-node--not-running"
+          :class="{ 'rule-node--active': isNodeActive(id), 'rule-node--validation-error': hasNodeValidationError(id) }"
+        >
+          <Handle type="source" :position="Position.Right" class="handle-source" />
+          <div class="rule-node__header">
+            <div class="rule-node__icon-wrap rule-node__icon-wrap--not-running">
+              <ShieldOff class="rule-node__icon" />
+            </div>
+            <span class="rule-node__type">Nicht laufend</span>
+          </div>
+          <div class="rule-node__body">
+            <div
+              class="rule-node__condition rule-node__condition--compact"
+              :title="faceNotRunningSecondary(data).title"
+            >
+              {{ faceNotRunningPrimary(data) }}
+            </div>
+            <div
+              v-if="faceNotRunningSecondary(data).text"
+              class="rule-node__meta-item"
+              :title="faceNotRunningSecondary(data).title"
+            >
+              {{ faceNotRunningSecondary(data).text }}
+            </div>
+            <div class="rule-node__value">Interlock</div>
           </div>
         </div>
       </template>
@@ -1722,6 +2309,19 @@ defineExpose({
   background: linear-gradient(90deg, var(--color-real), rgba(34, 211, 238, 0.3));
 }
 
+.rule-node--not-running::before {
+  background: linear-gradient(90deg, var(--color-warning), rgba(251, 191, 36, 0.35));
+}
+
+/* AUT-1281: Sequenz-Node — eigene Breite (schmaler als vorher, aber mehr Inhalt) + Akzentfarbe */
+.rule-node--sequence {
+  width: 260px;
+}
+
+.rule-node--sequence::before {
+  background: linear-gradient(90deg, var(--color-real), rgba(34, 211, 238, 0.3));
+}
+
 /* Node inner layout */
 .rule-node__header {
   display: flex;
@@ -1788,6 +2388,16 @@ defineExpose({
   color: var(--color-real);
 }
 
+.rule-node__icon-wrap--not-running {
+  background: rgba(251, 191, 36, 0.12);
+  color: var(--color-warning);
+}
+
+.rule-node__icon-wrap--sequence {
+  background: rgba(34, 211, 238, 0.12);
+  color: var(--color-real);
+}
+
 .rule-node__icon {
   width: 14px;
   height: 14px;
@@ -1801,6 +2411,29 @@ defineExpose({
   letter-spacing: 0.04em;
   color: var(--color-text-muted);
   line-height: 1.3;
+}
+
+/* AUT-1399: Sensor-Klarname nicht als „FLOW“ per Uppercase entstellen */
+.rule-node__type--measure {
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-primary);
+}
+
+/* AUT-632: vergebener Name primär — nicht Uppercase-Kategorie */
+.rule-node__face-name {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--color-text-primary);
+  line-height: 1.3;
+}
+
+.rule-node__condition--compact {
+  font-size: 0.875rem;
+  font-weight: 600;
 }
 
 /* Sensor chip (e.g. "DS18B20") */
@@ -1981,6 +2614,77 @@ defineExpose({
   margin-top: 0.375rem;
 }
 
+/* AUT-1281/AUT-1306: Sequenz-Abfolge Nr · Typ · Primär · Detail im Node-Gesicht */
+.rule-node__seq-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 9.5rem;
+  overflow-y: auto;
+}
+
+.rule-node__seq-step {
+  display: flex;
+  align-items: baseline;
+  gap: 0.3rem;
+  padding: 2px 0;
+  font-size: 0.6875rem;
+  line-height: 1.35;
+}
+
+.rule-node__seq-step-index {
+  flex-shrink: 0;
+  min-width: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-muted);
+  text-align: right;
+}
+
+.rule-node__seq-step-type {
+  flex-shrink: 0;
+  font-size: 0.625rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  padding: 0 0.25rem;
+  border-radius: var(--radius-sm);
+  line-height: 1.4;
+}
+
+.rule-node__seq-step-type--actuator {
+  color: var(--color-real);
+  background: color-mix(in srgb, var(--color-real) 18%, transparent);
+}
+
+.rule-node__seq-step-type--pause {
+  color: var(--color-warning);
+  background: color-mix(in srgb, var(--color-warning) 16%, transparent);
+}
+
+.rule-node__seq-step-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text-secondary);
+  font-weight: 500;
+}
+
+.rule-node__seq-step--pause .rule-node__seq-step-name {
+  color: var(--color-text-muted);
+  font-style: italic;
+}
+
+.rule-node__seq-step-detail {
+  flex-shrink: 0;
+  color: var(--color-text-primary);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 .rule-node__duration-icon {
   width: 11px;
   height: 11px;
@@ -1999,11 +2703,15 @@ defineExpose({
   z-index: var(--z-dropdown);
 }
 
-/* Invisible hit area expansion for easier grabbing */
+/* AUT-1318 / AUT-1138: Touch hit-target ≥44px; visual handle stays 18px (mouse look unchanged) */
 :deep(.vue-flow__handle::after) {
   content: '';
   position: absolute;
-  inset: -8px;
+  width: 44px;
+  height: 44px;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
   border-radius: 50%;
 }
 

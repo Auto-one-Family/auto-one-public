@@ -21,6 +21,8 @@ export function useSubzoneCRUD() {
   // State
   const creatingSubzoneForZone = ref<string | null>(null)
   const newSubzoneName = ref('')
+  /** AUT-1241: optional spatial position on create */
+  const newSubzonePosition = ref('')
   const editingSubzoneId = ref<string | null>(null)
   const editingSubzoneName = ref('')
   const subzoneActionLoading = ref(false)
@@ -55,11 +57,13 @@ export function useSubzoneCRUD() {
   function startCreateSubzone(zoneId: string | null) {
     creatingSubzoneForZone.value = zoneId ?? '__unassigned__'
     newSubzoneName.value = ''
+    newSubzonePosition.value = ''
   }
 
   function cancelCreateSubzone() {
     creatingSubzoneForZone.value = null
     newSubzoneName.value = ''
+    newSubzonePosition.value = ''
   }
 
   /**
@@ -78,11 +82,13 @@ export function useSubzoneCRUD() {
       }
       const espId = espStore.getDeviceId(espInZone)
       const subzoneId = slugifyGerman(newSubzoneName.value)
+      const position = newSubzonePosition.value.trim()
       await subzonesApi.assignSubzone(espId, {
         subzone_id: subzoneId,
         subzone_name: newSubzoneName.value.trim(),
         parent_zone_id: zoneId || undefined,
         assigned_gpios: assignedGpios,
+        ...(position ? { position_label: position } : {}),
       })
       await espStore.fetchAll()
       if (assignedGpios.length === 0) {
@@ -166,6 +172,7 @@ export function useSubzoneCRUD() {
     // State
     creatingSubzoneForZone,
     newSubzoneName,
+    newSubzonePosition,
     editingSubzoneId,
     editingSubzoneName,
     subzoneActionLoading,

@@ -40,6 +40,13 @@ export interface ActuatorTypeConfig {
   supportsAuxGpio: boolean
   /** Supports inverted logic (LOW = ON) */
   supportsInvertedLogic: boolean
+  /**
+   * Default value for inverted_logic on NEWLY created actuators of this type.
+   * AUT-1005: the real hardware is active-low relay modules (LOW = ON), so pump/relay
+   * default to true (safe OFF on creation). Existing actuators are never affected —
+   * this only seeds the AddActuatorModal form.
+   */
+  invertedLogicDefault: boolean
   // =========================================================================
   // DATASHEET METADATA (AUT-252) — read-only, displayed in ActuatorConfigPanel
   // =========================================================================
@@ -114,6 +121,7 @@ export const ACTUATOR_TYPE_CONFIG: Record<string, ActuatorTypeConfig> = {
     cooldownSeconds: 30,
     supportsAuxGpio: false,
     supportsInvertedLogic: true,
+    invertedLogicDefault: true,
     // Datasheet (AUT-252)
     manufacturer: 'Generisch (Membran-/Zentrifugalpumpe)',
     maxFlow: '1.5 L/min',
@@ -133,6 +141,9 @@ export const ACTUATOR_TYPE_CONFIG: Record<string, ActuatorTypeConfig> = {
     cooldownSeconds: 0,
     supportsAuxGpio: true,
     supportsInvertedLogic: true,
+    // AUT-1005: ValveActuator (H-Bridge direction/enable pins) never reads inverted_logic
+    // in firmware — keep the conservative false default, changing it would be a no-op.
+    invertedLogicDefault: false,
     // Datasheet (AUT-252)
     manufacturer: 'Generisch (Magnet-/Kugelventil)',
     maxFlow: '5 L/min',
@@ -152,6 +163,7 @@ export const ACTUATOR_TYPE_CONFIG: Record<string, ActuatorTypeConfig> = {
     cooldownSeconds: 0,
     supportsAuxGpio: false,
     supportsInvertedLogic: true,
+    invertedLogicDefault: true,
     // Datasheet (AUT-252)
     manufacturer: 'Generisch (Optokoppler-Relais)',
     maxFlow: '10 A @ 250 V AC',
@@ -171,6 +183,7 @@ export const ACTUATOR_TYPE_CONFIG: Record<string, ActuatorTypeConfig> = {
     cooldownSeconds: 0,
     supportsAuxGpio: false,
     supportsInvertedLogic: false, // PWM doesn't support inverted logic
+    invertedLogicDefault: false,
     // Datasheet (AUT-252)
     manufacturer: 'Generisch (PWM-Treiber)',
     maxFlow: '—',
@@ -208,6 +221,25 @@ export function getActuatorTypeOptions(): Array<{ value: string; label: string }
 }
 
 /**
+ * Prefer semantic ESP32 hardware_type over server-normalized actuator_type.
+ * AUT-1302 / AUT-997: live rows are often actuator_type="digital" + hardware_type="pump".
+ */
+export function resolveActuatorSemanticType(
+  actuatorType?: string | null,
+  hardwareType?: string | null,
+): string {
+  return String(hardwareType || actuatorType || '').toLowerCase()
+}
+
+/** True when the actuator is a pump (semantic type), not merely digital/relay. */
+export function isPumpActuatorType(
+  actuatorType?: string | null,
+  hardwareType?: string | null,
+): boolean {
+  return resolveActuatorSemanticType(actuatorType, hardwareType) === 'pump'
+}
+
+/**
  * Check if actuator type is PWM-based
  */
 export function isPwmActuator(type: string): boolean {
@@ -226,6 +258,14 @@ export function supportsAuxGpio(type: string): boolean {
  */
 export function supportsInvertedLogic(type: string): boolean {
   return ACTUATOR_TYPE_CONFIG[type]?.supportsInvertedLogic ?? false
+}
+
+/**
+ * Default value for inverted_logic on a NEW actuator of this type (AUT-1005).
+ * Only used to seed AddActuatorModal's form — never touches existing actuators.
+ */
+export function getActuatorInvertedLogicDefault(type: string): boolean {
+  return ACTUATOR_TYPE_CONFIG[type]?.invertedLogicDefault ?? false
 }
 
 /**

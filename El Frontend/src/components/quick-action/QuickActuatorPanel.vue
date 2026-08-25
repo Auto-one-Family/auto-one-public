@@ -91,16 +91,11 @@ function isPending(actuator: FlatActuator): boolean {
   return actuatorStore.isActuatorCommandPending(actuator.esp_id, actuator.gpio)
 }
 
-function isInCooldown(actuator: FlatActuator): boolean {
-  return actuatorStore.isActuatorCommandInCooldown(actuator.esp_id, actuator.gpio)
-}
-
 function isDisabled(actuator: FlatActuator): boolean {
   return (
     !actuator.is_online ||
     actuator.emergency_stopped === true ||
     isPending(actuator) ||
-    isInCooldown(actuator) ||
     togglingKey.value === getActuatorKey(actuator)
   )
 }
@@ -189,7 +184,8 @@ function handleBack(): void {
           </span>
         </div>
         <button
-          class="actuator-row__toggle"
+          type="button"
+          class="actuator-row__toggle touch-target hardware-onoff-control"
           :class="{
             'actuator-row__toggle--on': actuator.state,
             'actuator-row__toggle--off': !actuator.state,
@@ -453,14 +449,14 @@ function handleBack(): void {
 
 .actuator-row__toggle {
   flex-shrink: 0;
-  min-width: 56px;
-  height: 28px;
-  padding: 0 var(--space-2);
+  min-width: var(--touch-min-target);
+  min-height: var(--touch-min-target);
+  padding: 0 var(--space-3);
   border-radius: var(--radius-sm);
   border: 1px solid var(--glass-border);
   background: var(--color-bg-tertiary);
   color: var(--color-text-secondary);
-  font-size: var(--text-xs);
+  font-size: var(--text-sm);
   font-weight: 600;
   cursor: pointer;
   transition: all var(--transition-fast);

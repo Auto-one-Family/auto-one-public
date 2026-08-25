@@ -25,6 +25,7 @@ import {
   supportsAuxGpio,
   supportsInvertedLogic,
   getActuatorSafetyDefaults,
+  getActuatorInvertedLogicDefault,
 } from '@/utils/actuatorDefaults'
 import type { MockActuatorConfig } from '@/types'
 import { createLogger } from '@/utils/logger'
@@ -65,7 +66,7 @@ const newActuator = ref<MockActuatorConfig>({
   subzone_id: null,
   max_runtime_seconds: 0,
   cooldown_seconds: 0,
-  inverted_logic: false,
+  inverted_logic: getActuatorInvertedLogicDefault(defaultActuatorType),
 })
 
 const actuatorGpioValid = ref(false)
@@ -94,7 +95,9 @@ watch(() => newActuator.value.actuator_type, (newType) => {
   newActuator.value.max_runtime_seconds = defaults.maxRuntime
   newActuator.value.cooldown_seconds = defaults.cooldown
   if (!supportsAuxGpio(newType)) newActuator.value.aux_gpio = 255
-  if (!supportsInvertedLogic(newType)) newActuator.value.inverted_logic = false
+  // AUT-1005: reset to the new type's safe default (mirrors safety defaults above),
+  // not just a blanket false — pump/relay default to true (active-low hardware).
+  newActuator.value.inverted_logic = getActuatorInvertedLogicDefault(newType)
 })
 
 // Reset form and apply initial type when modal opens
@@ -149,7 +152,7 @@ function resetForm() {
     subzone_id: null,
     max_runtime_seconds: defaults.maxRuntime,
     cooldown_seconds: defaults.cooldown,
-    inverted_logic: false,
+    inverted_logic: getActuatorInvertedLogicDefault(defaultActuatorType),
   }
   actuatorGpioValid.value = false
   actuatorAuxGpioValid.value = true
@@ -225,19 +228,19 @@ function onActuatorAuxGpioValidation(valid: boolean, _message: string | null): v
 
       <!-- PWM -->
       <div v-if="isPwmActuator(newActuator.actuator_type)" class="form-group">
-        <label class="form-label">PWM-Wert <span class="form-label-hint">{{ Math.round((newActuator.pwm_value || 0) * 100) }}%</span></label>
-        <input v-model.number="newActuator.pwm_value" type="range" min="0" max="1" step="0.01" class="form-range" />
+        <label class="form-label">PWM-Wert <span class="form-label-hint">{{ newActuator.pwm_value ?? 0 }}%</span></label>
+        <input v-model.number="newActuator.pwm_value" type="range" min="0" max="100" step="1" class="form-range" />
       </div>
 
-      <!-- Max Runtime -->
-      <div v-if="newActuator.actuator_type === 'pump'" class="form-group">
+      <!-- Max Runtime: pump/valve/relay (mirrors ActuatorConfigPanel Sicherheit-Tab) -->
+      <div v-if="['pump', 'valve', 'relay'].includes(newActuator.actuator_type)" class="form-group">
         <label class="form-label">Sicherheitslimit <span class="form-label-hint">Sekunden (0 = kein Limit)</span></label>
         <input v-model.number="newActuator.max_runtime_seconds" type="number" min="0" max="86400" class="form-input" placeholder="3600" />
       </div>
 
-      <!-- Cooldown -->
-      <div v-if="newActuator.actuator_type === 'pump'" class="form-group">
-        <label class="form-label">Cooldown <span class="form-label-hint">Sekunden</span></label>
+      <!-- Cooldown: pump/relay only (mirrors ActuatorConfigPanel Sicherheit-Tab) -->
+      <div v-if="['pump', 'relay'].includes(newActuator.actuator_type)" class="form-group">
+        <label class="form-label">Cooldown <span class="form-label-hint">Sekunden (0 = kein Cooldown)</span></label>
         <input v-model.number="newActuator.cooldown_seconds" type="number" min="0" max="3600" class="form-input" placeholder="30" />
       </div>
 
@@ -247,7 +250,7 @@ function onActuatorAuxGpioValidation(valid: boolean, _message: string | null): v
           <input v-model="newActuator.inverted_logic" type="checkbox" />
           <span class="form-checkbox-label">Invertierte Logik (LOW = ON)</span>
         </label>
-        <p class="form-hint">Für Relais-Module die bei LOW schalten</p>
+        <p class="form-hint">Die meisten Relais-Module schalten bei LOW (aktiviert daher standardmäßig für Pumpe/Relais). Nur deaktivieren, wenn dein Modul bei HIGH schaltet (Active-High).</p>
       </div>
     </div>
 

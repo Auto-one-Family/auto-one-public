@@ -424,9 +424,14 @@ export function inferFallbackSeverity(eventType: string, data: Record<string, un
   }
 
   if (eventType === 'system_event') {
-    const nestedType = String(data.event_type || '').toLowerCase()
+    // Server broadcasts the sub-type as `event`; documented contract: `event_type`.
+    const nestedType = String(data.event ?? data.event_type ?? '').toLowerCase()
+    if (nestedType === 'mqtt_disconnected') return 'warning'
     if (nestedType.includes('error') || nestedType.includes('fail')) return 'error'
     if (nestedType.includes('warn')) return 'warning'
+    // database_restore_status carries its outcome in `status`.
+    const status = String(data.status ?? '').toLowerCase()
+    if (status === 'failed') return 'error'
     return 'info'
   }
 

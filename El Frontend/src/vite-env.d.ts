@@ -6,6 +6,18 @@ declare module '*.vue' {
   export default component
 }
 
+/**
+ * chartjs-plugin-crosshair (AUT-912) ships no type declarations.
+ * Minimal shim: it default-exports a Chart.js Plugin. Per-chart options are
+ * provided untyped via `options.plugins.crosshair` (chart options are cast to
+ * `any` at render time in MultiSensorChart.vue).
+ */
+declare module 'chartjs-plugin-crosshair' {
+  import type { Plugin } from 'chart.js'
+  const CrosshairPlugin: Plugin
+  export default CrosshairPlugin
+}
+
 interface ImportMetaEnv {
   readonly VITE_API_URL: string
   readonly VITE_LOG_LEVEL: 'error' | 'warn' | 'info' | 'debug'

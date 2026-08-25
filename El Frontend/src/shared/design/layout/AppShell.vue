@@ -6,21 +6,52 @@
  * and scrollable content area. All dimensions driven by design tokens.
  */
 
-import { ref, onMounted, onUnmounted } from 'vue'
-import { RouterView, useRouter } from 'vue-router'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { RouterView, useRouter, useRoute } from 'vue-router'
 import { Menu } from 'lucide-vue-next'
 import AppSidebar from './Sidebar.vue'
 import QuickActionBall from '@/components/quick-action/QuickActionBall.vue'
+import AddWidgetDialog from '@/components/monitor/AddWidgetDialog.vue'
 import PendingDevicesPanel from '@/components/esp/PendingDevicesPanel.vue'
+import EmergencyStopButton from '@/components/safety/EmergencyStopButton.vue'
 import { useUiStore } from '@/shared/stores'
 import { useDashboardStore } from '@/shared/stores/dashboard.store'
+import { useQuickActionStore } from '@/shared/stores/quickAction.store'
 import { useKeyboardShortcuts } from '@/composables'
 import { useEdgeSwipe } from '@/composables/useSwipeNavigation'
 import type { ESPDevice } from '@/api/esp'
 
 const uiStore = useUiStore()
 const dashStore = useDashboardStore()
+const quickActionStore = useQuickActionStore()
 const router = useRouter()
+
+/**
+ * AUT-901: route-aware FAB mode. The single global QuickActionBall uses
+ * 'monitor' (click-to-add widget catalog) in Monitor + Dashboards and 'editor'
+ * elsewhere (preserves the <768px hide; the editor uses its own in-view
+ * catalog). currentView is maintained by useQuickActions (resolveViewContext).
+ */
+const fabMode = computed<'editor' | 'monitor'>(() =>
+  quickActionStore.currentView === 'monitor' || quickActionStore.currentView === 'dashboards'
+    ? 'monitor'
+    : 'editor',
+)
+
+// AUT-901: the single global FAB lives here, so its widget-selected event is
+// handled here. Click-to-add via AddWidgetDialog works in Monitor + Dashboards.
+// Scope grenze: real FAB drag onto Zone/Subzone drop-zones + layout persistence
+// is deferred to AUT-264; the shared useEntityDragDrop mechanic is AUT-268 (not
+// implemented yet, Backlog). Default zone is taken best-effort from the route
+// (monitor-zone routes); otherwise the user picks a zone inside the dialog.
+const route = useRoute()
+const showAddWidgetDialog = ref(false)
+const addWidgetDefaultType = ref<string | undefined>(undefined)
+
+function handleFabWidgetSelected(widgetType: string): void {
+  addWidgetDefaultType.value = widgetType
+  showAddWidgetDialog.value = true
+}
 
 function handlePendingPanelOpenEspConfig(device: ESPDevice): void {
   dashStore.showPendingPanel = false
@@ -117,8 +148,23 @@ onUnmounted(() => {
       </main>
     </div>
 
-    <!-- Quick Action Ball (FAB) — global, bottom-right -->
-    <QuickActionBall />
+    <!-- AUT-1521: global Not-Aus — eine RAM-Kette, nicht nur /sensors -->
+    <div class="shell__safety">
+      <EmergencyStopButton />
+    </div>
+
+    <!-- Quick Action Ball (FAB) — global, bottom-right; route-aware mode (AUT-901) -->
+    <QuickActionBall :mode="fabMode" @widget-selected="handleFabWidgetSelected" />
+
+    <!-- Add Widget Dialog — global, driven by the FAB widget catalog (Monitor + Dashboards, AUT-901) -->
+    <AddWidgetDialog
+      :open="showAddWidgetDialog"
+      :default-zone-id="(route.params.zoneId as string) || undefined"
+      :default-widget-type="addWidgetDefaultType"
+      :tile-context="false"
+      @update:open="showAddWidgetDialog = $event"
+      @close="showAddWidgetDialog = false"
+    />
 
     <!-- Geraete / Wartend — global, funktioniert auf allen Routen -->
     <PendingDevicesPanel
@@ -186,6 +232,21 @@ onUnmounted(() => {
   pointer-events: none;
 }
 
+/* AUT-1521: one global E-Stop above overlays (tokens --z-safety) */
+.shell__safety {
+  position: fixed;
+  top: 6px;
+  right: var(--space-3);
+  z-index: var(--z-safety);
+}
+
+@media (min-width: 768px) {
+  .shell__safety {
+    top: var(--space-4);
+    right: var(--space-4);
+  }
+}
+
 /* Mobile overlay with blur */
 .shell__overlay {
   position: fixed;
@@ -219,6 +280,10 @@ onUnmounted(() => {
   padding: var(--space-4) var(--space-4);
   overflow-y: auto;
   min-height: 0;
+  /* Touch: native "grab & pull" scrolling (Pi 7" Touch-Kiosk) */
+  touch-action: pan-y;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
 }
 
 @media (min-width: 768px) {

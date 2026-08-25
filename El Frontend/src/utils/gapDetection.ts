@@ -205,3 +205,27 @@ export function formatTimeShort(date: Date): string {
   const mm = String(date.getMinutes()).padStart(2, '0')
   return `${hh}:${mm}`
 }
+
+/**
+ * AUT-837 E1: L3 x-axis max is the last sample timestamp, never wall clock.
+ */
+export function lastFiniteSampleX(
+  datasets: Array<{ data?: Array<{ x?: number | string | Date | null }> }>,
+): number | null {
+  let max = Number.NEGATIVE_INFINITY
+  for (const dataset of datasets) {
+    for (const point of dataset.data ?? []) {
+      const raw = point?.x
+      const x =
+        typeof raw === 'number'
+          ? raw
+          : raw instanceof Date
+            ? raw.getTime()
+            : typeof raw === 'string'
+              ? new Date(raw).getTime()
+              : Number.NaN
+      if (Number.isFinite(x) && x > max) max = x
+    }
+  }
+  return Number.isFinite(max) ? max : null
+}

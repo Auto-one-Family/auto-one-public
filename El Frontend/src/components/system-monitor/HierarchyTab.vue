@@ -13,6 +13,7 @@ import {
 } from 'lucide-vue-next'
 import api from '@/api/index'
 import BaseSkeleton from '@/shared/design/primitives/BaseSkeleton.vue'
+import { displayGrowthPhase } from '@/utils/growthPhaseVocabulary'
 
 interface HierarchyDevice {
   device_id: string
@@ -172,7 +173,7 @@ onMounted(fetchHierarchy)
             {{ zone.zone_name || zone.zone_id }}
           </span>
           <span v-if="zone.context?.growth_phase" class="tree-node__phase">
-            {{ zone.context.growth_phase.replace(/_/g, ' ') }}
+            {{ displayGrowthPhase(zone.context.growth_phase) }}
           </span>
           <span v-if="zone.context?.variety" class="tree-node__variety">
             {{ zone.context.variety }}

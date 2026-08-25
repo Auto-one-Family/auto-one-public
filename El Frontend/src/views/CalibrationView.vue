@@ -74,7 +74,7 @@ onBeforeRouteLeave(async () => {
 <style scoped>
 .calibration-view {
   padding: 1.5rem;
-  max-width: 720px;
+  max-width: 960px;
   margin: 0 auto;
 }
 </style>

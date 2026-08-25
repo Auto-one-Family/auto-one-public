@@ -230,6 +230,9 @@ async function handleZoneContextChange(event: Event): Promise<void> {
 
 function formatValue(value: number | null | undefined): string {
   if (value === null || value === undefined) return '--'
+  if (props.sensor.sensor_type.toLowerCase() === 'liquid_level') {
+    return value >= 1 ? 'Erkannt' : 'Kein Kontakt'
+  }
   const dec = getSensorConfig(props.sensor.sensor_type)?.decimals ?? 2
   return new Intl.NumberFormat('de-DE', {
     minimumFractionDigits: dec,
@@ -266,6 +269,27 @@ const atcReadFailed = computed<boolean>(() => {
   const meta = props.sensor.metadata
   if (!meta || typeof meta !== 'object') return false
   return meta.temp_source === 'read_failed' || meta.temp_source === 'temp_read_failed'
+})
+
+/** Mirrors SensorConfigPanel.calibrationStatusSummary / DeviceStatusPanel.calibrationStatusLabel — same key chain, independent read. AUT-1544 */
+const calibrationStatusSummary = computed(() => {
+  const data = props.sensor.calibration
+  if (!data || typeof data !== 'object') {
+    return { calibrated: false, label: 'Nicht kalibriert' }
+  }
+  const derived = (data.derived as Record<string, unknown> | undefined) ?? data
+  const calibratedAt = (data.metadata as Record<string, unknown> | undefined)?.calibrated_at
+    ?? data.calibrated_at
+    ?? derived.calibrated_at
+  if (calibratedAt || derived.cell_factor != null) {
+    return {
+      calibrated: true,
+      label: calibratedAt
+        ? `Kalibriert ${formatRelativeTime(String(calibratedAt))}`
+        : 'Kalibriert',
+    }
+  }
+  return { calibrated: false, label: 'Nicht kalibriert' }
 })
 
 const stabilityBadge = computed<{
@@ -465,11 +489,8 @@ function handleClick() {
         </span>
         <div class="sensor-card__quality">
           <span v-if="sourceBadge.text !== 'Real'" :class="['sensor-card__source-badge', sourceBadge.cls]">{{ sourceBadge.text }}</span>
-          <span v-if="dataMode !== 'Live'" :class="['sensor-card__mode-badge', `sensor-card__mode-badge--${dataMode.toLowerCase()}`]">
-            {{ dataMode }}
-          </span>
           <StatusBadge
-            v-if="effectiveQualityStatus !== 'good'"
+            v-if="effectiveQualityStatus !== 'good' && effectiveQualityStatus !== 'stale'"
             :level="sensorStatusToLevel(effectiveQualityStatus)"
             :label-override="qualityLabel || undefined"
             :show-icon="false"
@@ -543,9 +564,6 @@ function handleClick() {
           <span v-else-if="hasNoData" class="sensor-card__badge sensor-card__badge--no-data">
             <Clock class="w-3 h-3" /> Keine Daten
           </span>
-          <span v-else-if="isStale" class="sensor-card__badge sensor-card__badge--stale">
-            <Clock class="w-3 h-3" /> Zuletzt: {{ formatRelativeTime(sensor.last_read) }}
-          </span>
           <span v-else-if="isTimestampUnknown" class="sensor-card__badge sensor-card__badge--unknown" title="Zeitpunkt des Messwerts unbekannt">
             <Clock class="w-3 h-3" /> Zuletzt: unbekannt
           </span>
@@ -590,6 +608,17 @@ function handleClick() {
             <span v-if="stabilityBadge.detail" class="sensor-card__badge-detail">
               {{ stabilityBadge.detail }}
             </span>
+          </span>
+          <span
+            :class="[
+              'sensor-card__badge',
+              calibrationStatusSummary.calibrated
+                ? 'sensor-card__badge--calibration'
+                : 'sensor-card__badge--calibration-missing',
+            ]"
+            :title="calibrationStatusSummary.label"
+          >
+            {{ calibrationStatusSummary.label }}
           </span>
         </div>
       </div>
@@ -740,9 +769,13 @@ function handleClick() {
   font-weight: 500;
   flex: 1;
   min-width: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  white-space: normal;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.25;
 }
 
 .sensor-card__quality {
@@ -840,8 +873,9 @@ function handleClick() {
 }
 
 .sensor-card__unit {
-  font-size: var(--text-sm);
-  color: var(--color-text-muted);
+  font-size: var(--text-base);
+  font-weight: 500;
+  color: var(--color-text-secondary);
 }
 
 .sensor-card__trend {
@@ -1001,6 +1035,18 @@ function handleClick() {
   color: var(--color-warning);
   background: color-mix(in srgb, var(--color-warning) 12%, transparent);
   border: 1px solid color-mix(in srgb, var(--color-warning) 35%, transparent);
+}
+
+.sensor-card__badge--calibration {
+  color: var(--color-text-secondary);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--glass-border);
+}
+
+.sensor-card__badge--calibration-missing {
+  color: var(--color-warning);
+  background: color-mix(in srgb, var(--color-warning) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-warning) 25%, transparent);
 }
 
 .sensor-card__badge-detail {

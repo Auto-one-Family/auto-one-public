@@ -13,6 +13,7 @@ import { ref, computed } from 'vue'
 import { useDragStateStore } from '@/shared/stores/dragState.store'
 import type { DashboardWidgetDragPayload } from '@/shared/stores/dragState.store'
 import { useQuickActionStore } from '@/shared/stores/quickAction.store'
+import { B2_CATALOG_WIDGET_TYPE_META } from '@/composables/useDashboardWidgets'
 // ── Types ──────────────────────────────────────────────────────────────────────
 
 export interface WidgetDragItem {
@@ -27,18 +28,25 @@ export interface WidgetDragItem {
   minH: number
 }
 
-/** Static widget items derived from WIDGET_TYPE_META (duplicated to avoid setup-context dependency) */
-const WIDGET_DRAG_ITEMS: WidgetDragItem[] = [
-  { type: 'line-chart', label: 'Linien-Chart', description: 'Live-Verlauf eines Sensors', iconName: 'BarChart3', category: 'Sensoren', w: 6, h: 4, minW: 4, minH: 3 },
-  { type: 'gauge', label: 'Gauge-Chart', description: 'Kreisanzeige fuer Messwerte', iconName: 'Gauge', category: 'Sensoren', w: 3, h: 3, minW: 2, minH: 3 },
-  { type: 'sensor-card', label: 'Sensor-Karte', description: 'Kompakte Karte mit Wert', iconName: 'Activity', category: 'Sensoren', w: 3, h: 2, minW: 2, minH: 2 },
-  { type: 'historical', label: 'Historische Zeitreihe', description: 'Zeitreihe mit API-Daten', iconName: 'BarChart3', category: 'Sensoren', w: 6, h: 4, minW: 6, minH: 4 },
-  { type: 'multi-sensor', label: 'Multi-Sensor-Chart', description: 'Mehrere Sensoren vergleichen', iconName: 'BarChart3', category: 'Sensoren', w: 8, h: 5, minW: 6, minH: 4 },
-  { type: 'actuator-card', label: 'Aktor-Status', description: 'Aktor-Status und Steuerung', iconName: 'Zap', category: 'Aktoren', w: 3, h: 2, minW: 2, minH: 2 },
-  { type: 'actuator-runtime', label: 'Aktor-Laufzeit', description: 'Laufzeitstatistik', iconName: 'BarChart3', category: 'Aktoren', w: 4, h: 3, minW: 3, minH: 3 },
-  { type: 'esp-health', label: 'ESP-Health', description: 'Health-Metriken eines ESP32', iconName: 'Cpu', category: 'System', w: 6, h: 3, minW: 4, minH: 3 },
-  { type: 'alarm-list', label: 'Alarm-Liste', description: 'Aktive und vergangene Alarme', iconName: 'Bell', category: 'System', w: 4, h: 4, minW: 4, minH: 4 },
-]
+/**
+ * Serializable widget items derived from the single source WIDGET_TYPE_META
+ * (AUT-901). No hand-maintained copy: adding/removing a type in WIDGET_TYPE_META
+ * keeps the FAB catalog in sync by construction (the former WIDGET_DRAG_ITEMS
+ * hand-copy drifted — it still listed line-chart/sensor-card after AUT-900 and
+ * lacked the 5 newer types). Only the serializable string `iconName` is carried
+ * here; the Component lookup happens at render time via WIDGET_ICON_MAP.
+ */
+const WIDGET_DRAG_ITEMS: WidgetDragItem[] = B2_CATALOG_WIDGET_TYPE_META.map((meta) => ({
+  type: meta.type,
+  label: meta.label,
+  description: meta.description,
+  iconName: meta.iconName,
+  category: meta.category,
+  w: meta.w,
+  h: meta.h,
+  minW: meta.minW,
+  minH: meta.minH,
+}))
 
 // ── Composable ─────────────────────────────────────────────────────────────────
 

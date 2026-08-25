@@ -8,7 +8,7 @@
  * keeps an in-memory map of rule health payloads. Widgets read from this
  * store reactively (no direct REST calls in widgets).
  *
- * @see .claude/reference/api/WEBSOCKET_EVENTS.md
+ * @see websocket event types in src/types
  */
 
 import { defineStore } from 'pinia'

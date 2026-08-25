@@ -34,6 +34,32 @@ export interface SensorIdentifier {
   sensor_type?: string
 }
 
+export interface SparklineLiveSensor {
+  gpio: number
+  sensor_type?: string
+  raw_value: number
+  last_read?: string | null
+  last_reading_at?: string | null
+}
+
+/**
+ * AUT-837 E1: sparkline / live-tail X is the sample timestamp, never Date.now.
+ * last_event_at is receive-time and is not a sample.
+ */
+export function resolveSensorSampleTimestampMs(
+  sensor: {
+    last_read?: string | Date | null
+    last_reading_at?: string | Date | null
+  },
+): number | null {
+  for (const raw of [sensor.last_read, sensor.last_reading_at]) {
+    if (raw == null || raw === '') continue
+    const ms = raw instanceof Date ? raw.getTime() : new Date(raw).getTime()
+    if (Number.isFinite(ms)) return ms
+  }
+  return null
+}
+
 export function useSparklineCache(maxPoints: number = DEFAULT_MAX_POINTS) {
   const espStore = useEspStore()
 
@@ -142,17 +168,20 @@ export function useSparklineCache(maxPoints: number = DEFAULT_MAX_POINTS) {
     () => {
       for (const device of espStore.devices) {
         const deviceId = espStore.getDeviceId(device)
-        const sensors = (device.sensors as { gpio: number; sensor_type?: string; raw_value: number }[]) || []
+        const sensors = (device.sensors as SparklineLiveSensor[] | undefined) || []
         for (const s of sensors) {
           if (typeof s.raw_value !== 'number') continue
+          const sampleMs = resolveSensorSampleTimestampMs(s)
+          if (sampleMs == null) continue
           const key = getSensorKey(deviceId, s.gpio, s.sensor_type)
           const existing = sparklineCache.value.get(key) || []
           const lastPoint = existing[existing.length - 1]
-          const now = new Date()
-          // Only add if value changed or >5s elapsed
+          const lastMs = lastPoint ? new Date(lastPoint.timestamp).getTime() : Number.NaN
+          // Same or older sample timestamp: tab standby / store refresh must not append.
+          if (lastPoint && Number.isFinite(lastMs) && sampleMs <= lastMs) continue
           if (!lastPoint || s.raw_value !== lastPoint.value ||
-              (now.getTime() - new Date(lastPoint.timestamp).getTime()) > DEDUP_INTERVAL_MS) {
-            const updated = [...existing, { timestamp: now, value: s.raw_value }]
+              sampleMs - lastMs > DEDUP_INTERVAL_MS) {
+            const updated = [...existing, { timestamp: new Date(sampleMs), value: s.raw_value }]
             if (updated.length > maxPoints) updated.shift()
             sparklineCache.value.set(key, updated)
           }

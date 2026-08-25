@@ -44,6 +44,7 @@ export function getNodeColumn(nodeType: string | undefined | null): RuleNodeColu
     case 'hysteresis':
     case 'diagnostics_status':
     case 'sensor_diff':
+    case 'not_running':
       return 'trigger'
 
     // Condition column — "Wenn auch"

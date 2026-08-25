@@ -18,6 +18,7 @@ import { computed, ref } from 'vue'
 import { Thermometer, Droplet, Zap, Gauge, Wind, Sun, Droplets } from 'lucide-vue-next'
 import {
   SENSOR_TYPE_CONFIG,
+  getSensorConfig,
   getSensorUnit,
   getSensorLabel,
   getMultiValueDeviceConfig,
@@ -39,8 +40,8 @@ interface Props {
   sensorType: string
   /** Sensor name (optional) */
   name?: string | null
-  /** Current sensor value (single-value fallback) */
-  value: number
+  /** Current sensor value (single-value fallback); null during warming_up */
+  value: number | null
   /** Quality level (single-value fallback) */
   quality: QualityLevel
   /** Unit (optional, will be derived from sensor type if not provided) */
@@ -100,7 +101,9 @@ const log = createLogger('SensorSatellite')
 const sensorConfig = computed(() => SENSOR_TYPE_CONFIG[props.sensorType] || {
   label: getSensorLabel(props.sensorType),
   unit: props.unit || getSensorUnit(props.sensorType) || '',
-  decimals: 2,
+  // AUT-1010: resolve decimals from the registry (case-insensitive) instead of a
+  // hardcoded 2 — a lowercase 'ec' single sensor needs EC's 0 decimals.
+  decimals: getSensorConfig(props.sensorType)?.decimals ?? 2,
   icon: 'Gauge',
 })
 
@@ -264,6 +267,20 @@ const normalizedMultiValueEntries = computed((): Array<[string, MultiValueEntry]
 const formattedValues = computed((): FormattedValue[] => {
   // Single-value mode
   if (!props.isMultiValue || normalizedMultiValueEntries.value.length === 0) {
+    // AUT-1024: liquid_level shows a text status instead of a bare 0/1,
+    // mirroring SensorCard.vue's formatValue().
+    if (props.sensorType.toLowerCase() === 'liquid_level') {
+      return [{
+        key: props.sensorType,
+        value: props.value === null || props.value === undefined
+          ? '--'
+          : props.value >= 1 ? 'Erkannt' : 'Kein Kontakt',
+        unit: '',
+        label: props.name || sensorConfig.value.label,
+        quality: props.quality,
+        order: 0
+      }]
+    }
     return [{
       key: props.sensorType,
       value: formatNumber(props.value, sensorConfig.value.decimals),
@@ -278,7 +295,9 @@ const formattedValues = computed((): FormattedValue[] => {
   return normalizedMultiValueEntries.value
     .map(([sensorType, entry]) => {
       const valueConfig = getValueConfigForSensorType(sensorType)
-      const typeConfig = SENSOR_TYPE_CONFIG[sensorType]
+      // AUT-1010: case-insensitive lookup so lowercase types ('ph', 'ec') get their
+      // registry decimals (pH=2, EC=0) instead of the generic ?? 1 fallback.
+      const typeConfig = getSensorConfig(sensorType)
 
       return {
         key: sensorType,

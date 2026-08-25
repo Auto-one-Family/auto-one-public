@@ -102,7 +102,7 @@ export function useFertigationKPIs(options: FertigationKPIOptions) {
   // State
   // -------------------------------------------------------------------------
 
-  const kpi = ref<FertigationKPI>({
+  const emptyKpi = (): FertigationKPI => ({
     inflowValue: null,
     runoffValue: null,
     difference: null,
@@ -114,6 +114,12 @@ export function useFertigationKPIs(options: FertigationKPIOptions) {
     stalenessSeconds: null,
     dataQuality: 'error',
   })
+
+  const kpi = ref<FertigationKPI>(emptyKpi())
+
+  function isPairConfigured(): boolean {
+    return Boolean(inflowSensorId.value && runoffSensorId.value)
+  }
 
   const isLoading = ref(false)
   const error = ref<string | null>(null)
@@ -195,8 +201,10 @@ export function useFertigationKPIs(options: FertigationKPIOptions) {
   // -------------------------------------------------------------------------
 
   async function loadInitialData(): Promise<void> {
-    if (!inflowSensorId.value || !runoffSensorId.value) {
+    if (!isPairConfigured()) {
       error.value = 'Sensor IDs nicht konfiguriert'
+      recentDifferences.value = []
+      kpi.value = emptyKpi()
       return
     }
 
@@ -303,6 +311,7 @@ export function useFertigationKPIs(options: FertigationKPIOptions) {
     // Listen for sensor_data events for inflow sensor
     wsUnsubscribers.push(
       websocketService.on('sensor_data', (msg: WebSocketMessage) => {
+        if (!isPairConfigured()) return
         const data = msg.data
         if (data && data.config_id === inflowSensorId.value) {
           // Trigger partial update (only update inflow side)
@@ -365,6 +374,7 @@ export function useFertigationKPIs(options: FertigationKPIOptions) {
     // Listen for sensor_data events for runoff sensor
     wsUnsubscribers.push(
       websocketService.on('sensor_data', (msg: WebSocketMessage) => {
+        if (!isPairConfigured()) return
         const data = msg.data
         if (data && data.config_id === runoffSensorId.value) {
           // Trigger partial update (only update runoff side)

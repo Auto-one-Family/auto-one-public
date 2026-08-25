@@ -8,14 +8,20 @@
  *   Zone 3 (ERWEITERT): Statistics options — accordion, collapsed by default
  */
 import { ref, computed, watch } from 'vue'
-import { ChevronRight, Download, Plus, X } from 'lucide-vue-next'
+import { ChevronRight, Download, Plus, Trash2, X } from 'lucide-vue-next'
 import { useEspStore } from '@/stores/esp'
 import { SlideOver } from '@/shared/design/primitives'
-import { SENSOR_TYPE_CONFIG, getSensorTypeOptions } from '@/utils/sensorDefaults'
+import { SENSOR_TYPE_CONFIG, getSensorTypeOptions, getSensorDisplayName, formatSensorType } from '@/utils/sensorDefaults'
 import { CHART_COLORS } from '@/utils/chartColors'
 import { useSensorOptions } from '@/composables/useSensorOptions'
+import { parseSensorId } from '@/composables/useSensorId'
 import { sensorsApi } from '@/api/sensors'
-import type { MockActuator } from '@/types'
+import type { MockActuator, MockSensor } from '@/types'
+import {
+  collectStoreSensors,
+  isConfigId,
+  resolveStoredSensorConfigId,
+} from '@/utils/sensorConfigLookup'
 import { getWidgetCapabilities } from '@/types/widgetRegistry'
 
 interface Props {
@@ -31,7 +37,11 @@ const props = defineProps<Props>()
 const emit = defineEmits<{
   close: []
   'update:config': [config: Record<string, any>]
+  remove: []
 }>()
+
+/** Sensor-Kachel: Entfernen nur hier (kein Delete-Icon auf der Kachel) */
+const showRemoveAction = computed(() => props.widgetType === 'sensor-tile')
 
 const espStore = useEspStore()
 
@@ -46,6 +56,17 @@ watch(() => props.config, (cfg) => {
 // `computed(() => [...].includes(widgetType))` with one declarative lookup.
 // New widget types add a row to WIDGET_REGISTRY in src/types/widgetRegistry.ts.
 const caps = computed(() => getWidgetCapabilities(props.widgetType))
+
+// AUT-1107: Display-mode picker (numeric/gauge/sparkline/historic) — sensor-tile only.
+// The four modes and their German labels mirror SensorTile.vue MODE_OPTIONS.
+const hasDisplayModePicker = computed(() => caps.value.hasDisplayModePicker)
+
+const SENSOR_TILE_DISPLAY_MODES = [
+  { value: 'numeric', label: 'Zahl' },
+  { value: 'gauge', label: 'Gauge' },
+  { value: 'sparkline', label: 'Live-Kurve' },
+  { value: 'historic', label: 'Verlauf' },
+] as const
 
 const hasSensorField = computed(() => caps.value.hasSensorPicker)
 const hasActuatorField = computed(() => caps.value.hasActuatorPicker)
@@ -180,6 +201,73 @@ function findSensorType(sensorId: string): string | null {
   return null
 }
 
+/** Upgrade legacy 2-part sensorId (esp:gpio) to 3-part when unambiguous. */
+function normalizeLegacySensorId(sensorId: string): string {
+  const parsed = parseSensorId(sensorId)
+  if (!parsed.isValid || parsed.sensorType) return sensorId
+  const device = espStore.devices.find(d => espStore.getDeviceId(d) === parsed.espId)
+  if (!device) return sensorId
+  const matches = ((device.sensors as MockSensor[]) || []).filter(s => s.gpio === parsed.gpio)
+  if (matches.length === 1) {
+    return `${parsed.espId}:${parsed.gpio}:${matches[0].sensor_type}`
+  }
+  return sensorId
+}
+
+const sensorOptionValues = computed(() => {
+  const values = new Set<string>()
+  for (const group of groupedSensorOptions.value) {
+    for (const subgroup of group.subgroups) {
+      for (const opt of subgroup.options) values.add(opt.value)
+    }
+  }
+  return values
+})
+
+const resolvedSensorSelectId = computed(() => {
+  const raw = localConfig.value.sensorId
+  if (typeof raw !== 'string' || !raw) return ''
+  const normalized = normalizeLegacySensorId(raw)
+  if (normalized !== raw && sensorOptionValues.value.has(normalized)) {
+    return normalized
+  }
+  return raw
+})
+
+/** Shown when the configured sensor is not in the current option list (zone filter / timing). */
+const orphanSensorOption = computed(() => {
+  const id = resolvedSensorSelectId.value
+  if (!id || sensorOptionValues.value.has(id)) return null
+  const parsed = parseSensorId(id)
+  if (!parsed.isValid || !parsed.espId || parsed.gpio == null) {
+    return { value: id, label: id }
+  }
+  const device = espStore.devices.find(d => espStore.getDeviceId(d) === parsed.espId)
+  const sensor = device
+    ? ((device.sensors as MockSensor[]) || []).find(
+        s => s.gpio === parsed.gpio && (!parsed.sensorType || s.sensor_type === parsed.sensorType)
+      )
+    : null
+  const espName = device?.name?.trim() || parsed.espId
+  const sensorLabel = sensor
+    ? getSensorDisplayName({ sensor_type: sensor.sensor_type || parsed.sensorType || '', name: sensor.name })
+    : (parsed.sensorType ? formatSensorType(parsed.sensorType) : `GPIO ${parsed.gpio}`)
+  return { value: id, label: `${espName} · ${sensorLabel}` }
+})
+
+watch(
+  () => [localConfig.value.sensorId, sensorOptionValues.value.size] as const,
+  () => {
+    const raw = localConfig.value.sensorId
+    if (typeof raw !== 'string' || !raw) return
+    const normalized = normalizeLegacySensorId(raw)
+    if (normalized !== raw && sensorOptionValues.value.has(normalized)) {
+      localConfig.value = { ...localConfig.value, sensorId: normalized }
+    }
+  },
+  { immediate: true },
+)
+
 // Current sensor type config for Y-range hints
 const sensorTypeConfig = computed(() => {
   if (!localConfig.value.sensorId) return null
@@ -192,6 +280,23 @@ function updateField(field: string, value: any) {
   localConfig.value = { ...localConfig.value, [field]: value }
   emit('update:config', localConfig.value)
 }
+
+function normalizeFertigationConfigId(field: 'inflowSensorId' | 'runoffSensorId'): void {
+  const raw = localConfig.value[field]
+  if (typeof raw !== 'string' || !raw || isConfigId(raw)) return
+  const resolved = resolveStoredSensorConfigId(raw, collectStoreSensors(espStore.devices))
+  if (resolved && resolved !== raw) updateField(field, resolved)
+}
+
+watch(
+  () => [isFertigationPair.value, localConfig.value.inflowSensorId, localConfig.value.runoffSensorId, espStore.devices.length] as const,
+  ([fertigation]) => {
+    if (!fertigation) return
+    normalizeFertigationConfigId('inflowSensorId')
+    normalizeFertigationConfigId('runoffSensorId')
+  },
+  { immediate: true },
+)
 
 function isAutoGeneratedTitle(title: string | undefined | null): boolean {
   if (!title) return true
@@ -241,7 +346,15 @@ function findSensorConfigId(sensorId: string): string | undefined {
       if (opt?.configId) return opt.configId
     }
   }
-  return undefined
+  const parsed = parseSensorId(sensorId)
+  if (!parsed.isValid || !parsed.espId || parsed.gpio == null) return undefined
+  const device = espStore.devices.find(d => espStore.getDeviceId(d) === parsed.espId)
+  const sensor = device
+    ? ((device.sensors as MockSensor[]) || []).find(
+        s => s.gpio === parsed.gpio && (!parsed.sensorType || s.sensor_type === parsed.sensorType)
+      )
+    : null
+  return sensor?.config_id ?? (sensor as { id?: string } | undefined)?.id
 }
 
 const isLoadingThresholds = ref(false)
@@ -254,67 +367,103 @@ function showSyncMessage(msg: string) {
   syncMessageTimer = setTimeout(() => { thresholdSyncMessage.value = null }, 3000)
 }
 
-// AUT-246: Cache for base sensor thresholds (SensorConfig.thresholds — SSoT for alerts)
-// Used for divergence detection between widget visual lines and sensor base thresholds.
-interface SensorBaseThresholds {
-  warning_min: number | null
-  warning_max: number | null
-  alarm_min: number | null
-  alarm_max: number | null
+// AUT-246 / AUT-911/912: Effective alert threshold for the selected sensor.
+// "Effective" = per-sensor override (alert_config.custom_thresholds) when any
+// value is set, otherwise the sensor base thresholds (SensorConfig.thresholds).
+// This mirrors the server's AlertSuppressionService.get_effective_thresholds
+// (whole-config fallback) — i.e. the threshold that actually triggers alerts.
+// Drives (a) the divergence warning and (b) the one-shot "übernehmen" button.
+interface EffectiveThresholds {
+  warnLow: number | null
+  warnHigh: number | null
+  alarmLow: number | null
+  alarmHigh: number | null
+  source: 'override' | 'base'
 }
-const sensorBaseThresholds = ref<SensorBaseThresholds | null>(null)
-const sensorBaseLoadedFor = ref<string | null>(null)
+const sensorEffectiveThresholds = ref<EffectiveThresholds | null>(null)
+const effectiveLoadedFor = ref<string | null>(null)
 
-async function fetchSensorBaseThresholds(sensorId: string): Promise<void> {
-  if (sensorBaseLoadedFor.value === sensorId) return
+async function fetchEffectiveThresholds(sensorId: string): Promise<void> {
+  if (effectiveLoadedFor.value === sensorId) return
   const configId = findSensorConfigId(sensorId)
   if (!configId) {
-    sensorBaseThresholds.value = null
-    sensorBaseLoadedFor.value = sensorId
+    sensorEffectiveThresholds.value = null
+    effectiveLoadedFor.value = sensorId
     return
   }
+  isLoadingThresholds.value = true
   try {
-    const cfg = await sensorsApi.getByConfigId(configId)
-    sensorBaseThresholds.value = {
-      warning_min: cfg?.warning_min ?? null,
-      warning_max: cfg?.warning_max ?? null,
-      alarm_min: cfg?.threshold_min ?? null,
-      alarm_max: cfg?.threshold_max ?? null,
-    }
+    // Base (warning_min/max + threshold_min/max) and override (custom_thresholds)
+    // resolved together so the effective set matches server alert evaluation.
+    const [base, alert] = await Promise.all([
+      sensorsApi.getByConfigId(configId),
+      sensorsApi.getAlertConfig(configId),
+    ])
+    const custom = (alert?.alert_config as Record<string, any> | undefined)?.custom_thresholds as
+      | { warning_min?: number | null; warning_max?: number | null; critical_min?: number | null; critical_max?: number | null }
+      | undefined
+    const hasOverride = !!custom && (
+      custom.warning_min != null || custom.warning_max != null
+      || custom.critical_min != null || custom.critical_max != null
+    )
+    sensorEffectiveThresholds.value = hasOverride
+      ? {
+          warnLow: custom!.warning_min ?? null,
+          warnHigh: custom!.warning_max ?? null,
+          alarmLow: custom!.critical_min ?? null,
+          alarmHigh: custom!.critical_max ?? null,
+          source: 'override',
+        }
+      : {
+          warnLow: base?.warning_min ?? null,
+          warnHigh: base?.warning_max ?? null,
+          alarmLow: base?.threshold_min ?? null,
+          alarmHigh: base?.threshold_max ?? null,
+          source: 'base',
+        }
   } catch {
-    sensorBaseThresholds.value = null
+    sensorEffectiveThresholds.value = null
   } finally {
-    sensorBaseLoadedFor.value = sensorId
+    effectiveLoadedFor.value = sensorId
+    isLoadingThresholds.value = false
   }
 }
 
 watch(
   () => localConfig.value.sensorId,
-  (sId) => {
+  async (sId) => {
     if (typeof sId === 'string' && sId) {
-      void fetchSensorBaseThresholds(sId)
+      await fetchEffectiveThresholds(normalizeLegacySensorId(sId))
+      autoFillIfEmpty()
     } else {
-      sensorBaseThresholds.value = null
-      sensorBaseLoadedFor.value = null
+      sensorEffectiveThresholds.value = null
+      effectiveLoadedFor.value = null
     }
   },
   { immediate: true },
 )
 
-/**
- * AUT-246: True if any widget visual threshold differs from the sensor base threshold.
- * Used to display a yellow divergence warning so the operator knows alerts are
- * still triggered by the sensor base threshold, not the visible chart lines.
- */
+/** AUT-1054 TM-3: visible hint when the sync button stays disabled (no effective threshold loaded). */
+const thresholdSyncUnavailableHint = computed(() => {
+  if (!localConfig.value.showThresholds || !localConfig.value.sensorId) return null
+  if (isLoadingThresholds.value || sensorEffectiveThresholds.value) return null
+  if (effectiveLoadedFor.value !== normalizeLegacySensorId(localConfig.value.sensorId)) return null
+  const configId = findSensorConfigId(normalizeLegacySensorId(localConfig.value.sensorId))
+  if (!configId) {
+    return 'Sensor-Konfiguration (UUID) nicht gefunden — Alert-Schwellen können nicht geladen werden.'
+  }
+  return 'Keine Alert-Schwelle für diesen Sensor konfiguriert. Zuerst in den Sensor-Einstellungen setzen.'
+})
+
 const thresholdsDiverge = computed<boolean>(() => {
   if (!localConfig.value.showThresholds) return false
-  const base = sensorBaseThresholds.value
-  if (!base) return false
+  const eff = sensorEffectiveThresholds.value
+  if (!eff) return false
   const checks: Array<[number | null, number | null | undefined]> = [
-    [base.warning_min, localConfig.value.warnLow],
-    [base.warning_max, localConfig.value.warnHigh],
-    [base.alarm_min, localConfig.value.alarmLow],
-    [base.alarm_max, localConfig.value.alarmHigh],
+    [eff.warnLow, localConfig.value.warnLow],
+    [eff.warnHigh, localConfig.value.warnHigh],
+    [eff.alarmLow, localConfig.value.alarmLow],
+    [eff.alarmHigh, localConfig.value.alarmHigh],
   ]
   for (const [b, w] of checks) {
     const bVal = b == null ? null : Number(b)
@@ -327,73 +476,57 @@ const thresholdsDiverge = computed<boolean>(() => {
 })
 
 /**
- * AUT-246: Copy sensor base thresholds (SensorConfig.thresholds) into widget config.
- * One-shot click — no auto-sync. Operator can keep widget thresholds independent.
+ * AUT-246: Copy the sensor's effective alert threshold (override → base fallback)
+ * into the widget config. One-shot click — no auto-sync, widget lines stay editable.
  */
-function loadThresholdsFromSensorBase(): void {
-  const base = sensorBaseThresholds.value
-  if (!base) {
-    showSyncMessage('Sensor-Schwellwerte nicht geladen')
+function loadThresholdsFromEffective(): void {
+  const eff = sensorEffectiveThresholds.value
+  if (!eff) {
+    showSyncMessage('Alert-Schwelle nicht geladen')
     return
   }
-  if (
-    base.warning_min == null
-    && base.warning_max == null
-    && base.alarm_min == null
-    && base.alarm_max == null
-  ) {
-    showSyncMessage('Keine Sensor-Schwellwerte konfiguriert')
+  if (eff.warnLow == null && eff.warnHigh == null && eff.alarmLow == null && eff.alarmHigh == null) {
+    showSyncMessage('Keine Alert-Schwelle für diesen Sensor konfiguriert')
     return
   }
   const updates: Record<string, any> = { ...localConfig.value, showThresholds: true }
-  if (base.warning_min != null) updates.warnLow = base.warning_min
-  if (base.warning_max != null) updates.warnHigh = base.warning_max
-  if (base.alarm_min != null) updates.alarmLow = base.alarm_min
-  if (base.alarm_max != null) updates.alarmHigh = base.alarm_max
+  if (eff.warnLow != null) updates.warnLow = eff.warnLow
+  if (eff.warnHigh != null) updates.warnHigh = eff.warnHigh
+  if (eff.alarmLow != null) updates.alarmLow = eff.alarmLow
+  if (eff.alarmHigh != null) updates.alarmHigh = eff.alarmHigh
   localConfig.value = updates
   emit('update:config', localConfig.value)
-  showSyncMessage('Aus Sensor-Schwelle übernommen')
+  showSyncMessage(eff.source === 'override' ? 'Aus Alert-Override übernommen' : 'Aus Sensor-Schwelle übernommen')
 }
 
-async function loadThresholdsFromAlertConfig(): Promise<void> {
-  const sensorId = localConfig.value.sensorId
-  if (!sensorId) {
-    showSyncMessage('Kein Sensor ausgewählt')
-    return
-  }
-
-  const configId = findSensorConfigId(sensorId)
-  if (!configId) {
-    showSyncMessage('Sensor hat keine Config-ID')
-    return
-  }
-
-  isLoadingThresholds.value = true
-  try {
-    const response = await sensorsApi.getAlertConfig(configId)
-    const thresholds = (response.alert_config as Record<string, any>)?.custom_thresholds as
-      | { warning_min?: number | null; warning_max?: number | null; critical_min?: number | null; critical_max?: number | null }
-      | undefined
-
-    if (!thresholds || (thresholds.warning_min == null && thresholds.warning_max == null && thresholds.critical_min == null && thresholds.critical_max == null)) {
-      showSyncMessage('Keine Schwellwerte für diesen Sensor konfiguriert')
-      return
-    }
-
-    const updates: Record<string, any> = { ...localConfig.value, showThresholds: true }
-    if (thresholds.warning_min != null) updates.warnLow = thresholds.warning_min
-    if (thresholds.warning_max != null) updates.warnHigh = thresholds.warning_max
-    if (thresholds.critical_min != null) updates.alarmLow = thresholds.critical_min
-    if (thresholds.critical_max != null) updates.alarmHigh = thresholds.critical_max
-
-    localConfig.value = updates
-    emit('update:config', localConfig.value)
-    showSyncMessage('Schwellen geladen')
-  } catch {
-    showSyncMessage('Laden fehlgeschlagen')
-  } finally {
-    isLoadingThresholds.value = false
-  }
+/**
+ * AUT-1105: Silently pre-fill display-line fields with the effective alert threshold
+ * when ALL four fields are unset (first open / never configured by the operator).
+ * Unlike loadThresholdsFromEffective(), this shows no toast and does not force
+ * showThresholds=true — it is a pure default-state initialisation.
+ * Randfall: sensor with no configured threshold → all four effective values are null
+ * → fields stay empty, matching the existing behaviour of the manual button.
+ */
+function autoFillIfEmpty(): void {
+  if (!caps.value.hasThresholds) return
+  const eff = sensorEffectiveThresholds.value
+  if (!eff) return
+  // Skip when the operator has already set at least one display-line field
+  const hasAnyLocal =
+    localConfig.value.alarmLow != null ||
+    localConfig.value.warnLow != null ||
+    localConfig.value.warnHigh != null ||
+    localConfig.value.alarmHigh != null
+  if (hasAnyLocal) return
+  // Randfall: sensor has no configured alert threshold → leave fields empty
+  if (eff.alarmLow == null && eff.warnLow == null && eff.warnHigh == null && eff.alarmHigh == null) return
+  const updates: Record<string, any> = { ...localConfig.value }
+  if (eff.alarmLow != null) updates.alarmLow = eff.alarmLow
+  if (eff.warnLow != null) updates.warnLow = eff.warnLow
+  if (eff.warnHigh != null) updates.warnHigh = eff.warnHigh
+  if (eff.alarmHigh != null) updates.alarmHigh = eff.alarmHigh
+  localConfig.value = updates
+  emit('update:config', localConfig.value)
 }
 
 const widgetTypeLabels: Record<string, string> = {
@@ -418,7 +551,7 @@ const widgetTypeLabels: Record<string, string> = {
   <SlideOver
     :open="open"
     :title="`${widgetTypeLabels[widgetType] || widgetType} konfigurieren`"
-    width="sm"
+    width="md"
     @close="emit('close')"
   >
     <div class="widget-config-panel">
@@ -479,10 +612,14 @@ const widgetTypeLabels: Record<string, string> = {
         <label class="widget-config-panel__label">Sensor</label>
         <select
           class="widget-config-panel__select"
-          :value="localConfig.sensorId || ''"
+          :value="resolvedSensorSelectId || ''"
           @change="handleSensorChange(($event.target as HTMLSelectElement).value)"
         >
           <option value="" disabled>— Sensor wählen —</option>
+          <option
+            v-if="orphanSensorOption"
+            :value="orphanSensorOption.value"
+          >{{ orphanSensorOption.label }} (konfiguriert)</option>
           <template v-for="zoneGroup in groupedSensorOptions" :key="zoneGroup.zoneId ?? '__unassigned'">
             <template v-for="subgroup in zoneGroup.subgroups" :key="`${zoneGroup.zoneId}_${subgroup.subzoneId ?? '__nosub'}`">
               <optgroup :label="subgroup.label ? `${zoneGroup.label} / ${subgroup.label}` : zoneGroup.label">
@@ -524,14 +661,14 @@ const widgetTypeLabels: Record<string, string> = {
           :value="localConfig.inflowSensorId || ''"
           @change="updateField('inflowSensorId', ($event.target as HTMLSelectElement).value)"
         >
-          <option value="" disabled>— Inflow-Sensor wählen —</option>
+          <option value="">— keiner —</option>
           <template v-for="zoneGroup in groupedSensorOptions" :key="zoneGroup.zoneId ?? '__unassigned'">
             <template v-for="subgroup in zoneGroup.subgroups" :key="`${zoneGroup.zoneId}_${subgroup.subzoneId ?? '__nosub'}`">
               <optgroup :label="subgroup.label ? `${zoneGroup.label} / ${subgroup.label}` : zoneGroup.label">
                 <option
-                  v-for="opt in subgroup.options"
-                  :key="opt.value"
-                  :value="opt.value"
+                  v-for="opt in subgroup.options.filter((o) => o.configId)"
+                  :key="opt.configId"
+                  :value="opt.configId"
                 >{{ opt.label }}</option>
               </optgroup>
             </template>
@@ -547,14 +684,14 @@ const widgetTypeLabels: Record<string, string> = {
           :value="localConfig.runoffSensorId || ''"
           @change="updateField('runoffSensorId', ($event.target as HTMLSelectElement).value)"
         >
-          <option value="" disabled>— Runoff-Sensor wählen —</option>
+          <option value="">— keiner —</option>
           <template v-for="zoneGroup in groupedSensorOptions" :key="zoneGroup.zoneId ?? '__unassigned'">
             <template v-for="subgroup in zoneGroup.subgroups" :key="`${zoneGroup.zoneId}_${subgroup.subzoneId ?? '__nosub'}`">
               <optgroup :label="subgroup.label ? `${zoneGroup.label} / ${subgroup.label}` : zoneGroup.label">
                 <option
-                  v-for="opt in subgroup.options"
-                  :key="opt.value"
-                  :value="opt.value"
+                  v-for="opt in subgroup.options.filter((o) => o.configId)"
+                  :key="opt.configId"
+                  :value="opt.configId"
                 >{{ opt.label }}</option>
               </optgroup>
             </template>
@@ -573,6 +710,19 @@ const widgetTypeLabels: Record<string, string> = {
           <option value="ec">EC (Leitfähigkeit)</option>
           <option value="ph">pH</option>
         </select>
+      </div>
+
+      <!-- AUT-1107: Display Mode (sensor-tile only) -->
+      <div v-if="hasDisplayModePicker" class="widget-config-panel__field">
+        <label class="widget-config-panel__label">Anzeigeart</label>
+        <div class="widget-config-panel__chips">
+          <button
+            v-for="mode in SENSOR_TILE_DISPLAY_MODES"
+            :key="mode.value"
+            :class="['widget-config-panel__chip', { 'widget-config-panel__chip--active': localConfig.displayMode === mode.value }]"
+            @click="updateField('displayMode', mode.value)"
+          >{{ mode.label }}</button>
+        </div>
       </div>
 
       <!-- Time Range — Short (Historical, Statistics, Fertigation-Pair) -->
@@ -808,26 +958,25 @@ const widgetTypeLabels: Record<string, string> = {
             </label>
           </div>
 
-          <!-- AUT-246: Sync buttons — operator chooses which source to copy -->
+          <!-- AUT-246 / AUT-911/912: Single sync button — copies the effective alert
+               threshold (override → base fallback) of the selected sensor. -->
           <div v-if="hasThresholdFields && localConfig.showThresholds && localConfig.sensorId" class="widget-config-panel__field widget-config-panel__sync-row">
             <button
               type="button"
               class="widget-config-panel__sync-btn"
-              :disabled="!sensorBaseThresholds"
-              @click="loadThresholdsFromSensorBase"
+              :disabled="isLoadingThresholds || !sensorEffectiveThresholds"
+              :title="thresholdSyncUnavailableHint || undefined"
+              @click="loadThresholdsFromEffective"
             >
               <Download :size="14" />
-              <span>Aus Sensor-Schwelle übernehmen</span>
+              <span>{{ isLoadingThresholds ? 'Laden…' : 'Aus Alert-Schwelle übernehmen' }}</span>
             </button>
-            <button
-              type="button"
-              class="widget-config-panel__sync-btn widget-config-panel__sync-btn--secondary"
-              :disabled="isLoadingThresholds"
-              @click="loadThresholdsFromAlertConfig"
+            <p
+              v-if="thresholdSyncUnavailableHint"
+              class="widget-config-panel__hint"
             >
-              <Download :size="14" />
-              <span>{{ isLoadingThresholds ? 'Laden…' : 'Aus Alert-Override laden' }}</span>
-            </button>
+              {{ thresholdSyncUnavailableHint }}
+            </p>
             <Transition name="sync-msg">
               <span v-if="thresholdSyncMessage" class="widget-config-panel__sync-msg">
                 {{ thresholdSyncMessage }}
@@ -835,20 +984,20 @@ const widgetTypeLabels: Record<string, string> = {
             </Transition>
           </div>
 
-          <!-- AUT-246: Divergence warning — widget lines differ from sensor base threshold -->
+          <!-- AUT-246: Divergence warning — widget lines differ from the effective alert threshold -->
           <p
             v-if="thresholdsDiverge"
             class="widget-config-panel__divergence-warning"
             data-testid="widget-threshold-divergence-warning"
           >
-            Diese Anzeige-Linien weichen von der Sensor-Schwelle ab. Alerts werden weiter durch die Sensor-Schwelle getriggert.
+            Diese Anzeige-Linien weichen von der Alert-Schwelle des Sensors ab. Alerts werden weiter durch die Alert-Schwelle getriggert.
           </p>
 
           <!-- Anzeige-Linien (nur visuell) — AUT-246: Labels + Disclaimer -->
           <div v-if="hasThresholdFields && localConfig.showThresholds" class="widget-config-panel__field">
             <label class="widget-config-panel__label">Anzeige-Linien (nur visuell)</label>
             <p class="widget-config-panel__threshold-info">
-              Diese Werte steuern nur die Chart-Darstellung. Sensor-Alerts werden durch <strong>SensorConfig.thresholds</strong> getriggert (Sensor-Settings).
+              Diese Werte steuern nur die Chart-Darstellung. Sensor-Alerts werden durch die <strong>Alert-Schwelle des Sensors</strong> getriggert (Sensor-Einstellungen).
             </p>
             <div class="widget-config-panel__threshold-grid">
               <div class="widget-config-panel__threshold-row">
@@ -958,6 +1107,18 @@ const widgetTypeLabels: Record<string, string> = {
 
         </div>
       </details>
+
+      <div v-if="showRemoveAction" class="widget-config-panel__danger-zone">
+        <button
+          type="button"
+          class="widget-config-panel__remove-btn"
+          aria-label="Widget entfernen"
+          @click="emit('remove')"
+        >
+          <Trash2 :size="14" aria-hidden="true" />
+          Widget entfernen
+        </button>
+      </div>
 
     </div>
   </SlideOver>
@@ -1156,16 +1317,6 @@ const widgetTypeLabels: Record<string, string> = {
   gap: var(--space-2);
 }
 
-.widget-config-panel__sync-btn--secondary {
-  border-color: var(--glass-border);
-  color: var(--color-text-secondary);
-}
-
-.widget-config-panel__sync-btn--secondary:hover:not(:disabled) {
-  border-color: var(--color-accent);
-  color: var(--color-accent-bright);
-}
-
 /* AUT-239 Fix 2: Multi-Sensor list */
 .widget-config-panel__sensor-list {
   list-style: none;
@@ -1346,5 +1497,31 @@ details[open] > .config-section__header .config-section__chevron {
     opacity: 1;
     transform: translateY(0);
   }
+}
+
+.widget-config-panel__danger-zone {
+  margin-top: var(--space-2);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--glass-border);
+}
+
+.widget-config-panel__remove-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 44px;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-status-alarm);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-status-alarm);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.widget-config-panel__remove-btn:hover {
+  background: color-mix(in srgb, var(--color-status-alarm) 12%, transparent);
 }
 </style>

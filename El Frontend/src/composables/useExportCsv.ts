@@ -2,6 +2,18 @@ import { ref } from 'vue'
 import { sensorsApi } from '@/api/sensors'
 import type { SensorDataResolution, SensorReading } from '@/types'
 
+/**
+ * Server-Default von GET /api/v1/sensors/export (`_EXPORT_DEFAULT_COLUMNS`).
+ * Ein Kopf für Dashboard, History und Monitor — keine eigenen Client-Header.
+ */
+export const SENSOR_EXPORT_DEFAULT_COLUMNS = [
+  'timestamp',
+  'processed_value',
+  'unit',
+  'quality',
+  'sensor_type',
+] as const
+
 /** Export parameters for a single sensor */
 export interface CsvExportParams {
   espId: string
@@ -58,23 +70,18 @@ function buildFilename(params: CsvExportParams): string {
   return sanitizeFilename(name, 100) + (name.length > 100 ? '' : '')
 }
 
-function readingsToCsv(
+export function readingsToCsv(
   readings: SensorReading[],
-  sensorName: string,
-  zoneName: string,
-  sensorType: string,
+  fallbackSensorType = '',
 ): string {
-  const unit = SENSOR_TYPE_UNITS[sensorType] ?? ''
-  const header = 'timestamp,sensor_type,sensor_name,zone,value,unit'
+  const header = SENSOR_EXPORT_DEFAULT_COLUMNS.join(',')
   const rows: string[] = []
   for (const point of readings) {
-    const value = point.processed_value ?? point.raw_value
-    if (value == null) continue // Skip rows without any value (AC-10)
-    const ts = point.timestamp
-    // Escape fields that might contain commas or quotes
-    const safeName = sensorName.includes(',') ? `"${sensorName}"` : sensorName
-    const safeZone = zoneName.includes(',') ? `"${zoneName}"` : zoneName
-    rows.push(`${ts},${sensorType},${safeName},${safeZone},${value},${unit}`)
+    const processed = point.processed_value
+    const unit = point.unit ?? SENSOR_TYPE_UNITS[fallbackSensorType] ?? ''
+    const quality = point.quality ?? ''
+    const sensorType = point.sensor_type ?? fallbackSensorType
+    rows.push(`${point.timestamp},${processed ?? ''},${unit},${quality},${sensorType}`)
   }
   return [header, ...rows].join('\n')
 }
@@ -120,12 +127,7 @@ export function useExportCsv() {
         return
       }
 
-      const csv = readingsToCsv(
-        response.readings,
-        params.sensorName,
-        params.zoneName ?? '',
-        params.sensorType,
-      )
+      const csv = readingsToCsv(response.readings, params.sensorType)
       const filename = buildFilename(params)
       triggerDownload(csv, filename)
     } catch (e) {

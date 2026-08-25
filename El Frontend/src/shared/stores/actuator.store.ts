@@ -25,9 +25,6 @@ import { listIntentOutcomes } from '@/api/intentOutcomes'
 
 const logger = createLogger('ActuatorStore')
 
-/** AUT-481: Minimum gap between manual UI actuator commands per esp:gpio (paced acceptance). */
-export const ACTUATOR_UI_COMMAND_COOLDOWN_MS = 2000
-
 /** Payload shape for actuator_status WebSocket events */
 interface ActuatorStatusPayload {
   esp_id?: string
@@ -173,7 +170,50 @@ export const useActuatorStore = defineStore('actuator', () => {
     return source
   }
 
-  function normalizeActuatorFailureMessage(rawMessage: string | undefined, command: string | undefined): string | undefined {
+  // AUT-1020: Structured failure payload for reason-driven messages.
+  // Kept store-internal — not exported as a shared type.
+  interface ActuatorFailurePayload {
+    reason?: string
+    safety_layer?: string
+    configured_seconds?: number
+    retry_after_seconds?: number
+    configured_in?: string
+    last_seen?: number
+  }
+
+  function normalizeActuatorFailureMessage(
+    rawMessage: string | undefined,
+    command: string | undefined,
+    payload?: ActuatorFailurePayload,
+  ): string | undefined {
+    // Phase 1: reason-driven messages (AUT-1020) — evaluated first when server provides reason.
+    if (payload?.reason) {
+      const cs = payload.configured_seconds
+      const ra = payload.retry_after_seconds
+      switch (payload.reason) {
+        case 'cooldown_active':
+          return (
+            'Sicherheits-Pause aktiv' +
+            (ra != null ? `: noch ${ra}s` : '') +
+            (cs != null ? ` (konfiguriert: ${cs}s)` : '') +
+            '. Einstellbar: Geräte → Gerät → Aktor → Tab Sicherheit.'
+          )
+        case 'emergency_stop':
+          return 'Not-Stopp aktiv — Aktor gesperrt. Freigabe: Hardware → Aktor → Safety → Notfall-Stopp aufheben.'
+        case 'esp_offline': {
+          let msg = 'ESP-Gerät nicht erreichbar — Befehl nicht ausführbar. Prüfe Verbindung und WLAN.'
+          if (payload.last_seen != null) {
+            const seenDate = new Date(payload.last_seen * 1000)
+            msg += ` Zuletzt gesehen: ${seenDate.toLocaleString()}.`
+          }
+          return msg
+        }
+        default:
+          // Unknown reason → fall through to free-text matches below.
+          break
+      }
+    }
+    // Phase 2: legacy free-text pattern matches (regression guard for older servers).
     if (!rawMessage) return undefined
     const message = rawMessage.trim()
     if (!message) return undefined
@@ -748,6 +788,21 @@ export const useActuatorStore = defineStore('actuator', () => {
       })
     }
 
+    // AUT-1020: persistent toast for runtime_protection alerts — device is now emergency-stopped.
+    // Server delivers configured_seconds (limit_ms // 1000) per FIX-PLAN S6.
+    if (alertType === 'runtime_protection') {
+      const configuredSecs = data.configured_seconds as number | undefined
+      const toast = useToast()
+      const gpioLabel = gpio !== undefined ? `_${gpio}` : ''
+      toast.warning(
+        `Geräte-Sicherheitslimit ausgelöst${configuredSecs != null ? ` (konfiguriert: ${configuredSecs}s)` : ''}. Aktor gesperrt bis manueller Reset. Einstellbar: Geräte → Gerät → Aktor → Tab Sicherheit.`,
+        {
+          persistent: true,
+          dedupeKey: `actuator_alert_runtime_${espId}${gpioLabel}`,
+        },
+      )
+    }
+
     logger.info(`Actuator alert: ${espId} GPIO ${gpio ?? 'ALL'} - ${alertType}`)
   }
 
@@ -947,7 +1002,14 @@ export const useActuatorStore = defineStore('actuator', () => {
     const success = data.success as boolean
     const command = data.command as string
     const errorCode = data.error_code as number | undefined
-    const msg = normalizeActuatorFailureMessage(data.message as string | undefined, command)
+    // AUT-1020: read reason fields nested from data.details (actuator_response payload structure).
+    const responseDetails = (data.details ?? {}) as Record<string, unknown>
+    const responsePayload: ActuatorFailurePayload = {
+      reason: responseDetails.reason as string | undefined,
+      configured_seconds: responseDetails.configured_seconds as number | undefined,
+      retry_after_seconds: responseDetails.retry_after_seconds as number | undefined,
+    }
+    const msg = normalizeActuatorFailureMessage(data.message as string | undefined, command, responsePayload)
     const subjectId = `${espId}:${gpio}`
     const existingIntent = findIntent('actuator', subjectId, correlationId)
     const issuedBy = (typeof data.issued_by === 'string' && data.issued_by.trim().length > 0)
@@ -1166,7 +1228,16 @@ export const useActuatorStore = defineStore('actuator', () => {
     const espId = data.esp_id as string
     const gpio = data.gpio as number
     const command = data.command as string
-    const error = normalizeActuatorFailureMessage(data.error as string, command) ?? 'Unbekannter Fehler'
+    // AUT-1020: read reason fields top-level from actuator_command_failed payload.
+    const failedPayload: ActuatorFailurePayload = {
+      reason: data.reason as string | undefined,
+      safety_layer: data.safety_layer as string | undefined,
+      configured_seconds: data.configured_seconds as number | undefined,
+      retry_after_seconds: data.retry_after_seconds as number | undefined,
+      configured_in: data.configured_in as string | undefined,
+      last_seen: data.last_seen as number | undefined,
+    }
+    const error = normalizeActuatorFailureMessage(data.error as string, command, failedPayload) ?? 'Unbekannter Fehler'
     const subjectId = `${espId}:${gpio}`
     const existingIntent = findIntent('actuator', subjectId, correlationId)
     const issuedBy = (typeof data.issued_by === 'string' && data.issued_by.trim().length > 0)
@@ -1982,29 +2053,6 @@ export const useActuatorStore = defineStore('actuator', () => {
     return !isTerminalState(intent.state)
   }
 
-  const lastCommandSentAt = new Map<string, number>()
-
-  function getActuatorCommandCooldownKey(espId: string, gpio: number): string {
-    return `${espId}:${gpio}`
-  }
-
-  function recordActuatorCommandSent(espId: string, gpio: number): void {
-    lastCommandSentAt.set(getActuatorCommandCooldownKey(espId, gpio), Date.now())
-  }
-
-  function isActuatorCommandInCooldown(espId: string, gpio: number): boolean {
-    const last = lastCommandSentAt.get(getActuatorCommandCooldownKey(espId, gpio))
-    if (last === undefined) return false
-    return Date.now() - last < ACTUATOR_UI_COMMAND_COOLDOWN_MS
-  }
-
-  function getActuatorCooldownRemainingMs(espId: string, gpio: number): number {
-    const last = lastCommandSentAt.get(getActuatorCommandCooldownKey(espId, gpio))
-    if (last === undefined) return 0
-    const remaining = ACTUATOR_UI_COMMAND_COOLDOWN_MS - (Date.now() - last)
-    return Math.max(0, remaining)
-  }
-
   function getActuatorIntent(espId: string, gpio: number): IntentRecord | undefined {
     return intents.get(getIntentKey('actuator', `${espId}:${gpio}`))
   }
@@ -2212,9 +2260,6 @@ export const useActuatorStore = defineStore('actuator', () => {
     findConfigIntentBySubject,
     dismissConfigTimeout,
     isActuatorCommandPending,
-    recordActuatorCommandSent,
-    isActuatorCommandInCooldown,
-    getActuatorCooldownRemainingMs,
     getActuatorIntent,
     findActiveIntentByActuator,
     finalizeConflictLoserIntent,

@@ -13,9 +13,15 @@ import { ref, computed, watch } from 'vue'
 import { TrendingUp, TrendingDown, AlertCircle, Droplet, Activity } from 'lucide-vue-next'
 import { useFertigationKPIs } from '@/composables/useFertigationKPIs'
 import MultiSensorChart from '@/components/charts/MultiSensorChart.vue'
-import type { ChartSensor } from '@/types'
-import { SENSOR_TYPE_CONFIG } from '@/utils/sensorDefaults'
+import type { ChartSensor, MockSensor } from '@/types'
+import { getSensorConfig } from '@/utils/sensorDefaults'
+import { formatNumber } from '@/utils/formatters'
 import { tokens } from '@/utils/cssTokens'
+import { useEspStore } from '@/stores/esp'
+import {
+  collectStoreSensors,
+  findStoreSensorByStoredId,
+} from '@/utils/sensorConfigLookup'
 
 // =============================================================================
 // Props
@@ -97,8 +103,11 @@ watch(() => props.timeRange, (newVal) => {
 // =============================================================================
 
 const sensorConfig = computed(() => {
-  return SENSOR_TYPE_CONFIG[props.sensorType]
+  return getSensorConfig(props.sensorType)
 })
+
+/** AUT-913 B3: comparison mode for the embedded chart (inflow vs. runoff share one unit). */
+const comparisonMode = ref<'overlay' | 'difference'>('overlay')
 
 const differenceClass = computed(() => {
   const baseClasses = ['text-5xl font-bold font-mono']
@@ -131,42 +140,52 @@ const trendIcon = computed(() => {
   return Activity
 })
 
+const espStore = useEspStore()
+
+function toChartSensor(storedId: string, role: 'Inflow' | 'Runoff', color: string): ChartSensor | null {
+  const sensors = collectStoreSensors(espStore.devices)
+  const sensor = findStoreSensorByStoredId(storedId, sensors)
+  if (!sensor) return null
+  const host = espStore.devices.find((device) =>
+    ((device.sensors as MockSensor[] | undefined) ?? []).some((candidate) =>
+      sensor.config_id
+        ? candidate.config_id === sensor.config_id
+        : candidate === sensor,
+    ),
+  )
+  if (!host) return null
+  return {
+    id: `${role.toLowerCase()}_${sensor.config_id ?? storedId}`,
+    espId: espStore.getDeviceId(host),
+    gpio: sensor.gpio,
+    sensorType: sensor.sensor_type,
+    name: role,
+    color,
+    unit: sensorConfig.value?.unit || sensor.unit || '',
+  }
+}
+
 const chartSensors = computed<ChartSensor[]>(() => {
-  return [
-    {
-      id: `inflow_${inflowSensorIdRef.value}`,
-      espId: 'mock-esp',
-      gpio: 0,
-      sensorType: props.sensorType,
-      name: 'Inflow',
-      color: tokens.success, // green-500
-      unit: sensorConfig.value?.unit || '',
-    },
-    {
-      id: `runoff_${runoffSensorIdRef.value}`,
-      espId: 'mock-esp',
-      gpio: 1,
-      sensorType: props.sensorType,
-      name: 'Runoff',
-      color: tokens.error, // red-500
-      unit: sensorConfig.value?.unit || '',
-    },
-  ]
+  const inflow = toChartSensor(inflowSensorIdRef.value, 'Inflow', tokens.success)
+  const runoff = toChartSensor(runoffSensorIdRef.value, 'Runoff', tokens.error)
+  return [inflow, runoff].filter((row): row is ChartSensor => row != null)
 })
+
+const valueDecimals = computed(() => sensorConfig.value?.decimals ?? 2)
 
 const formattedDifference = computed(() => {
   if (kpi.value.difference === null) return '-'
-  return kpi.value.difference.toFixed(2)
+  return formatNumber(kpi.value.difference, valueDecimals.value)
 })
 
 const formattedInflowValue = computed(() => {
   if (kpi.value.inflowValue === null) return '-'
-  return kpi.value.inflowValue.toFixed(2)
+  return formatNumber(kpi.value.inflowValue, valueDecimals.value)
 })
 
 const formattedRunoffValue = computed(() => {
   if (kpi.value.runoffValue === null) return '-'
-  return kpi.value.runoffValue.toFixed(2)
+  return formatNumber(kpi.value.runoffValue, valueDecimals.value)
 })
 
 // =============================================================================
@@ -314,7 +333,7 @@ const formattedRunoffValue = computed(() => {
         >
           <span class="text-dark-300">{{ band.label }}</span>
           <span class="text-dark-500">
-            {{ band.min.toFixed(2) }} – {{ band.max.toFixed(2) }}
+            {{ formatNumber(band.min, valueDecimals) }} – {{ formatNumber(band.max, valueDecimals) }}
           </span>
         </div>
       </div>
@@ -324,8 +343,9 @@ const formattedRunoffValue = computed(() => {
     <div class="space-y-2">
       <p class="text-xs font-medium uppercase text-dark-400">Zeitreihe</p>
       <MultiSensorChart
+        v-model:comparison-mode="comparisonMode"
+        v-model:time-range="timeRangeRef"
         :sensors="chartSensors"
-        :time-range="timeRangeRef"
         :height="300"
         :enable-live-updates="true"
       />

@@ -9,7 +9,7 @@ defineOptions({ name: 'MonitorView' })
  * Live data view with 3 levels (read-only, no configuration):
  * L1 /monitor — Zone tiles with KPI aggregation + cross-zone dashboard links
  * L2 /monitor/:zoneId — Subzone accordion with sensor/actuator cards (read-only)
- * L3 SlideOver — Sensor detail with historical time series
+ * L3 BaseModal — Sensor detail with historical time series
  */
 
 import { ref, computed, onMounted, onUnmounted, watch, nextTick, defineAsyncComponent, type ComponentPublicInstance } from 'vue'
@@ -19,6 +19,7 @@ import { useKeyboardShortcuts } from '@/composables/useKeyboardShortcuts'
 import { useSwipeNavigation } from '@/composables/useSwipeNavigation'
 import { useEspStore } from '@/stores/esp'
 import { useZoneStore } from '@/shared/stores/zone.store'
+import { useTankStore } from '@/shared/stores/tank.store'
 import { useDeviceContextStore } from '@/shared/stores/deviceContext.store'
 import { useZoneGrouping, isMockEspId } from '@/composables/useZoneGrouping'
 import { useZoneKPIs } from '@/composables/useZoneKPIs'
@@ -40,20 +41,22 @@ import {
   formatSubzoneKpiLine,
 } from '@/utils/sensorDefaults'
 import { getActuatorTypeInfo } from '@/utils/labels'
+import { storeToRefs } from 'pinia'
+import { useDashboardStore } from '@/shared/stores/dashboard.store'
+import { useLogicStore } from '@/shared/stores/logic.store'
+import { useAuthStore } from '@/shared/stores/auth.store'
+import { formatDateTime, formatRelativeTime, formatSensorValue, unitFromChartLabel, isFirstTooltipItemForDataset, qualityToStatus, sensorStatusToLevel, DATA_STALE_THRESHOLD_S } from '@/utils/formatters'
+import StatusBadge from '@/components/base/StatusBadge.vue'
+import { calculateTrend } from '@/utils/trendUtils'
+import type { TrendDirection } from '@/utils/trendUtils'
+import { getAutoResolutionForWindow } from '@/utils/autoResolution'
 import {
   type GapDataPoint,
   calculateMedianInterval,
   computeExpectedInterval,
   insertGapMarkers,
+  lastFiniteSampleX,
 } from '@/utils/gapDetection'
-import { storeToRefs } from 'pinia'
-import { useDashboardStore } from '@/shared/stores/dashboard.store'
-import { useLogicStore } from '@/shared/stores/logic.store'
-import { useAuthStore } from '@/shared/stores/auth.store'
-import { formatRelativeTime, qualityToStatus, sensorStatusToLevel, zoneHealthToLevel, DATA_STALE_THRESHOLD_S } from '@/utils/formatters'
-import StatusBadge from '@/components/base/StatusBadge.vue'
-import { calculateTrend } from '@/utils/trendUtils'
-import type { TrendDirection } from '@/utils/trendUtils'
 import { sensorsApi } from '@/api/sensors'
 import { zonesApi } from '@/api/zones'
 import type { MockSensor, SensorReading, SensorStats, SensorDataResolution } from '@/types'
@@ -65,17 +68,24 @@ import {
   TrendingUp,
   TrendingDown,
   Minus,
-  ListFilter,
   ArrowLeft,
   Activity,
   AlertTriangle,
   ChevronLeft,
   ChevronRight,
-  Pencil,
 } from 'lucide-vue-next'
 import ZoneTileCard from '@/components/monitor/ZoneTileCard.vue'
 import ZoneTileInsightBlock from '@/components/monitor/ZoneTileInsightBlock.vue'
-import SlideOver from '@/shared/design/primitives/SlideOver.vue'
+import ZoneTankEcPhBar from '@/components/monitor/ZoneTankEcPhBar.vue'
+import MonitorExpanded1hChart, {
+  type ExpandedLivePoint,
+} from '@/components/monitor/MonitorExpanded1hChart.vue'
+import TankIstSollPanel from '@/components/plants/TankIstSollPanel.vue'
+import {
+  filterOutEcPhSensors,
+  type TankEcPhSensorRef,
+} from '@/utils/zoneTankEcPh'
+import BaseModal from '@/shared/design/primitives/BaseModal.vue'
 import ExportDialog from '@/components/export/ExportDialog.vue'
 import TimeRangeSelector, { type TimePreset } from '@/components/charts/TimeRangeSelector.vue'
 import { Line } from 'vue-chartjs'
@@ -102,11 +112,13 @@ import InlineDashboardPanel from '@/components/dashboard/InlineDashboardPanel.vu
 import BaseSkeleton from '@/shared/design/primitives/BaseSkeleton.vue'
 import ErrorState from '@/shared/design/patterns/ErrorState.vue'
 import ZoneRulesSection from '@/components/monitor/ZoneRulesSection.vue'
-import QuickActionBall from '@/components/quick-action/QuickActionBall.vue'
-import AddWidgetDialog from '@/components/monitor/AddWidgetDialog.vue'
 import { getChartColors } from '@/utils/chartColors'
 import { tokens } from '@/utils/cssTokens'
 import { getZoneTileRenderableWidgets } from '@/utils/zoneTileWidgets'
+import {
+  collectStoreSensors,
+  resolveMonitorDeepLink,
+} from '@/utils/sensorConfigLookup'
 
 ChartJS.register(
   CategoryScale, LinearScale, PointElement, LineElement,
@@ -120,6 +132,7 @@ const router = useRouter()
 const route = useRoute()
 const espStore = useEspStore()
 const zoneStore = useZoneStore()
+const tankStore = useTankStore()
 const deviceContextStore = useDeviceContextStore()
 const dashStore = useDashboardStore()
 const { sideMonitorPanels, bottomMonitorPanels } = storeToRefs(dashStore)
@@ -142,25 +155,16 @@ const {
 } = useZoneKPIs({})
 
 // =============================================================================
-// L2 Subzone Filter
+// L2 Subzones (all subzones; filter UI removed — always show all)
 // =============================================================================
 
-const selectedSubzoneFilter = ref<string | null>(null)
 type MonitorSourceType = 'real' | 'mock'
 
-const filteredSubzones = computed(() => {
-  const bySubzone = !selectedSubzoneFilter.value
-    ? zoneDeviceGroup.value
-    : zoneDeviceGroup.value.filter(sz => sz.subzoneId === selectedSubzoneFilter.value)
-
-  return bySubzone
-    .filter(subzone => subzone.sensors.length > 0 || subzone.actuators.length > 0)
-})
-
-/** Unique subzone list for the L2 filter dropdown */
-const availableSubzones = computed(() => {
-  return zoneDeviceGroup.value.map(sz => ({ id: sz.subzoneId, name: sz.subzoneName }))
-})
+const filteredSubzones = computed(() =>
+  zoneDeviceGroup.value.filter(
+    subzone => subzone.sensors.length > 0 || subzone.actuators.length > 0,
+  ),
+)
 
 const selectedZoneId = computed(() => (route.params.zoneId as string) || null)
 const selectedSensorId = computed(() => (route.params.sensorId as string) || null)
@@ -227,7 +231,7 @@ function resolveSourceType(espId: string): MonitorSourceType {
 }
 
 function resolveSensorDisplayName(sensor: Pick<SensorWithContext, 'sensor_type' | 'name' | 'gpio'>): string {
-  return getSensorDisplayName({ sensor_type: sensor.sensor_type, name: sensor.name }) || `GPIO ${sensor.gpio}`
+  return getSensorDisplayName({ sensor_type: sensor.sensor_type, name: sensor.name }) || sensor.sensor_type || 'Sensor'
 }
 
 function resolveActuatorDisplayName(actuator: Pick<ActuatorWithContext, 'name' | 'gpio' | 'actuator_type' | 'hardware_type'>): string {
@@ -275,11 +279,27 @@ function toggleExpanded(sensorKey: string) {
   const wasExpanded = expandedSensorKey.value === sensorKey
   expandedSensorKey.value = wasExpanded ? null : sensorKey
   if (!wasExpanded) {
-    fetchExpandedChartData(sensorKey)
     nextTick(() => {
       const cardElement = sensorCardElementMap.get(sensorKey)
       cardElement?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
     })
+  }
+}
+
+function resolveSensorUnit(sensor: Pick<SensorWithContext, 'sensor_type' | 'unit'>): string {
+  return getSensorUnit(sensor.sensor_type) !== 'raw'
+    ? getSensorUnit(sensor.sensor_type)
+    : (sensor.unit || '')
+}
+
+/** Live sample for the expanded 1h chart (same source as former expandedLiveSample). */
+function getExpandedLiveSample(sensor: SensorWithContext): ExpandedLivePoint | null {
+  if (sensor.raw_value == null || !Number.isFinite(sensor.raw_value)) return null
+  const tsMs = sensor.last_read ? new Date(sensor.last_read).getTime() : Number.NaN
+  if (!Number.isFinite(tsMs)) return null
+  return {
+    x: tsMs,
+    y: Number(sensor.raw_value),
   }
 }
 
@@ -318,6 +338,10 @@ function getDisplaySparkline(sensor: { esp_id: string; gpio: number; sensor_type
   return getSparklineForDisplay(key, sensor.operating_mode)
 }
 
+function getTankStripSparkline(sensor: TankEcPhSensorRef) {
+  return getDisplaySparkline(sensor) ?? undefined
+}
+
 // AUT-609: Time range label derived from sparkline data timestamps
 function getSparklineTimeLabel(sensor: { esp_id: string; gpio: number; sensor_type?: string }): string {
   const key = getSensorKey(sensor.esp_id, sensor.gpio, sensor.sensor_type)
@@ -342,225 +366,7 @@ function getChartColor(index: number): string {
 }
 
 // =============================================================================
-// Expanded Panel: 1h Chart with Initial Fetch
-// =============================================================================
-
-const expandedChartLoading = ref(false)
-const expandedChartReadings = ref<SensorReading[]>([])
-type ExpandedSensorRef = { espId: string; gpio: number; sensorType?: string }
-type ExpandedLivePoint = { x: number; y: number }
-const expandedLiveTail = ref<ExpandedLivePoint[]>([])
-
-function parseExpandedSensorKey(sensorKey: string): ExpandedSensorRef | null {
-  // Format: "{espId}-{gpio}-{sensorType}" or legacy "{espId}-{gpio}"
-  const parts = sensorKey.split('-')
-  if (parts.length < 2) return null
-
-  let sensorType: string | undefined
-  const lastPart = parts[parts.length - 1]
-  if (parts.length >= 3 && isNaN(parseInt(lastPart, 10))) {
-    sensorType = lastPart
-    parts.pop()
-  }
-
-  const gpio = parseInt(parts[parts.length - 1], 10)
-  const espId = parts.slice(0, -1).join('-')
-  if (isNaN(gpio) || !espId) return null
-  return { espId, gpio, sensorType }
-}
-
-async function fetchExpandedChartData(sensorKey: string) {
-  const parsed = parseExpandedSensorKey(sensorKey)
-  if (!parsed) return
-  const { espId, gpio, sensorType } = parsed
-
-  expandedChartLoading.value = true
-  expandedChartReadings.value = []
-  expandedLiveTail.value = []
-  try {
-    const now = new Date()
-    const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000)
-    const response = await sensorsApi.queryData({
-      esp_id: espId,
-      gpio,
-      sensor_type: sensorType || undefined,
-      start_time: oneHourAgo.toISOString(),
-      end_time: now.toISOString(),
-      limit: 500,
-    })
-    expandedChartReadings.value = response.readings ?? []
-  } catch {
-    expandedChartReadings.value = []
-  } finally {
-    expandedChartLoading.value = false
-  }
-}
-
-const expandedLiveSample = computed<ExpandedLivePoint | null>(() => {
-  if (!expandedSensorKey.value) return null
-  const parsed = parseExpandedSensorKey(expandedSensorKey.value)
-  if (!parsed) return null
-
-  const { espId, gpio, sensorType } = parsed
-
-  for (const subzone of zoneDeviceGroup.value) {
-    const sensor = subzone.sensors.find(s =>
-      s.esp_id === espId &&
-      s.gpio === gpio &&
-      (!sensorType || s.sensor_type === sensorType),
-    )
-    if (!sensor || sensor.raw_value == null || !Number.isFinite(sensor.raw_value)) continue
-
-    const tsRaw = sensor.last_read
-    const tsMs = tsRaw ? new Date(tsRaw).getTime() : Date.now()
-    return {
-      x: Number.isFinite(tsMs) ? tsMs : Date.now(),
-      y: Number(sensor.raw_value),
-    }
-  }
-  return null
-})
-
-watch(expandedLiveSample, (sample) => {
-  if (!sample || !expandedSensorKey.value) return
-
-  const latestApiTs = expandedChartReadings.value.length > 0
-    ? new Date(expandedChartReadings.value[expandedChartReadings.value.length - 1].timestamp).getTime()
-    : 0
-
-  // Live tail only for samples newer than the loaded API snapshot.
-  if (sample.x <= latestApiTs) return
-
-  const tail = expandedLiveTail.value
-  const prev = tail[tail.length - 1]
-  const isNearDuplicate = !!prev &&
-    Math.abs(sample.x - prev.x) < 1000 &&
-    Math.abs(sample.y - prev.y) < 0.0001
-  if (isNearDuplicate) return
-
-  expandedLiveTail.value = [...tail, sample].slice(-120)
-}, { immediate: true })
-
-/** Resolve unit for the currently expanded sensor (avoids duplication in chartData + chartOptions) */
-const expandedSensorUnit = computed(() => {
-  if (!expandedSensorKey.value) return ''
-  const keyParts = expandedSensorKey.value.split('-')
-
-  // Extract sensor_type from key if present (last part, non-numeric)
-  let sensorType: string | undefined
-  const lastPart = keyParts[keyParts.length - 1]
-  if (keyParts.length >= 3 && isNaN(parseInt(lastPart, 10))) {
-    sensorType = lastPart
-    keyParts.pop()
-  }
-  const gpio = parseInt(keyParts[keyParts.length - 1], 10)
-  const espId = keyParts.slice(0, -1).join('-')
-
-  for (const sz of zoneDeviceGroup.value) {
-    const found = sz.sensors.find(s =>
-      s.esp_id === espId && s.gpio === gpio && (!sensorType || s.sensor_type === sensorType)
-    )
-    if (found) {
-      return getSensorUnit(found.sensor_type) !== 'raw' ? getSensorUnit(found.sensor_type) : (found.unit || '')
-    }
-  }
-  return ''
-})
-
-const expandedChartData = computed(() => {
-  const apiPoints = expandedChartReadings.value
-    .map((r) => ({
-      x: new Date(r.timestamp).getTime(),
-      y: r.processed_value ?? r.raw_value,
-    }))
-    .filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y))
-  const combined = [...apiPoints, ...expandedLiveTail.value]
-    .sort((a, b) => a.x - b.x)
-
-  if (!combined.length) return { datasets: [] }
-
-  // AUT-837 S1: break line at data gaps — same pattern as HistoricalChart (AUT-113).
-  // Raw 1h fetch (no resolution param) → expected interval from median.
-  const gapPoints: GapDataPoint[] = combined.map((p) => ({
-    timestamp: new Date(p.x),
-    value: p.y,
-  }))
-  const medianMs = calculateMedianInterval(gapPoints)
-  const expectedIntervalMs = computeExpectedInterval(medianMs, null, gapPoints.length)
-  const withGaps = insertGapMarkers(gapPoints, expectedIntervalMs)
-  const data = withGaps.map((p) => ({ x: p.timestamp.getTime(), y: p.value }))
-
-  const unit = expandedSensorUnit.value
-
-  return {
-    datasets: [{
-      label: unit ? `Letzte Stunde (${unit})` : 'Letzte Stunde',
-      data,
-      borderColor: getChartColor(0),
-      backgroundColor: `${getChartColor(0)}20`,
-      borderWidth: 2,
-      pointRadius: combined.length > 100 ? 0 : 2,
-      pointHoverRadius: 4,
-      tension: 0.3,
-      fill: true,
-      spanGaps: false, // AUT-837 S1: never interpolate across gaps
-    }],
-  }
-})
-
-const expandedChartOptions = computed(() => {
-  const unit = expandedSensorUnit.value
-
-  return {
-    responsive: true,
-    maintainAspectRatio: false,
-    animation: { duration: 300 },
-    interaction: { mode: 'index' as const, intersect: false },
-    plugins: {
-      legend: { display: false },
-      tooltip: {
-        backgroundColor: tokens.backdropColor,
-        borderColor: tokens.glassBorder,
-        borderWidth: 1,
-        titleFont: { family: 'JetBrains Mono', size: 11 },
-        bodyFont: { family: 'JetBrains Mono', size: 12 },
-        titleColor: tokens.textSecondary,
-        bodyColor: tokens.textPrimary,
-        padding: 10,
-        callbacks: {
-          title: (items: TooltipItem<'line'>[]) => {
-            if (!items.length) return ''
-            return new Date(items[0].parsed.x ?? 0).toLocaleString('de-DE')
-          },
-          label: (item: TooltipItem<'line'>) => ` ${item.parsed.y?.toFixed(2)} ${unit}`,
-        },
-      },
-    },
-    scales: {
-      x: {
-        type: 'time' as const,
-        time: {
-          displayFormats: { second: 'HH:mm:ss', minute: 'HH:mm', hour: 'HH:mm' },
-        },
-        grid: { color: tokens.glassBorder },
-        ticks: { color: tokens.textMuted, font: { family: 'JetBrains Mono', size: 10 }, maxTicksLimit: 6 },
-        border: { display: false },
-      },
-      y: {
-        grid: { color: tokens.glassBorder },
-        ticks: {
-          color: getChartColor(0),
-          font: { family: 'JetBrains Mono', size: 10 },
-          callback: (val: string | number) => `${val} ${unit}`,
-        },
-        border: { display: false },
-      },
-    },
-  }
-})
-
-// =============================================================================
-// Level 3: Sensor Detail SlideOver
+// Level 3: Sensor Detail Modal
 // =============================================================================
 
 interface DetailSensor {
@@ -569,6 +375,7 @@ interface DetailSensor {
   sensorType: string
   name: string
   unit: string
+  configId?: string
 }
 
 const showSensorDetail = ref(false)
@@ -586,25 +393,34 @@ const overlaySensorReadings = ref<Map<string, SensorReading[]>>(new Map())
 const overlayLoading = ref<Set<string>>(new Set())
 const MAX_OVERLAY_SENSORS = 4
 
-function openSensorDetail(sensor: { esp_id: string; gpio: number; sensor_type: string; name: string | null; unit: string }) {
-  const sensorName = sensor.name || sensor.sensor_type
+function openSensorDetail(sensor: {
+  esp_id: string
+  gpio: number
+  sensor_type: string
+  name: string | null
+  unit: string
+  config_id?: string
+}) {
+  const sensorName = getSensorDisplayName({ sensor_type: sensor.sensor_type, name: sensor.name })
+    || sensor.sensor_type
+    || 'Sensor'
   selectedDetailSensor.value = {
     espId: sensor.esp_id,
     gpio: sensor.gpio,
     sensorType: sensor.sensor_type,
     name: sensorName,
     unit: getSensorUnit(sensor.sensor_type) !== 'raw' ? getSensorUnit(sensor.sensor_type) : (sensor.unit || ''),
+    configId: sensor.config_id,
   }
   showSensorDetail.value = true
   fetchDetailData()
 
-  // URL-sync: update URL to /monitor/:zoneId/sensor/:sensorId
-  if (selectedZoneId.value) {
-    const sensorId = `${sensor.esp_id}-gpio${sensor.gpio}`
+  // AUT-1533: Deep-link identity is config_id. gpio is not written as SSOT.
+  if (selectedZoneId.value && sensor.config_id) {
     dashStore.breadcrumb.sensorName = sensorName
     router.replace({
       name: 'monitor-sensor',
-      params: { zoneId: selectedZoneId.value, sensorId },
+      params: { zoneId: selectedZoneId.value, sensorId: sensor.config_id },
     })
   }
 }
@@ -638,13 +454,9 @@ function onDetailRangeChange(payload: { start: string; end: string }) {
   }
 }
 
-const DETAIL_RESOLUTION: Record<string, SensorDataResolution> = {
-  '1h': 'raw',
-  '6h': '1m',
-  '12h': '5m',
-  '24h': '1h',
-  '7d': '1h',
-  'custom': 'raw',
+/** Same SSOT as HistoricalChart / MultiSensorChart — derived from the actual window. */
+function getDetailResolution(): SensorDataResolution | undefined {
+  return getAutoResolutionForWindow(detailStartTime.value, detailEndTime.value)
 }
 
 async function fetchDetailData() {
@@ -652,14 +464,19 @@ async function fetchDetailData() {
   detailLoading.value = true
   detailError.value = ''
   try {
+    const resolution = getDetailResolution()
     const response = await sensorsApi.queryData({
-      esp_id: selectedDetailSensor.value.espId,
-      gpio: selectedDetailSensor.value.gpio,
-      sensor_type: selectedDetailSensor.value.sensorType || undefined,
+      ...(selectedDetailSensor.value.configId
+        ? { sensor_config_id: selectedDetailSensor.value.configId }
+        : {
+            esp_id: selectedDetailSensor.value.espId,
+            gpio: selectedDetailSensor.value.gpio,
+            sensor_type: selectedDetailSensor.value.sensorType || undefined,
+          }),
       start_time: detailStartTime.value,
       end_time: detailEndTime.value,
       limit: 1000,
-      resolution: DETAIL_RESOLUTION[detailPreset.value] ?? 'raw',
+      ...(resolution ? { resolution } : {}),
     })
     detailReadings.value = response.readings ?? []
     lastDetailApiSuccessAt.value = Date.now()
@@ -678,7 +495,7 @@ async function fetchDetailData() {
 /** All sensors in current zone except the primary detail sensor (includes sensor_type for multi-value separation) */
 const availableOverlaySensors = computed(() => {
   if (zoneDeviceGroup.value.length === 0 || !selectedDetailSensor.value) return []
-  const result: { key: string; name: string; type: string; unit: string; espId: string; gpio: number }[] = []
+  const result: { key: string; name: string; type: string; unit: string; espId: string; gpio: number; subzoneName: string }[] = []
   for (const sz of zoneDeviceGroup.value) {
     for (const s of sz.sensors) {
       // Exclude the primary detail sensor (match by espId + gpio + sensorType)
@@ -688,11 +505,13 @@ const availableOverlaySensors = computed(() => {
       const key = s.config_id || `${s.esp_id}-${s.gpio}-${s.sensor_type}`
       result.push({
         key,
-        name: s.name || getSensorLabel(s.sensor_type) || `GPIO ${s.gpio}`,
+        name: getSensorDisplayName({ sensor_type: s.sensor_type, name: s.name }) || getSensorLabel(s.sensor_type) || s.sensor_type,
         type: s.sensor_type,
         unit: getSensorUnit(s.sensor_type) !== 'raw' ? getSensorUnit(s.sensor_type) : (s.unit || ''),
         espId: s.esp_id,
         gpio: s.gpio,
+        // L2 accordion name only when a named subzone exists — not "Zone-weit"
+        subzoneName: sz.subzoneId ? sz.subzoneName : '',
       })
     }
   }
@@ -729,6 +548,7 @@ async function fetchOverlaySensorData(sensorKey: string) {
 
   overlayLoading.value.add(sensorKey)
   try {
+    const resolution = getDetailResolution()
     const response = await sensorsApi.queryData({
       esp_id: espId,
       gpio,
@@ -736,6 +556,7 @@ async function fetchOverlaySensorData(sensorKey: string) {
       start_time: detailStartTime.value,
       end_time: detailEndTime.value,
       limit: 1000,
+      ...(resolution ? { resolution } : {}),
     })
     overlaySensorReadings.value.set(sensorKey, response.readings ?? [])
   } catch {
@@ -757,24 +578,53 @@ const detailChartData = computed(() => {
   if (!hasMain && !hasOverlay) return { datasets: [] }
 
   const sensor = selectedDetailSensor.value
+  // AUT-1543: L1/L2 view context — not sample-join, not height/medium/site
+  const zoneName = selectedZoneName.value
+  const primaryGroup = sensor
+    ? zoneDeviceGroup.value.find(sz =>
+        sz.sensors.some(s =>
+          s.esp_id === sensor.espId &&
+          s.gpio === sensor.gpio &&
+          s.sensor_type === sensor.sensorType
+        )
+      )
+    : undefined
+  const primarySubzone = primaryGroup?.subzoneId ? primaryGroup.subzoneName : ''
+  const primaryLocation = zoneName
+    ? (primarySubzone ? ` · ${zoneName} / ${primarySubzone}` : ` · ${zoneName}`)
+    : ''
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const datasets: any[] = []
 
-  // Primary sensor dataset
+  // Primary sensor dataset (API returns DESC — sort ASC for Chart.js line path)
   if (hasMain) {
-    datasets.push({
-      label: `${sensor?.name ?? 'Sensor'} (${sensor?.unit ?? ''})`,
-      data: detailReadings.value.map(r => ({
+    const mainPoints = detailReadings.value
+      .map(r => ({
         x: new Date(r.timestamp).getTime(),
         y: r.processed_value ?? r.raw_value,
-      })),
+      }))
+      .sort((a, b) => a.x - b.x)
+    // AUT-1545: same insertGapMarkers path as MonitorExpanded1hChart.chartData
+    const mainGapPoints: GapDataPoint[] = mainPoints.map((p) => ({
+      timestamp: new Date(p.x),
+      value: p.y ?? null,
+    }))
+    const mainMedianMs = calculateMedianInterval(mainGapPoints)
+    const mainExpectedMs = computeExpectedInterval(mainMedianMs, null, mainGapPoints.length)
+    const mainWithGaps = insertGapMarkers(mainGapPoints, mainExpectedMs)
+    const mainData = mainWithGaps.map((p) => ({ x: p.timestamp.getTime(), y: p.value }))
+    datasets.push({
+      label: `${sensor?.name ?? 'Sensor'} (${sensor?.unit ?? ''})${primaryLocation}`,
+      unit: sensor?.unit ?? '',
+      data: mainData,
       borderColor: getChartColor(0),
       backgroundColor: `${getChartColor(0)}20`,
       borderWidth: 2,
-      pointRadius: detailReadings.value.length > 200 ? 0 : 2,
+      pointRadius: mainPoints.length > 200 ? 0 : 2,
       pointHoverRadius: 4,
       tension: 0.3,
       fill: true,
+      spanGaps: false,
       yAxisID: 'y',
     })
   }
@@ -788,13 +638,30 @@ const detailChartData = computed(() => {
     const overlaySensor = availableOverlaySensors.value.find(s => s.key === key)
     const color = getChartColor(i + 1)
     const sameUnit = overlaySensor?.unit === sensor?.unit
+    const overlaySubzone = overlaySensor?.subzoneName ?? ''
+    const overlayLocation = zoneName
+      ? (overlaySubzone ? ` · ${zoneName} / ${overlaySubzone}` : ` · ${zoneName}`)
+      : ''
 
-    datasets.push({
-      label: `${overlaySensor?.name ?? key} (${overlaySensor?.unit ?? ''})`,
-      data: readings.map(r => ({
+    const overlayPoints = readings
+      .map(r => ({
         x: new Date(r.timestamp).getTime(),
         y: r.processed_value ?? r.raw_value,
-      })),
+      }))
+      .sort((a, b) => a.x - b.x)
+    const overlayGapPoints: GapDataPoint[] = overlayPoints.map((p) => ({
+      timestamp: new Date(p.x),
+      value: p.y ?? null,
+    }))
+    const overlayMedianMs = calculateMedianInterval(overlayGapPoints)
+    const overlayExpectedMs = computeExpectedInterval(overlayMedianMs, null, overlayGapPoints.length)
+    const overlayWithGaps = insertGapMarkers(overlayGapPoints, overlayExpectedMs)
+    const overlayData = overlayWithGaps.map((p) => ({ x: p.timestamp.getTime(), y: p.value }))
+
+    datasets.push({
+      label: `${overlaySensor?.name ?? key} (${overlaySensor?.unit ?? ''})${overlayLocation}`,
+      unit: overlaySensor?.unit ?? '',
+      data: overlayData,
       borderColor: color,
       backgroundColor: `${color}10`,
       borderWidth: 1.5,
@@ -802,6 +669,7 @@ const detailChartData = computed(() => {
       pointHoverRadius: 3,
       tension: 0.3,
       fill: false,
+      spanGaps: false,
       yAxisID: sameUnit ? 'y' : 'y1',
     })
   }
@@ -818,16 +686,22 @@ const detailChartOptions = computed(() => {
     const s = availableOverlaySensors.value.find(os => os.key === key)
     return s && s.unit !== unit
   })
-  const secondaryUnit = needsSecondaryAxis
-    ? (availableOverlaySensors.value.find(s => overlaySensorIds.value.includes(s.key) && s.unit !== unit)?.unit ?? '')
-    : ''
+  const secondaryOverlay = needsSecondaryAxis
+    ? availableOverlaySensors.value.find(s => overlaySensorIds.value.includes(s.key) && s.unit !== unit)
+    : undefined
+  const secondaryUnit = secondaryOverlay?.unit ?? ''
+  const primaryDecimals = detailSensorTypeConfig.value?.decimals ?? 2
+  const secondaryDecimals = secondaryOverlay?.type
+    ? (getSensorConfig(secondaryOverlay.type)?.decimals ?? 2)
+    : 2
+  const sampleMaxX = lastFiniteSampleX(detailChartData.value.datasets)
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const scales: any = {
     x: {
       type: 'time' as const,
       min: new Date(detailStartTime.value).getTime(),
-      max: new Date(detailEndTime.value).getTime(),
+      ...(sampleMaxX != null ? { max: sampleMaxX } : {}),
       time: {
         displayFormats: { second: 'HH:mm:ss', minute: 'HH:mm', hour: 'HH:mm', day: 'dd.MM' },
       },
@@ -840,7 +714,10 @@ const detailChartOptions = computed(() => {
       ticks: {
         color: getChartColor(0),
         font: { family: 'JetBrains Mono', size: 10 },
-        callback: (val: string | number) => `${val} ${unit}`,
+        callback: (val: string | number) => {
+          const num = typeof val === 'number' ? val : Number(val)
+          return formatSensorValue(num, unit, primaryDecimals)
+        },
       },
       border: { display: false },
       ...(detailDynamicYBounds.value
@@ -858,7 +735,10 @@ const detailChartOptions = computed(() => {
       ticks: {
         color: getChartColor(1),
         font: { family: 'JetBrains Mono', size: 10 },
-        callback: (val: string | number) => `${val} ${secondaryUnit}`,
+        callback: (val: string | number) => {
+          const num = typeof val === 'number' ? val : Number(val)
+          return formatSensorValue(num, secondaryUnit, secondaryDecimals)
+        },
       },
       border: { display: false },
     }
@@ -868,7 +748,7 @@ const detailChartOptions = computed(() => {
     responsive: true,
     maintainAspectRatio: false,
     animation: { duration: 300 },
-    interaction: { mode: 'index' as const, intersect: false },
+    interaction: { mode: 'x' as const, intersect: false },
     plugins: {
       legend: {
         display: hasOverlays,
@@ -881,6 +761,10 @@ const detailChartOptions = computed(() => {
         },
       },
       tooltip: {
+        mode: 'x' as const,
+        intersect: false,
+        filter: (item: TooltipItem<'line'>, index: number, items: TooltipItem<'line'>[]) =>
+          isFirstTooltipItemForDataset(item, index, items),
         backgroundColor: tokens.backdropColor,
         borderColor: tokens.glassBorder,
         borderWidth: 1,
@@ -892,11 +776,15 @@ const detailChartOptions = computed(() => {
         callbacks: {
           title: (items: TooltipItem<'line'>[]) => {
             if (!items.length) return ''
-            return new Date(items[0].parsed.x ?? 0).toLocaleString('de-DE')
+            return formatDateTime(new Date(items[0].parsed.x ?? 0))
           },
           label: (item: TooltipItem<'line'>) => {
-            const dsUnit = item.dataset.label?.match(/\(([^)]*)\)/)?.[1] ?? unit
-            return ` ${item.parsed.y?.toFixed(2)} ${dsUnit}`
+            const datasetUnit = (item.dataset as { unit?: string }).unit
+            const dsUnit = datasetUnit || unitFromChartLabel(item.dataset.label, unit)
+            const y = item.parsed.y
+            if (typeof y !== 'number' || !Number.isFinite(y)) return ` — ${dsUnit}`
+            const dec = dsUnit === secondaryUnit ? secondaryDecimals : primaryDecimals
+            return ` ${formatSensorValue(y, dsUnit, dec)}`
           },
         },
       },
@@ -913,7 +801,7 @@ const exportWizardSensorContext = computed(() =>
         espId: selectedDetailSensor.value.espId,
         gpio: selectedDetailSensor.value.gpio,
         sensorType: selectedDetailSensor.value.sensorType,
-        sensorName: selectedDetailSensor.value.name || `GPIO ${selectedDetailSensor.value.gpio}`,
+        sensorName: selectedDetailSensor.value.name,
       }
     : undefined
 )
@@ -933,10 +821,13 @@ const detailLiveValue = computed(() => {
     espStore.getDeviceId(d) === selectedDetailSensor.value!.espId
   )
   if (!device) return null
-  const sensor = (device.sensors as MockSensor[] | undefined)?.find(
-    s => s.gpio === selectedDetailSensor.value!.gpio &&
-         s.sensor_type === selectedDetailSensor.value!.sensorType
-  )
+  const sensors = (device.sensors as MockSensor[] | undefined) ?? []
+  const sensor = selectedDetailSensor.value.configId
+    ? sensors.find(s => s.config_id === selectedDetailSensor.value!.configId)
+    : sensors.find(
+        s => s.gpio === selectedDetailSensor.value!.gpio &&
+             s.sensor_type === selectedDetailSensor.value!.sensorType
+      )
   if (!sensor) return null
   return {
     value: sensor.raw_value,
@@ -1018,7 +909,8 @@ const overlayHistoryLatest = computed(() => {
   const latest = new Map<string, string | null>()
   for (const key of overlaySensorIds.value) {
     const readings = overlaySensorReadings.value.get(key) ?? []
-    latest.set(key, readings.length > 0 ? readings[readings.length - 1].timestamp : null)
+    // Server returns DESC — index 0 is the newest reading
+    latest.set(key, readings.length > 0 ? readings[0].timestamp : null)
   }
   return latest
 })
@@ -1028,8 +920,9 @@ const detailTrend = computed<'up' | 'down' | 'stable'>(() => {
   const readings = detailReadings.value
   if (readings.length < 4) return 'stable'
   const chunkSize = Math.max(2, Math.floor(readings.length * 0.1))
-  const firstChunk = readings.slice(0, chunkSize)
-  const lastChunk = readings.slice(-chunkSize)
+  // Server returns DESC — oldest buckets at end, newest at start
+  const firstChunk = readings.slice(-chunkSize)
+  const lastChunk = readings.slice(0, chunkSize)
   const avgFirst = firstChunk.reduce((sum, r) => sum + (r.processed_value ?? r.raw_value), 0) / chunkSize
   const avgLast = lastChunk.reduce((sum, r) => sum + (r.processed_value ?? r.raw_value), 0) / chunkSize
   const diff = avgLast - avgFirst
@@ -1145,6 +1038,11 @@ onMounted(() => {
     zoneStore.fetchZoneEntities()
   }
 
+  // AUT-1324: Zone→Tank wiring for L2 EC/pH strip (existing tank store; not value API)
+  tankStore.fetchTanks().catch(() => {
+    // Offline cache in tank store remains usable; strip hides when empty.
+  })
+
   // Fetch logic rules + execution history for ActuatorCard context
   logicStore.fetchRules()
   logicStore.loadExecutionHistory()
@@ -1216,29 +1114,29 @@ watch(
   ([sensorId, deviceCount]) => {
     if (!sensorId || deviceCount === 0 || showSensorDetail.value) return
 
-    // Parse sensorId format: "{espId}-gpio{gpio}"
-    const match = sensorId.match(/^(.+)-gpio(\d+)$/)
-    if (!match) return
+    // AUT-1533: config_id first. Legacy gpio URL only if that pin is unique.
+    const storeSensors = collectStoreSensors(espStore.devices)
+    const resolved = resolveMonitorDeepLink(sensorId, storeSensors)
+    if (resolved.kind !== 'hit') return
 
-    const [, espId, gpioStr] = match
-    const gpio = parseInt(gpioStr, 10)
+    const sensor = resolved.sensor
+    const host = espStore.devices.find((device) =>
+      ((device.sensors as MockSensor[] | undefined) ?? []).some((candidate) =>
+        sensor.config_id
+          ? candidate.config_id === sensor.config_id
+          : candidate === sensor,
+      ),
+    )
+    if (!host) return
 
-    // Find the sensor in the current zone
-    for (const device of espStore.devices) {
-      if (espStore.getDeviceId(device) === espId) {
-        const sensor = (device.sensors as MockSensor[] | undefined)?.find(s => s.gpio === gpio)
-        if (sensor) {
-          openSensorDetail({
-            esp_id: espId,
-            gpio,
-            sensor_type: sensor.sensor_type ?? '',
-            name: sensor.name ?? null,
-            unit: sensor.unit ?? '',
-          })
-          break
-        }
-      }
-    }
+    openSensorDetail({
+      esp_id: espStore.getDeviceId(host),
+      gpio: sensor.gpio,
+      sensor_type: sensor.sensor_type ?? '',
+      name: sensor.name ?? null,
+      unit: sensor.unit ?? '',
+      config_id: sensor.config_id,
+    })
   },
   { immediate: true },
 )
@@ -1347,6 +1245,8 @@ const zoneDeviceGroup = computed<ZoneDeviceSubzone[]>(() => {
           raw_value,
           quality,
           last_read,
+          // AUT-1533 leftover: server SubzoneSensorEntry has no config_id; hydrate from store.
+          config_id: liveSensor?.config_id ?? (s as Partial<SensorWithContext>).config_id,
           interface_type: liveSensor?.interface_type ?? null,
           zone_id: data.zone_id,
           zone_name: data.zone_name,
@@ -1360,6 +1260,8 @@ const zoneDeviceGroup = computed<ZoneDeviceSubzone[]>(() => {
           // Never let a store value from a sibling sensor (same GPIO) override the API config.
           operating_mode: (s as Partial<SensorWithContext>).operating_mode ?? liveSensor?.operating_mode ?? null,
           is_stale: liveSensor?.is_stale ?? (s as Partial<SensorWithContext>).is_stale ?? false,
+          // AUT-1544: SubzoneSensorEntry has no calibration blob; hydrate from store (same leftover as config_id).
+          calibration: liveSensor?.calibration ?? (s as Partial<SensorWithContext>).calibration ?? null,
         }
       }) as SensorWithContext[]),
       actuators: sortActuatorsStable(sz.actuators.map(a => ({
@@ -1450,6 +1352,16 @@ const zoneDeviceGroup = computed<ZoneDeviceSubzone[]>(() => {
   })
 })
 
+/** AUT-1324: Zone→Tank EC/pH strip — tanks via existing store, values from zoneDeviceGroup */
+const tanksInSelectedZone = computed(() => {
+  if (!selectedZoneId.value) return []
+  return tankStore.tanksForZone(selectedZoneId.value)
+})
+
+const flattenedZoneSensors = computed(() =>
+  zoneDeviceGroup.value.flatMap((sz) => sz.sensors),
+)
+
 const selectedZoneName = computed(() => {
   if (!selectedZoneId.value) return ''
   const device = espStore.devices.find(d => d.zone_id === selectedZoneId.value)
@@ -1480,18 +1392,6 @@ const selectedZoneHealthLabel = computed(() => {
 const selectedZoneHealthReason = computed(() =>
   selectedZoneKpi.value?.healthReason ?? null,
 )
-
-/**
- * AUT-237: Direct edit-link for L2 zone dashboard.
- * Resolves the first inline monitor panel attached to the active zone so the
- * header can offer a deep-link into the dashboard editor.
- */
-const zoneDashboardId = computed<string | null>(() => {
-  const zoneId = selectedZoneId.value
-  if (!zoneId) return null
-  const panels = dashStore.inlineMonitorPanelsForZone(zoneId)
-  return panels[0]?.id ?? null
-})
 
 const filteredZoneSensorCount = computed(() =>
   filteredSubzones.value.reduce((sum, sz) => sum + sz.sensors.length, 0)
@@ -1716,8 +1616,6 @@ watch(selectedZoneId, (zoneId) => {
     smartDefaultsApplied.value = false
     // Close expanded sensor panel when switching zones
     expandedSensorKey.value = null
-    // Reset subzone filter when zone changes
-    selectedSubzoneFilter.value = null
   }
 }, { immediate: true })
 
@@ -1861,14 +1759,33 @@ async function toggleActuator(espId: string, gpio: number, currentState: boolean
   }
 }
 
+// AUT-995 Feld 6: one-shot dose — ActuatorCard computed the auto-off duration from dose_ml / flow_rate_ml_s.
+async function doseActuator(espId: string, gpio: number, durationSeconds: number) {
+  try {
+    await espStore.sendActuatorCommand(espId, gpio, 'ON', undefined, durationSeconds)
+  } catch {
+    // Toast handled by store
+  }
+}
+
 // Helpers
 function getSubzoneKey(zoneId: string | null, subzoneId: string | null): string {
   return `${zoneId ?? '__u'}-${subzoneId ?? '__n'}`
 }
 
+/**
+ * AUT-1537: sensors rendered as subzone cards (membership-aware).
+ * Tank-assigned ESP: EC/pH + Messbox-T leave the card (strip/tile). Unassigned keeps them.
+ * Raw `subzone.sensors` from the server is intentionally left unchanged.
+ */
+function subzoneCardSensors<T extends { sensor_type: string; esp_id?: string }>(sensors: T[]): T[] {
+  return filterOutEcPhSensors(sensors, espStore.devices)
+}
+
 // Subzone KPI helper: same AggCategory semantics as aggregateZoneSensors (sensorDefaults.formatSubzoneKpiLine)
-function getSubzoneKPIs(sensors: { sensor_type: string; raw_value: number | null; unit: string; quality: string }[]): string {
-  return formatSubzoneKpiLine(sensors)
+// AUT-1537: header mirrors visible cards (membership-aware, not type-hide).
+function getSubzoneKPIs(sensors: { sensor_type: string; raw_value: number | null; unit: string; quality: string; esp_id?: string }[]): string {
+  return formatSubzoneKpiLine(subzoneCardSensors(sensors))
 }
 
 // Worst-case quality status for a set of sensors (defense-in-depth via timestamp check)
@@ -1882,19 +1799,6 @@ function getWorstQualityStatus(sensors: { quality: string; last_read?: string | 
     if (status === 'offline' && worst === 'good') worst = 'offline'
   }
   return worst
-}
-
-// =============================================================================
-// FAB Quick-Add Widget Dialog (D3)
-// =============================================================================
-
-const showAddWidgetDialog = ref(false)
-const addWidgetDefaultType = ref<string | undefined>(undefined)
-
-/** FAB widget-selected handler: open AddWidgetDialog with pre-selected type */
-function handleFabWidgetSelected(widgetType: string) {
-  addWidgetDefaultType.value = widgetType
-  showAddWidgetDialog.value = true
 }
 </script>
 
@@ -2006,6 +1910,7 @@ function handleFabWidgetSelected(widgetType: string) {
       <section
         class="monitor-zone-detail"
         :class="selectedZoneHealthStatus ? `monitor-zone-detail--${selectedZoneHealthStatus}` : ''"
+        :aria-label="selectedZoneHealthLabel ? `${selectedZoneName}: ${selectedZoneHealthLabel}` : selectedZoneName"
       >
       <div
         class="monitor-view__header"
@@ -2043,51 +1948,20 @@ function handleFabWidgetSelected(widgetType: string) {
         <div v-else class="monitor-view__header-info">
           <h2 class="monitor-view__title">{{ selectedZoneName }}</h2>
         </div>
-
-        <div class="monitor-view__header-status">
-          <StatusBadge
-            v-if="selectedZoneHealthStatus"
-            :level="zoneHealthToLevel(selectedZoneHealthStatus)"
-            :label-override="selectedZoneHealthLabel"
-          />
-        </div>
-
-        <router-link
-          v-if="zoneDashboardId"
-          :to="`/editor/${zoneDashboardId}`"
-          class="monitor-zone-header__edit-btn"
-          title="Dashboard bearbeiten"
-          aria-label="Dashboard bearbeiten"
-        >
-          <Pencil class="w-3.5 h-3.5" />
-        </router-link>
       </div>
       <p v-if="selectedZoneHealthReason" class="monitor-view__header-reason">
         {{ selectedZoneHealthReason }}
       </p>
 
-      <!-- L2 Subzone Filter (only when >1 subzone) -->
-      <div v-if="availableSubzones.length > 1" class="monitor-zone-filter">
-        <div class="monitor-zone-filter__select-wrap">
-          <ListFilter class="monitor-zone-filter__icon" />
-          <select
-            v-model="selectedSubzoneFilter"
-            class="monitor-zone-filter__select"
-          >
-            <option :value="null">Alle Subzonen</option>
-            <option
-              v-for="sz in availableSubzones"
-              :key="sz.id ?? '__none__'"
-              :value="sz.id"
-            >
-              {{ sz.name }}
-            </option>
-          </select>
-        </div>
-        <span v-if="selectedSubzoneFilter !== null" class="monitor-zone-filter__badge">
-          Gefiltert
-        </span>
-      </div>
+      <!-- AUT-1324: Zone/Tank EC+pH strip (Ist + Verlauf; before subzones) -->
+      <ZoneTankEcPhBar
+        v-if="tanksInSelectedZone.length > 0"
+        :tanks="tanksInSelectedZone"
+        :devices="espStore.devices"
+        :zone-sensors="flattenedZoneSensors"
+        :get-sparkline="getTankStripSparkline"
+        :get-thresholds="getDefaultThresholds"
+      />
 
       <!-- Unified Subzone-First Section (sensors + actuators per subzone) -->
       <section v-if="filteredSubzones.length > 0" class="monitor-section monitor-section--subzones">
@@ -2107,10 +1981,10 @@ function handleFabWidgetSelected(widgetType: string) {
             <ChevronRight
               :class="['monitor-subzone__chevron', { 'monitor-subzone__chevron--expanded': isSubzoneExpanded(getSubzoneKey(selectedZoneId, subzone.subzoneId)) }]"
             />
-            <StatusBadge :level="sensorStatusToLevel(getWorstQualityStatus(subzone.sensors))" compact />
+            <StatusBadge :level="sensorStatusToLevel(getWorstQualityStatus(subzoneCardSensors(subzone.sensors)))" compact />
             <span class="monitor-subzone__name" :title="subzone.subzoneName">{{ subzone.subzoneName }}</span>
             <span class="monitor-subzone__count">
-              {{ subzone.sensors.length }}S · {{ subzone.actuators.length }}A
+              {{ subzoneCardSensors(subzone.sensors).length }}S · {{ subzone.actuators.length }}A
             </span>
             <span class="monitor-subzone__kpis" v-if="getSubzoneKPIs(subzone.sensors)">{{ getSubzoneKPIs(subzone.sensors) }}</span>
           </button>
@@ -2118,10 +1992,10 @@ function handleFabWidgetSelected(widgetType: string) {
             v-else
             class="monitor-subzone__header monitor-subzone__header--static monitor-subzone__header--zoneweit"
           >
-            <StatusBadge :level="sensorStatusToLevel(getWorstQualityStatus(subzone.sensors))" compact />
+            <StatusBadge :level="sensorStatusToLevel(getWorstQualityStatus(subzoneCardSensors(subzone.sensors)))" compact />
             <span class="monitor-subzone__name" :title="subzone.subzoneName">{{ subzone.subzoneName }}</span>
             <span class="monitor-subzone__count">
-              {{ subzone.sensors.length }}S · {{ subzone.actuators.length }}A
+              {{ subzoneCardSensors(subzone.sensors).length }}S · {{ subzone.actuators.length }}A
             </span>
             <span class="monitor-subzone__kpis" v-if="getSubzoneKPIs(subzone.sensors)">{{ getSubzoneKPIs(subzone.sensors) }}</span>
             <span class="monitor-subzone__optional-hint">Keine Subzone konfiguriert</span>
@@ -2134,15 +2008,15 @@ function handleFabWidgetSelected(widgetType: string) {
             class="monitor-subzone__content"
           >
 
-            <!-- Sensors -->
-            <template v-if="subzone.sensors.length > 0">
+            <!-- Sensors (AUT-1537: membership-aware hide of tank-routed EC/pH/T) -->
+            <template v-if="subzoneCardSensors(subzone.sensors).length > 0">
               <div
-                v-if="subzone.sensors.length > 0 && subzone.actuators.length > 0"
+                v-if="subzoneCardSensors(subzone.sensors).length > 0 && subzone.actuators.length > 0"
                 class="monitor-subzone__type-label"
               >Sensoren</div>
               <div class="monitor-card-grid grid-auto-sm">
                 <div
-                  v-for="sensor in subzone.sensors"
+                  v-for="sensor in subzoneCardSensors(subzone.sensors)"
                   :key="`${sensor.esp_id}-${sensor.gpio}-${sensor.sensor_type}`"
                   :class="[
                     'monitor-sensor-card',
@@ -2173,35 +2047,18 @@ function handleFabWidgetSelected(widgetType: string) {
                     </template>
                   </SensorCard>
 
-                  <!-- Expanded Chart Panel (inline 1h chart) -->
+                  <!-- Expanded Chart Panel (inline 1h chart) — shared MonitorExpanded1hChart -->
                   <Transition name="expand">
-                    <div
+                    <MonitorExpanded1hChart
                       v-if="expandedSensorKey === getSensorKey(sensor.esp_id, sensor.gpio, sensor.sensor_type)"
-                      class="monitor-sensor-card__charts"
-                      @click.stop
-                    >
-                      <div class="monitor-sensor-card__1h-chart">
-                        <div v-if="expandedChartLoading" class="monitor-sensor-card__chart-loading">
-                          <div class="sensor-detail__spinner" />
-                          <span>Lade Daten...</span>
-                        </div>
-                        <div v-else-if="expandedChartData.datasets.length > 0" style="height: 160px">
-                          <Line :data="expandedChartData" :options="expandedChartOptions" />
-                        </div>
-                        <div v-else class="monitor-sensor-card__chart-empty">
-                          Keine Daten der letzten Stunde
-                        </div>
-                      </div>
-                      <div class="monitor-sensor-card__actions">
-                        <button
-                          class="monitor-sensor-card__detail-btn"
-                          @click.stop="openSensorDetail(sensor)"
-                        >
-                          <ChevronRight class="w-4 h-4" />
-                          <span>Zeitreihe anzeigen</span>
-                        </button>
-                      </div>
-                    </div>
+                      :esp-id="sensor.esp_id"
+                      :gpio="sensor.gpio"
+                      :sensor-type="sensor.sensor_type"
+                      :unit="resolveSensorUnit(sensor)"
+                      :live-sample="getExpandedLiveSample(sensor)"
+                      show-detail-action
+                      @detail="openSensorDetail(sensor)"
+                    />
                   </Transition>
                 </div>
               </div>
@@ -2209,14 +2066,14 @@ function handleFabWidgetSelected(widgetType: string) {
 
             <!-- Separator: only when BOTH types present -->
             <hr
-              v-if="subzone.sensors.length > 0 && subzone.actuators.length > 0"
+              v-if="subzoneCardSensors(subzone.sensors).length > 0 && subzone.actuators.length > 0"
               class="monitor-subzone__separator"
             />
 
             <!-- Actuators -->
             <template v-if="subzone.actuators.length > 0">
               <div
-                v-if="subzone.sensors.length > 0 && subzone.actuators.length > 0"
+                v-if="subzoneCardSensors(subzone.sensors).length > 0 && subzone.actuators.length > 0"
                 class="monitor-subzone__type-label"
               >Aktoren</div>
               <div class="monitor-card-grid grid-auto-sm">
@@ -2230,13 +2087,14 @@ function handleFabWidgetSelected(widgetType: string) {
                   :linked-rules="logicStore.getRulesForActuator(actuator.esp_id, actuator.gpio)"
                   :last-execution="logicStore.getLastExecutionForActuator(actuator.esp_id, actuator.gpio)"
                   @toggle="toggleActuator"
+                  @dose-now="doseActuator"
                 />
               </div>
             </template>
 
             <!-- Empty subzone -->
             <div
-              v-if="subzone.sensors.length === 0 && subzone.actuators.length === 0"
+              v-if="subzoneCardSensors(subzone.sensors).length === 0 && subzone.actuators.length === 0"
               class="monitor-subzone__empty"
             >
               Keine Geräte zugeordnet
@@ -2244,6 +2102,25 @@ function handleFabWidgetSelected(widgetType: string) {
           </div>
           </Transition>
         </div>
+      </section>
+
+      <!-- AUT-1326: compact tank tile after all subzones, before zone-wide rules -->
+      <section
+        v-if="tanksInSelectedZone.length > 0"
+        class="monitor-section monitor-section--tanks"
+        aria-label="Tank Ist und Verlauf"
+      >
+        <TankIstSollPanel
+          v-for="tank in tanksInSelectedZone"
+          :key="tank.id"
+          :tank-id="tank.id"
+          :tank-name="tank.name"
+          variant="monitor-compact"
+          :zone-sensors="flattenedZoneSensors"
+          :get-sparkline="getTankStripSparkline"
+          :get-thresholds="getDefaultThresholds"
+          @sensor-detail="openSensorDetail"
+        />
       </section>
       </section>
 
@@ -2312,24 +2189,43 @@ function handleFabWidgetSelected(widgetType: string) {
       </aside>
     </div>
 
-    <!-- Level 3: Sensor Detail SlideOver (5-Section Anatomy) -->
-    <SlideOver
+    <!-- Level 3: Sensor Detail Modal (5-Section Anatomy, BaseModal shell) -->
+    <BaseModal
       :open="showSensorDetail"
       :title="selectedDetailSensor?.name || 'Sensor-Detail'"
-      width="lg"
+      max-width="sensor-detail-modal-max"
       @close="closeSensorDetail"
     >
       <template v-if="selectedDetailSensor">
         <!-- ═══ Section 1: Header — Live Value + Trend + Stale ═══ -->
         <div class="sensor-detail__hero">
-          <div class="sensor-detail__hero-top">
-            <span class="sensor-detail__sensor-type">{{ selectedDetailSensor.sensorType }}</span>
-            <span class="sensor-detail__hero-sep">·</span>
-            <span class="sensor-detail__esp-name">{{ selectedDetailSensor.espId }}</span>
-            <template v-if="selectedZoneName">
+          <div class="sensor-detail__hero-identity">
+            <div class="sensor-detail__hero-top">
+              <span class="sensor-detail__sensor-type">{{ selectedDetailSensor.sensorType }}</span>
               <span class="sensor-detail__hero-sep">·</span>
-              <span class="sensor-detail__zone-name">{{ selectedZoneName }}</span>
-            </template>
+              <span class="sensor-detail__esp-name">{{ selectedDetailSensor.espId }}</span>
+              <template v-if="selectedZoneName">
+                <span class="sensor-detail__hero-sep">·</span>
+                <span class="sensor-detail__zone-name">{{ selectedZoneName }}</span>
+              </template>
+            </div>
+            <div class="sensor-detail__hero-meta">
+              <span v-if="detailIsStale" class="sensor-detail__stale-badge">
+                <Clock :size="12" />
+                Veraltet
+              </span>
+              <span class="sensor-detail__source-line">
+                Live jetzt:
+                <strong v-if="detailLiveValue?.lastUpdate">{{ formatRelativeTime(detailLiveValue.lastUpdate) }}</strong>
+                <strong v-else>unbekannt</strong>
+              </span>
+              <span class="sensor-detail__source-line">
+                Historie bis:
+                <strong v-if="detailHistoryLatestAt">{{ formatRelativeTime(detailHistoryLatestAt) }}</strong>
+                <strong v-else>keine Daten</strong>
+                <span v-if="detailHistoryIsStale" class="sensor-detail__history-stale">Snapshot</span>
+              </span>
+            </div>
           </div>
           <div class="sensor-detail__hero-value">
             <span v-if="detailLiveValue?.value != null" class="sensor-detail__live-value">
@@ -2343,53 +2239,38 @@ function handleFabWidgetSelected(widgetType: string) {
               :size="20"
             />
           </div>
-          <div class="sensor-detail__hero-meta">
-            <span v-if="detailIsStale" class="sensor-detail__stale-badge">
-              <Clock :size="12" />
-              Veraltet
-            </span>
-            <span class="sensor-detail__source-line">
-              Live jetzt:
-              <strong v-if="detailLiveValue?.lastUpdate">{{ formatRelativeTime(detailLiveValue.lastUpdate) }}</strong>
-              <strong v-else>unbekannt</strong>
-            </span>
-            <span class="sensor-detail__source-line">
-              Historie bis:
-              <strong v-if="detailHistoryLatestAt">{{ formatRelativeTime(detailHistoryLatestAt) }}</strong>
-              <strong v-else>keine Daten</strong>
-              <span v-if="detailHistoryIsStale" class="sensor-detail__history-stale">Snapshot</span>
-            </span>
-          </div>
         </div>
 
-        <!-- ═══ Section 2: TimeRange Chips ═══ -->
-        <TimeRangeSelector
-          v-model="detailPreset"
-          @range-change="onDetailRangeChange"
-        />
+        <!-- ═══ Section 2: Controls — TimeRange + Overlay ═══ -->
+        <div class="sensor-detail__controls">
+          <TimeRangeSelector
+            v-model="detailPreset"
+            @range-change="onDetailRangeChange"
+          />
 
-        <!-- Multi-Sensor Overlay Selector -->
-        <div v-if="availableOverlaySensors.length > 0" class="sensor-detail__overlay">
-          <p class="sensor-detail__overlay-label">Vergleichen mit:</p>
-          <div class="sensor-detail__overlay-chips">
-            <button
-              v-for="s in availableOverlaySensors"
-              :key="s.key"
-              :class="[
-                'sensor-detail__overlay-chip',
-                { 'sensor-detail__overlay-chip--active': overlaySensorIds.includes(s.key) },
-                { 'sensor-detail__overlay-chip--loading': overlayLoading.has(s.key) },
-              ]"
-              :disabled="!overlaySensorIds.includes(s.key) && overlaySensorIds.length >= MAX_OVERLAY_SENSORS"
-              @click="toggleOverlaySensor(s.key)"
-            >
-              <span
-                class="sensor-detail__overlay-dot"
-                :style="{ background: overlaySensorIds.includes(s.key) ? getOverlayColor(s.key) : 'var(--color-text-muted)' }"
-              />
-              {{ s.name }}
-              <span class="sensor-detail__overlay-unit">{{ s.unit }}</span>
-            </button>
+          <!-- Multi-Sensor Overlay Selector -->
+          <div v-if="availableOverlaySensors.length > 0" class="sensor-detail__overlay">
+            <p class="sensor-detail__overlay-label">Vergleichen mit:</p>
+            <div class="sensor-detail__overlay-chips">
+              <button
+                v-for="s in availableOverlaySensors"
+                :key="s.key"
+                :class="[
+                  'sensor-detail__overlay-chip',
+                  { 'sensor-detail__overlay-chip--active': overlaySensorIds.includes(s.key) },
+                  { 'sensor-detail__overlay-chip--loading': overlayLoading.has(s.key) },
+                ]"
+                :disabled="!overlaySensorIds.includes(s.key) && overlaySensorIds.length >= MAX_OVERLAY_SENSORS"
+                @click="toggleOverlaySensor(s.key)"
+              >
+                <span
+                  class="sensor-detail__overlay-dot"
+                  :style="{ background: overlaySensorIds.includes(s.key) ? getOverlayColor(s.key) : 'var(--color-text-muted)' }"
+                />
+                {{ s.name }}
+                <span class="sensor-detail__overlay-unit">{{ s.unit }}</span>
+              </button>
+            </div>
           </div>
         </div>
 
@@ -2430,7 +2311,7 @@ function handleFabWidgetSelected(widgetType: string) {
                 Overlay: {{ overlayHistoryLatest.get(sensorKey) ? formatRelativeTime(overlayHistoryLatest.get(sensorKey)!) : 'keine Daten' }}
               </span>
             </div>
-            <div class="sensor-detail__chart" style="height: 300px">
+            <div class="sensor-detail__chart">
               <Line :data="detailChartData" :options="detailChartOptions" />
             </div>
           </div>
@@ -2471,7 +2352,7 @@ function handleFabWidgetSelected(widgetType: string) {
           </button>
         </div>
       </template>
-    </SlideOver>
+    </BaseModal>
 
     <ExportDialog
       v-if="exportWizardSensorContext"
@@ -2487,22 +2368,6 @@ function handleFabWidgetSelected(widgetType: string) {
       @close="exportWizardOpen = false"
     />
 
-    <!-- FAB (Quick-Add Widget) -->
-    <QuickActionBall
-      v-if="!authStore.isViewer"
-      mode="monitor"
-      @widget-selected="handleFabWidgetSelected"
-    />
-
-    <!-- Add Widget Dialog (D3) — opened from FAB; not in zone-tile context -->
-    <AddWidgetDialog
-      :open="showAddWidgetDialog"
-      :default-zone-id="selectedZoneId ?? undefined"
-      :default-widget-type="addWidgetDefaultType"
-      :tile-context="false"
-      @update:open="showAddWidgetDialog = $event"
-      @close="showAddWidgetDialog = false"
-    />
   </div>
 </template>
 
@@ -2533,67 +2398,6 @@ function handleFabWidgetSelected(widgetType: string) {
 
 .monitor-view :deep(.view-tab-bar) {
   margin-bottom: 0;
-}
-
-/* ═══════════════════════════════════════════════════════════════════════════
-   ZONE / SUBZONE FILTER (WP5)
-   ═══════════════════════════════════════════════════════════════════════════ */
-
-.monitor-zone-filter {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.monitor-zone-filter__select-wrap {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-}
-
-.monitor-zone-filter__icon {
-  position: absolute;
-  left: 10px;
-  width: 14px;
-  height: 14px;
-  color: var(--color-text-muted);
-  pointer-events: none;
-}
-
-.monitor-zone-filter__select {
-  padding: var(--space-2) var(--space-8) var(--space-2) calc(var(--space-8) - 2px);
-  font-size: var(--text-sm);
-  font-family: inherit;
-  color: var(--color-text-primary);
-  background: var(--color-bg-secondary);
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-md);
-  appearance: none;
-  cursor: pointer;
-  transition: border-color 0.2s;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23707080' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: right 10px center;
-}
-
-.monitor-zone-filter__select:focus {
-  outline: none;
-  border-color: var(--color-iridescent-2);
-}
-
-.monitor-zone-filter__select option,
-.monitor-zone-filter__select optgroup {
-  background: var(--color-bg-secondary);
-  color: var(--color-text-primary);
-}
-
-.monitor-zone-filter__badge {
-  font-size: var(--text-xs);
-  padding: 2px var(--space-2);
-  border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--color-iridescent-2) 15%, transparent);
-  color: var(--color-iridescent-2);
-  font-weight: 500;
 }
 
 .monitor-archived-banner {
@@ -2798,7 +2602,7 @@ function handleFabWidgetSelected(widgetType: string) {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: min(60vw, 340px);
+  max-width: min(72vw, 480px);
   justify-content: center;
 }
 
@@ -2831,36 +2635,6 @@ function handleFabWidgetSelected(widgetType: string) {
   transform: translateX(-2px);
 }
 
-/* AUT-237: Direct edit-link in L2 zone-header */
-.monitor-zone-header__edit-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 32px;
-  min-height: 32px;
-  padding: var(--space-1) var(--space-2);
-  margin-left: var(--space-2);
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
-  color: var(--color-text-muted);
-  text-decoration: none;
-  flex-shrink: 0;
-  cursor: pointer;
-  transition: all var(--transition-fast);
-}
-
-.monitor-zone-header__edit-btn:hover {
-  color: var(--color-text-primary);
-  background: var(--glass-bg-light);
-  border-color: var(--glass-border);
-}
-
-.monitor-zone-header__edit-btn:focus-visible {
-  outline: 2px solid var(--color-iridescent-1);
-  outline-offset: 2px;
-}
-
 .monitor-view__header-info {
   display: flex;
   flex-direction: column;
@@ -2871,19 +2645,6 @@ function handleFabWidgetSelected(widgetType: string) {
   flex: 1 1 auto;
   min-width: 0;
 }
-
-.monitor-view__header-status {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  padding: 2px var(--space-2);
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--glass-border);
-  background: var(--glass-bg);
-  flex-shrink: 0;
-}
-
-/* AUT-250: Header status now uses StatusBadge — legacy dot/text rules removed. */
 
 .monitor-view__header-reason {
   margin: calc(-1 * var(--space-1)) 0 0;
@@ -3287,40 +3048,6 @@ function handleFabWidgetSelected(widgetType: string) {
   scroll-margin-top: var(--space-8);
 }
 
-/* Charts Panel (expanded) */
-.monitor-sensor-card__charts {
-  margin-top: var(--space-3);
-  padding-top: var(--space-3);
-  border-top: 1px solid var(--glass-border);
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-}
-
-.monitor-sensor-card__1h-chart {
-  min-height: 60px;
-}
-
-.monitor-sensor-card__chart-loading {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-2);
-  padding: var(--space-6);
-  color: var(--color-text-muted);
-  font-size: var(--text-sm);
-}
-
-.monitor-sensor-card__chart-empty {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: var(--space-4);
-  color: var(--color-text-muted);
-  font-size: var(--text-xs);
-  font-style: italic;
-}
-
 /* Expand transition */
 .expand-enter-active {
   transition: all var(--duration-base) var(--ease-out);
@@ -3386,62 +3113,31 @@ function handleFabWidgetSelected(widgetType: string) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   SENSOR DETAIL BUTTON (in expanded card)
+   SENSOR DETAIL MODAL CONTENT (5-Section Anatomy, reflow for centered shell)
    ═══════════════════════════════════════════════════════════════════════════ */
 
-.monitor-sensor-card__detail-btn {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
-  background: var(--glass-bg);
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-sm);
-  color: var(--color-accent-bright);
-  font-size: var(--text-sm);
-  font-weight: 500;
-  cursor: pointer;
-  transition: all var(--transition-fast);
-  width: fit-content;
-}
-
-.monitor-sensor-card__detail-btn:hover {
-  border-color: var(--color-accent);
-  background: color-mix(in srgb, var(--color-accent) 6%, transparent);
-}
-
-.monitor-sensor-card__detail-btn--secondary {
-  color: var(--color-text-secondary);
-}
-
-.monitor-sensor-card__detail-btn--secondary:hover {
-  color: var(--color-text-primary);
-  border-color: var(--glass-border-hover);
-  background: color-mix(in srgb, var(--color-text-inverse) 4%, transparent);
-}
-
-.monitor-sensor-card__actions {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  flex-wrap: wrap;
-}
-
-/* ═══════════════════════════════════════════════════════════════════════════
-   SENSOR DETAIL SLIDEOVER CONTENT (5-Section Anatomy)
-   ═══════════════════════════════════════════════════════════════════════════ */
-
-/* Section 1: Hero Header */
+/* Section 1: Hero Header — identity left, live value right */
 .sensor-detail__hero {
   display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3) var(--space-6);
+  margin-bottom: var(--space-4);
+}
+
+.sensor-detail__hero-identity {
+  display: flex;
   flex-direction: column;
-  gap: var(--space-1);
-  margin-bottom: var(--space-3);
+  gap: var(--space-2);
+  min-width: 0;
+  flex: 1 1 16rem;
 }
 
 .sensor-detail__hero-top {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: var(--space-2);
 }
 
@@ -3475,10 +3171,11 @@ function handleFabWidgetSelected(widgetType: string) {
   display: flex;
   align-items: baseline;
   gap: var(--space-2);
+  flex: 0 0 auto;
 }
 
 .sensor-detail__live-value {
-  font-size: 2rem;
+  font-size: 2.5rem;
   font-weight: 700;
   color: var(--color-text-primary);
   font-family: var(--font-mono);
@@ -3513,11 +3210,19 @@ function handleFabWidgetSelected(widgetType: string) {
 
 .sensor-detail__hero-meta {
   display: flex;
-  align-items: flex-start;
-  flex-direction: column;
-  gap: var(--space-2);
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
   font-size: var(--text-xs);
   color: var(--color-text-muted);
+}
+
+/* Section 2: Controls (time range + compare chips) */
+.sensor-detail__controls {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin-bottom: var(--space-2);
 }
 
 .sensor-detail__stale-badge {
@@ -3560,10 +3265,10 @@ function handleFabWidgetSelected(widgetType: string) {
 /* Section 4: Statistics Row */
 .sensor-detail__stats {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: var(--space-2);
-  margin-top: var(--space-3);
-  padding: var(--space-3);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+  padding: var(--space-4);
   background: var(--color-bg-secondary);
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-md);
@@ -3668,7 +3373,7 @@ function handleFabWidgetSelected(widgetType: string) {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-  margin-top: var(--space-3);
+  margin-top: var(--space-4);
 }
 
 .sensor-detail__chart-header {
@@ -3702,6 +3407,7 @@ function handleFabWidgetSelected(widgetType: string) {
 .sensor-detail__chart {
   position: relative;
   width: 100%;
+  height: 360px;
   background: var(--color-bg-secondary);
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-md);
@@ -3716,7 +3422,6 @@ function handleFabWidgetSelected(widgetType: string) {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-  margin-top: var(--space-2);
 }
 
 .sensor-detail__overlay-label {
@@ -3729,7 +3434,7 @@ function handleFabWidgetSelected(widgetType: string) {
 .sensor-detail__overlay-chips {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--space-1);
+  gap: var(--space-2);
 }
 
 .sensor-detail__overlay-chip {
@@ -3777,5 +3482,17 @@ function handleFabWidgetSelected(widgetType: string) {
 .sensor-detail__overlay-unit {
   color: var(--color-text-muted);
   font-size: var(--text-xxs);
+}
+</style>
+
+<!--
+  BaseModal teleports to <body>; scoped :deep() does not cross Teleport.
+  Global forms.css `.modal-content { max-width: 28rem }` would otherwise win
+  (same pattern as ConfigWizardModal `.cwm-modal-max`).
+  Size = Tailwind max-w-4xl (56rem), capped to viewport.
+-->
+<style>
+.modal-content.sensor-detail-modal-max {
+  max-width: min(94vw, 56rem);
 }
 </style>

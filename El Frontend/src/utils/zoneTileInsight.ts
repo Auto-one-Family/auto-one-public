@@ -19,8 +19,15 @@ export function pickZoneLeadTemperatureSensor(
     }
   }
   if (found.length === 0) return null
-  found.sort(
-    (a, b) => getZoneTileSensorPriority(a.sensorType) - getZoneTileSensorPriority(b.sensorType),
-  )
+  // Priority first; then stable tie-break (espId/gpio) so WS device reshuffles
+  // do not flip the 24h-stats lead sensor and re-trigger fetches.
+  found.sort((a, b) => {
+    const byPriority =
+      getZoneTileSensorPriority(a.sensorType) - getZoneTileSensorPriority(b.sensorType)
+    if (byPriority !== 0) return byPriority
+    const byEsp = a.espId.localeCompare(b.espId)
+    if (byEsp !== 0) return byEsp
+    return a.gpio - b.gpio
+  })
   return found[0] ?? null
 }

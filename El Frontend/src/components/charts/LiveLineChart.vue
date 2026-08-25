@@ -21,7 +21,8 @@ import {
 import annotationPlugin from 'chartjs-plugin-annotation'
 import 'chartjs-adapter-date-fns'
 import { tokens } from '@/utils/cssTokens'
-import { SENSOR_TYPE_CONFIG } from '@/utils/sensorDefaults'
+import { formatSensorValue } from '@/utils/formatters'
+import { getSensorConfig, SENSOR_TYPE_CONFIG } from '@/utils/sensorDefaults'
 
 ChartJS.register(
   CategoryScale,
@@ -172,6 +173,8 @@ type LineAnnotationConfig = {
   borderWidth?: number
   borderDash?: number[]
   borderCapStyle?: CanvasLineCap
+  /** Prevent annotation from expanding the Y-axis range (chartjs-plugin-annotation). */
+  adjustScaleRange?: boolean
 }
 
 function sanitizeLineAnnotation(raw: unknown): LineAnnotationConfig | null {
@@ -200,6 +203,7 @@ function sanitizeLineAnnotation(raw: unknown): LineAnnotationConfig | null {
   if (typeof config.borderColor === 'string') annotation.borderColor = config.borderColor
   if (borderWidth != null) annotation.borderWidth = borderWidth
   if (safeBorderDash && safeBorderDash.length > 0) annotation.borderDash = safeBorderDash
+  if (typeof config.adjustScaleRange === 'boolean') annotation.adjustScaleRange = config.adjustScaleRange
 
   return annotation
 }
@@ -257,6 +261,7 @@ const thresholdAnnotations = computed(() => {
       type: 'line',
       yMin: alarmLow,
       yMax: alarmLow,
+      adjustScaleRange: false,
       borderColor: 'rgba(239, 68, 68, 0.5)',
       borderWidth: 1,
       borderDash: [4, 4],
@@ -268,6 +273,7 @@ const thresholdAnnotations = computed(() => {
       type: 'line',
       yMin: warnLow,
       yMax: warnLow,
+      adjustScaleRange: false,
       borderColor: 'rgba(234, 179, 8, 0.4)',
       borderWidth: 1,
       borderDash: [4, 4],
@@ -279,6 +285,7 @@ const thresholdAnnotations = computed(() => {
       type: 'line',
       yMin: warnHigh,
       yMax: warnHigh,
+      adjustScaleRange: false,
       borderColor: 'rgba(234, 179, 8, 0.4)',
       borderWidth: 1,
       borderDash: [4, 4],
@@ -290,6 +297,7 @@ const thresholdAnnotations = computed(() => {
       type: 'line',
       yMin: alarmHigh,
       yMax: alarmHigh,
+      adjustScaleRange: false,
       borderColor: 'rgba(239, 68, 68, 0.5)',
       borderWidth: 1,
       borderDash: [4, 4],
@@ -382,7 +390,10 @@ const chartOptions = computed(() => {
         ticks: {
           color: tokens.textMuted,
           font: { family: 'JetBrains Mono', size: 10 },
-          callback: (val: any) => `${val}${props.unit ? ' ' + props.unit : ''}`,
+          callback: (val: string | number) => {
+            const decimals = getSensorConfig(props.sensorType ?? '')?.decimals ?? 1
+            return formatSensorValue(Number(val), props.unit ?? '', decimals)
+          },
         },
         border: { display: false },
       },

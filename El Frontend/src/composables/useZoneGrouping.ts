@@ -15,6 +15,7 @@ import { computed, type Ref } from 'vue'
 import { useEspStore } from '@/stores/esp'
 import { ZONE_UNASSIGNED } from '@/composables/useZoneDragDrop'
 export { ZONE_UNASSIGNED }
+import { getDataFreshness } from '@/utils/formatters'
 import type { QualityLevel } from '@/types'
 import type { SubzoneResolved } from '@/composables/useSubzoneResolver'
 
@@ -52,6 +53,8 @@ export interface SensorWithContext {
   temp_sensor_config_id?: string | null
   /** AUT-299: Last measurement metadata (e.g. temp_source, temp_compensation_value for EC/pH) */
   metadata?: Record<string, unknown> | null
+  /** Sensor config calibration blob (derived.calibrated_at is SSOT after session apply). */
+  calibration?: Record<string, unknown> | null
 }
 
 export interface ActuatorWithContext {
@@ -130,6 +133,37 @@ export interface ZoneGroupingOptions {
 }
 
 const SUBZONE_NONE = '__none__'
+
+// =============================================================================
+// Sensor sort (AUT-907)
+// =============================================================================
+
+/**
+ * Coarse freshness rank for sorting (mirrors SensorCard visual states):
+ * 2 = OFFLINE (ESP not operational, or neither last_read nor value)
+ * 1 = VERALTET (server-flagged stale, or last_read too old)
+ * 0 = FRISCH (otherwise)
+ * Using the coarse status (not the raw value) keeps sort keys stable across
+ * value-only updates → no re-sorting/flicker, so no debounce is needed.
+ */
+function sensorFreshnessRank(s: SensorWithContext): number {
+  if ((s.esp_state !== undefined && s.esp_state !== 'OPERATIONAL') || (!s.last_read && s.raw_value == null)) {
+    return 2
+  }
+  if (s.is_stale === true || getDataFreshness(s.last_read) === 'stale') {
+    return 1
+  }
+  return 0
+}
+
+/** Comparator: freshness rank → sensor type → ESP-ID (all ascending). */
+function compareSensorsByFreshness(a: SensorWithContext, b: SensorWithContext): number {
+  const rankDiff = sensorFreshnessRank(a) - sensorFreshnessRank(b)
+  if (rankDiff !== 0) return rankDiff
+  const typeDiff = a.sensor_type.localeCompare(b.sensor_type)
+  if (typeDiff !== 0) return typeDiff
+  return a.esp_id.localeCompare(b.esp_id)
+}
 
 // =============================================================================
 // Composable
@@ -222,7 +256,7 @@ export function useZoneGrouping(options?: ZoneGroupingOptions | ZoneGroupingFilt
         subzones.push({
           subzoneId: szId === SUBZONE_NONE ? null : szId,
           subzoneName,
-          sensors,
+          sensors: [...sensors].sort(compareSensorsByFreshness),
         })
         total += sensors.length
         mockTotal += sensors.filter(s => isMockEspId(s.esp_id)).length

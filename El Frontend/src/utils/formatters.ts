@@ -133,6 +133,34 @@ export function formatTimestamp(timestamp: string | null | undefined): string {
 }
 
 /**
+ * Convert a Date to the local wall-clock string expected by
+ * `<input type="datetime-local">` (format `YYYY-MM-DDTHH:mm`).
+ *
+ * AUT-1204: shared by all lifecycle-event dialogs that let an operator
+ * pick a backdated `event_timestamp`.
+ */
+export function toDatetimeLocalValue(date: Date = new Date()): string {
+  const pad = (n: number): string => String(n).padStart(2, '0')
+  return (
+    `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}` +
+    `T${pad(date.getHours())}:${pad(date.getMinutes())}`
+  )
+}
+
+/**
+ * Parse a `<input type="datetime-local">` value back into an ISO 8601 UTC
+ * string for the `event_timestamp` API field. Returns `null` for empty or
+ * unparsable input.
+ *
+ * AUT-1204: counterpart to {@link toDatetimeLocalValue}.
+ */
+export function datetimeLocalValueToIso(value: string): string | null {
+  if (!value) return null
+  const parsed = new Date(value)
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString()
+}
+
+/**
  * Format last_seen timestamp with NULL and Epoch-0 guards (BUG-10 fix).
  *
  * - NULL → '—' (no data available)
@@ -181,11 +209,14 @@ export function formatNumber(
     return fallback
   }
 
+  // Round first so Chart.js float ticks (e.g. 63.400000000000006) never leak into labels.
+  const rounded = roundToDecimals(value, decimals)
+
   return new Intl.NumberFormat('de-DE', {
     minimumFractionDigits: decimals,
     maximumFractionDigits: decimals,
     useGrouping,
-  }).format(value)
+  }).format(rounded)
 }
 
 /**
@@ -218,6 +249,31 @@ export function formatSensorValue(
   
   const formattedValue = formatNumber(value, decimals)
   return unit ? `${formattedValue} ${unit}` : formattedValue
+}
+
+/**
+ * AUT-837 E2: Chart-label unit is the last parenthetical, not the first.
+ * `VPD (berechnet) (kPa)` → `kPa`. Dataset-unit callers should prefer that field first.
+ */
+export function unitFromChartLabel(
+  label: string | undefined | null,
+  fallback = '',
+): string {
+  if (!label) return fallback
+  const matches = [...label.matchAll(/\(([^)]*)\)/g)]
+  const last = matches[matches.length - 1]?.[1]?.trim()
+  return last || fallback
+}
+
+/**
+ * AUT-837 E2: keep one tooltip row per dataset (mode:'x' otherwise hits neighbor buckets).
+ */
+export function isFirstTooltipItemForDataset<T extends { datasetIndex: number }>(
+  item: T,
+  index: number,
+  items: readonly T[],
+): boolean {
+  return items.findIndex((other) => other.datasetIndex === item.datasetIndex) === index
 }
 
 /**

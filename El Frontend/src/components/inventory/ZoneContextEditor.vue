@@ -16,6 +16,12 @@ import { useUiStore } from '@/shared/stores/ui.store'
 import { inventoryApi } from '@/api/inventory'
 import type { ZoneContextData, ZoneContextUpdate, CycleEntry } from '@/api/inventory'
 import { AccordionSection } from '@/shared/design/primitives'
+import { getPlantPhaseLabel } from '@/components/plants/plantLabels'
+import {
+  displayGrowthPhase,
+  growthPhaseSelectOptions,
+  normalizeGrowthPhase,
+} from '@/utils/growthPhaseVocabulary'
 
 const props = defineProps<{
   zoneId: string
@@ -49,32 +55,15 @@ const cycleHistory = ref<CycleEntry[]>([])
 const plantAgeDays = ref<number | null>(null)
 const daysToHarvest = ref<number | null>(null)
 const showHistory = ref(false)
+const resolvedGrowthPhase = ref<string | null>(null)
+const growthPhaseSource = ref<ZoneContextData['growth_phase_source']>(null)
 
-// ── Growth Phase Options ──
-const GROWTH_PHASES = [
-  { value: 'seedling', label: 'Sämling' },
-  { value: 'clone', label: 'Steckling' },
-  { value: 'vegetative', label: 'Vegetativ' },
-  { value: 'pre_flower', label: 'Vorblüte' },
-  { value: 'flower_week_1', label: 'Blüte Woche 1' },
-  { value: 'flower_week_2', label: 'Blüte Woche 2' },
-  { value: 'flower_week_3', label: 'Blüte Woche 3' },
-  { value: 'flower_week_4', label: 'Blüte Woche 4' },
-  { value: 'flower_week_5', label: 'Blüte Woche 5' },
-  { value: 'flower_week_6', label: 'Blüte Woche 6' },
-  { value: 'flower_week_7', label: 'Blüte Woche 7' },
-  { value: 'flower_week_8', label: 'Blüte Woche 8' },
-  { value: 'flower_week_9', label: 'Blüte Woche 9' },
-  { value: 'flower_week_10', label: 'Blüte Woche 10' },
-  { value: 'flush', label: 'Spülung' },
-  { value: 'harvest', label: 'Ernte' },
-  { value: 'drying', label: 'Trocknung' },
-  { value: 'curing', label: 'Aushärtung' },
-]
+const GROWTH_PHASES = growthPhaseSelectOptions()
+const phaseLockedToPlant = computed(() => growthPhaseSource.value === 'plant')
 
 const phaseLabel = computed(() => {
-  const phase = GROWTH_PHASES.find(p => p.value === form.value.growth_phase)
-  return phase?.label ?? form.value.growth_phase ?? '—'
+  const shown = resolvedGrowthPhase.value ?? form.value.growth_phase
+  return displayGrowthPhase(shown ?? null)
 })
 
 // ── Load Data ──
@@ -100,7 +89,7 @@ function applyData(data: ZoneContextData) {
     plant_count: data.plant_count ?? undefined,
     variety: data.variety ?? undefined,
     substrate: data.substrate ?? undefined,
-    growth_phase: data.growth_phase ?? undefined,
+    growth_phase: normalizeGrowthPhase(data.resolved_growth_phase ?? data.growth_phase) ?? undefined,
     planted_date: data.planted_date ?? undefined,
     expected_harvest: data.expected_harvest ?? undefined,
     responsible_person: data.responsible_person ?? undefined,
@@ -113,6 +102,8 @@ function applyData(data: ZoneContextData) {
   cycleHistory.value = data.cycle_history ?? []
   plantAgeDays.value = data.plant_age_days
   daysToHarvest.value = data.days_to_harvest
+  resolvedGrowthPhase.value = data.resolved_growth_phase ?? data.growth_phase
+  growthPhaseSource.value = data.growth_phase_source ?? null
 }
 
 // ── Save ──
@@ -226,6 +217,10 @@ watch(() => props.zoneId, loadContext)
             <select
               v-model="form.growth_phase"
               class="zone-context__select"
+              :disabled="phaseLockedToPlant"
+              :aria-label="phaseLockedToPlant
+                ? 'Wachstumsphase kommt von den Pflanzen dieser Zone'
+                : 'Wachstumsphase'"
               @change="markDirty"
             >
               <option value="">— Auswählen —</option>
@@ -233,6 +228,10 @@ watch(() => props.zoneId, loadContext)
                 {{ p.label }}
               </option>
             </select>
+            <p v-if="phaseLockedToPlant" class="zone-context__hint">
+              Phase kommt von den Pflanzen ({{ getPlantPhaseLabel(form.growth_phase || resolvedGrowthPhase || '') }}).
+              Wechsel im Tab Pflanzen — Zone/Subzone ist nur der Ort.
+            </p>
           </div>
           <div class="zone-context__field">
             <label class="zone-context__label">Pflanzedatum</label>
@@ -335,7 +334,7 @@ watch(() => props.zoneId, loadContext)
             <div class="zone-context__cycle-details">
               <span v-if="cycle.planted_date">{{ cycle.planted_date }}</span>
               <span v-if="cycle.substrate">{{ cycle.substrate }}</span>
-              <span v-if="cycle.growth_phase">{{ cycle.growth_phase }}</span>
+              <span v-if="cycle.growth_phase">{{ displayGrowthPhase(cycle.growth_phase) }}</span>
             </div>
           </div>
         </div>
@@ -447,6 +446,12 @@ watch(() => props.zoneId, loadContext)
   resize: vertical;
   min-height: 60px;
   font-family: inherit;
+}
+
+.zone-context__hint {
+  margin: var(--space-1) 0 0;
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
 }
 
 /* Actions */

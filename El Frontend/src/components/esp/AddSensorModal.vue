@@ -16,6 +16,7 @@ import GpioPicker from './GpioPicker.vue'
 import SubzoneAssignmentSection from '@/components/devices/SubzoneAssignmentSection.vue'
 import { Badge, BaseModal } from '@/shared/design/primitives'
 import { useEspStore } from '@/stores/esp'
+import { espApi } from '@/api/esp'
 import { useToast } from '@/composables/useToast'
 import {
   SENSOR_TYPE_CONFIG,
@@ -28,7 +29,7 @@ import {
   inferInterfaceType,
   getI2CAddressOptions,
 } from '@/utils/sensorDefaults'
-import { getRecommendedGpios } from '@/utils/gpioConfig'
+import { getRecommendedGpios, type HardwareType } from '@/utils/gpioConfig'
 import { normalizeSubzoneId } from '@/utils/subzoneHelpers'
 import type { MockSensorConfig } from '@/types'
 import { createLogger } from '@/utils/logger'
@@ -57,11 +58,12 @@ const toast = useToast()
 
 // ── Form State ───────────────────────────────────────────────────────
 
-const defaultSensorType = 'ds18b20'
+// AUT-873 M3: leer = keine Typ-Vorwahl beim Öffnen (Operator wählt bewusst)
+const defaultSensorType = ''
 const sensorTypeOptions = getSensorTypeOptions()
 
 const newSensor = ref<MockSensorConfig & { operating_mode?: string; timeout_seconds?: number }>({
-  gpio: 0,
+  gpio: 32,
   sensor_type: defaultSensorType,
   name: '',
   subzone_id: null,
@@ -75,6 +77,7 @@ const newSensor = ref<MockSensorConfig & { operating_mode?: string; timeout_seco
 
 const sensorGpioValid = ref(false)
 const oneWireScanPin = ref(4)
+const isAdding = ref(false)
 
 // ── Sensor Type Watchers ─────────────────────────────────────────────
 
@@ -94,7 +97,7 @@ watch(() => newSensor.value.sensor_type, (newType) => {
     selectedI2CAddress.value = options.length > 0 ? options[0].value : null
   } else {
     // BUG-1: Default to first recommended GPIO (avoid invalid GPIO 0)
-    const rec = getRecommendedGpios(newType, 'sensor')
+    const rec = getRecommendedGpios(newType, 'sensor', device.value?.hardware_type as HardwareType | undefined)
     newSensor.value.gpio = rec.length > 0 ? rec[0] : 32
     selectedI2CAddress.value = null
   }
@@ -107,6 +110,7 @@ watch(oneWireScanPin, (newPin) => {
 })
 
 // Reset form and apply initial type when modal opens, cleanup when closes
+// immediate: true ensures resetForm() runs on component mount even if modelValue starts as true (v-if pattern)
 watch(() => props.modelValue, (isOpen) => {
   if (isOpen) {
     resetForm()
@@ -126,7 +130,7 @@ watch(() => props.modelValue, (isOpen) => {
     espStore.clearOneWireScan(props.espId)
     oneWireScanPin.value = 4
   }
-})
+}, { immediate: true })
 
 // Pre-select sensor type when dropped from sidebar (safety net for mid-open prop changes)
 watch(() => props.initialSensorType, (newType) => {
@@ -143,10 +147,28 @@ watch(() => props.initialSensorType, (newType) => {
 
 // ── Computed ─────────────────────────────────────────────────────────
 
+// AUT-873 M1/M2: Startwert + quality/raw_mode sind reine Mock-Simulation (Server kalibriert real-ESPs)
+const isMockEsp = computed(() => espApi.isMockEsp(props.espId))
+
 const isOneWireSensor = computed(() => newSensor.value.sensor_type.toLowerCase().includes('ds18b20'))
 const isI2CSensor = computed(() => inferInterfaceType(newSensor.value.sensor_type) === 'I2C')
 const i2cAddressOptions = computed(() => getI2CAddressOptions(newSensor.value.sensor_type))
 const selectedI2CAddress = ref<number | null>(null)
+const adcSource = ref<'internal' | 'ads1115'>('internal')
+const adcI2cAddress = ref('0x48')
+const adcChannel = ref(0)
+const pgaGain = ref<'6.144' | '4.096' | '2.048' | '1.024' | '0.512' | '0.256'>('4.096')
+const ADS1115_ADDRESS_OPTIONS = ['0x48', '0x49', '0x4A', '0x4B']
+const PGA_GAIN_OPTIONS: Array<{ value: typeof pgaGain.value; label: string }> = [
+  { value: '6.144', label: '±6.144 V' },
+  { value: '4.096', label: '±4.096 V (Standard)' },
+  { value: '2.048', label: '±2.048 V' },
+  { value: '1.024', label: '±1.024 V' },
+  { value: '0.512', label: '±0.512 V' },
+  { value: '0.256', label: '±0.256 V' },
+]
+const isAnalogSensor = computed(() => inferInterfaceType(newSensor.value.sensor_type) === 'ANALOG')
+const useAds1115 = computed(() => isAnalogSensor.value && adcSource.value === 'ads1115')
 const oneWireScanState = computed(() => espStore.getOneWireScanState(props.espId))
 const newOneWireDevices = computed(() => oneWireScanState.value.scanResults.filter(d => !d.already_configured))
 const newOneWireDeviceCount = computed(() => newOneWireDevices.value.length)
@@ -207,6 +229,7 @@ const oneWireScanPins = computed(() => getRecommendedGpios('ds18b20', 'sensor'))
 const effectiveGpio = computed(() => {
   if (isOneWireSensor.value) return oneWireScanPin.value
   if (isI2CSensor.value) return 0
+  if (useAds1115.value) return 0
   return newSensor.value.gpio
 })
 
@@ -223,7 +246,14 @@ const subzoneModel = computed({
 
 // ── Shared Payload Builder ───────────────────────────────────────────
 
-type SensorPayload = MockSensorConfig & { operating_mode?: string; timeout_seconds?: number; i2c_address?: number | null }
+type SensorPayload = MockSensorConfig & {
+  operating_mode?: string
+  timeout_seconds?: number
+  i2c_address?: number | null
+  adc_source?: 'internal' | 'ads1115'
+  adc_channel?: number | null
+  pga_gain?: string | null
+}
 
 /** Build sensor API payload from form state. Used by BOTH I2C and OneWire flows. */
 function buildSensorPayload(overrides: Partial<SensorPayload> = {}): SensorPayload {
@@ -233,8 +263,8 @@ function buildSensorPayload(overrides: Partial<SensorPayload> = {}): SensorPaylo
     raw_value: newSensor.value.raw_value,
     unit: newSensor.value.unit,
     gpio: newSensor.value.gpio,
-    quality: newSensor.value.quality,
-    raw_mode: newSensor.value.raw_mode,
+    // AUT-873 M1: quality/raw_mode sind Mock-Simulationsfelder; fuer reale ESPs nicht senden (Server kalibriert)
+    ...(isMockEsp.value ? { quality: newSensor.value.quality, raw_mode: newSensor.value.raw_mode } : {}),
     operating_mode: newSensor.value.operating_mode ?? 'continuous',
     timeout_seconds: newSensor.value.timeout_seconds ?? 180,
     subzone_id: normalizeSubzoneId(newSensor.value.subzone_id) ?? undefined,
@@ -255,7 +285,7 @@ function resetForm() {
     ? oneWireScanPin.value
     : inferInterfaceType(st) === 'I2C'
       ? 0
-      : (getRecommendedGpios(st, 'sensor')[0] ?? 32)
+      : (getRecommendedGpios(st, 'sensor', device.value?.hardware_type as HardwareType | undefined)[0] ?? 32)
   newSensor.value = {
     gpio: defaultGpio,
     sensor_type: defaultSensorType,
@@ -270,14 +300,33 @@ function resetForm() {
   }
   sensorGpioValid.value = false
   selectedI2CAddress.value = null
+  adcSource.value = 'internal'
+  adcI2cAddress.value = '0x48'
+  adcChannel.value = 0
+  pgaGain.value = '4.096'
 }
 
 async function addSensor() {
+  if (isAdding.value) return
+  isAdding.value = true
   try {
     const i2cOverrides: Partial<SensorPayload> = isI2CSensor.value && selectedI2CAddress.value !== null
       ? { interface_type: 'I2C' as const, i2c_address: selectedI2CAddress.value, gpio: 0 }
       : {}
-    const sensorData = buildSensorPayload(i2cOverrides)
+    const ads1115Overrides: Partial<SensorPayload> = isAnalogSensor.value
+      ? adcSource.value === 'ads1115'
+        ? { gpio: 0, adc_source: 'ads1115' as const, adc_channel: adcChannel.value, pga_gain: pgaGain.value, i2c_address: parseInt(adcI2cAddress.value.replace(/^0x/i, ''), 16) }
+        : { adc_source: 'internal' as const }
+      : {}
+    const sensorData = buildSensorPayload({ ...i2cOverrides, ...ads1115Overrides })
+
+    // Guard: GPIO 0 is a boot-strapping system pin and must never be submitted
+    // for ANALOG/DIGITAL sensors (I2C and ADS1115 paths legitimately use gpio=0 as convention)
+    if (sensorData.gpio === 0 && !isI2CSensor.value && !useAds1115.value && !isOneWireSensor.value) {
+      logger.error('[AddSensorModal] gpio=0 guard triggered — aborting submit', { sensorData })
+      toast.error('GPIO 0 ist ein System-Pin und kann nicht verwendet werden. Bitte wähle einen anderen GPIO aus.')
+      return
+    }
     await espStore.addSensor(props.espId, sensorData)
 
     // Multi-value sensors create multiple configs on the server
@@ -294,6 +343,8 @@ async function addSensor() {
     emit('added')
   } catch (err) {
     logger.error('Failed to add sensor', err)
+  } finally {
+    isAdding.value = false
   }
 }
 
@@ -387,6 +438,7 @@ function onSensorGpioValidation(valid: boolean, _message: string | null): void {
       <div class="form-group">
         <label class="form-label">Sensor-Typ</label>
         <select v-model="newSensor.sensor_type" class="form-select">
+          <option value="" disabled>Sensor-Typ wählen…</option>
           <option v-for="opt in sensorTypeOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
         </select>
       </div>
@@ -452,7 +504,7 @@ function onSensorGpioValidation(valid: boolean, _message: string | null): void {
           <AlertCircle :size="20" class="text-yellow-400" />
           <div class="onewire-scan-empty-content">
             <p class="onewire-scan-empty-title">Keine OneWire-Geräte gefunden</p>
-            <p class="onewire-scan-empty-hint">• Überprüfe die Verkabelung (GPIO {{ oneWireScanPin }})<br>• 4.7kΩ Pull-up-Widerstand?<br>• Anderen GPIO-Pin versuchen</p>
+            <p class="onewire-scan-empty-hint">• Überprüfe die Verkabelung (GPIO {{ oneWireScanPin }})<br>• 4,7 kΩ DATA-Pull-up an 3,3 V — ESP32-GPIO ist NICHT 5-V-tolerant<br>• VDD 3,0–5,5 V<br>• Anderen GPIO-Pin versuchen</p>
           </div>
         </div>
         <div v-else-if="!oneWireScanState.isScanning" class="onewire-scan-empty"><Info :size="16" /><span>Klicke "Bus scannen" um OneWire-Geräte auf GPIO {{ oneWireScanPin }} zu finden</span></div>
@@ -470,11 +522,51 @@ function onSensorGpioValidation(valid: boolean, _message: string | null): void {
         </p>
       </div>
 
-      <!-- GPIO (non-OneWire, non-I2C only) -->
-      <div v-if="!isOneWireSensor && !isI2CSensor" class="form-group">
+      <!-- GPIO (non-OneWire, non-I2C, non-ADS1115 only) -->
+      <div v-if="!isOneWireSensor && !isI2CSensor && !useAds1115" class="form-group">
         <label class="form-label">GPIO</label>
         <GpioPicker v-model="newSensor.gpio" :esp-id="espId" :sensor-type="newSensor.sensor_type" variant="dropdown" @validation-change="onSensorGpioValidation" />
       </div>
+
+      <!-- ADC-Quelle (Analog sensors only) -->
+      <div v-if="isAnalogSensor" class="form-group">
+        <label class="form-label">ADC-Quelle</label>
+        <select v-model="adcSource" class="form-select">
+          <option value="internal">Intern (ESP32 12-bit)</option>
+          <option value="ads1115">ADS1115 (extern, 16-bit I2C)</option>
+        </select>
+        <p class="form-hint">
+          <Info :size="12" class="inline-block mr-1 opacity-70" />ADS1115 nutzt einen externen 16-bit-I2C-ADC. GPIO wird nicht belegt (gpio=0).
+        </p>
+      </div>
+
+      <!-- ADS1115-Details (Adresse, Kanal, PGA) -->
+      <template v-if="useAds1115">
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">ADS1115-Adresse</label>
+            <select v-model="adcI2cAddress" class="form-select">
+              <option v-for="addr in ADS1115_ADDRESS_OPTIONS" :key="addr" :value="addr">{{ addr }}</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Kanal</label>
+            <select v-model.number="adcChannel" class="form-select">
+              <option :value="0">AIN0</option>
+              <option :value="1">AIN1</option>
+              <option :value="2">AIN2</option>
+              <option :value="3">AIN3</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">PGA-Verstärkung</label>
+          <select v-model="pgaGain" class="form-select">
+            <option v-for="opt in PGA_GAIN_OPTIONS" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+          </select>
+          <p class="form-hint">Kleiner Bereich = höhere Auflösung. Spannung darf Bereich nicht überschreiten.</p>
+        </div>
+      </template>
 
       <!-- Operating Mode -->
       <div class="form-group">
@@ -511,9 +603,9 @@ function onSensorGpioValidation(valid: boolean, _message: string | null): void {
         />
       </div>
 
-      <!-- Initial Value + Unit -->
+      <!-- Initial Value (Mock-Simulation only) + Unit -->
       <div class="form-row">
-        <div class="form-group">
+        <div v-if="isMockEsp" class="form-group">
           <label class="form-label">Startwert</label>
           <input v-model.number="newSensor.raw_value" type="number" step="0.1" class="form-input" />
         </div>
@@ -527,7 +619,7 @@ function onSensorGpioValidation(valid: boolean, _message: string | null): void {
     <template #footer>
       <div class="modal-actions">
         <button class="btn btn-secondary" @click="close">Abbrechen</button>
-        <button v-if="!isOneWireSensor" class="btn btn-primary" :disabled="isI2CSensor ? selectedI2CAddress === null : !sensorGpioValid" @click="addSensor">Hinzufügen</button>
+        <button v-if="!isOneWireSensor" class="btn btn-primary" :disabled="!newSensor.sensor_type || isAdding || (isI2CSensor ? selectedI2CAddress === null : (!useAds1115 && !sensorGpioValid))" @click="addSensor">Hinzufügen</button>
       </div>
     </template>
   </BaseModal>

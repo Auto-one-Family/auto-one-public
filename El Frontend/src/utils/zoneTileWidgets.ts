@@ -3,12 +3,12 @@ import type { DashboardWidget, WidgetType } from '@/shared/stores/dashboard.stor
 export const ZONE_TILE_MAX_WIDGETS = 2
 
 export const ZONE_TILE_ALLOWED_WIDGET_TYPES = new Set<WidgetType>([
+  'sensor-tile',
   'gauge',
-  'sensor-card',
-  'multi-sensor',
-  'line-chart',
   'historical',
+  'multi-sensor',
   'statistics',
+  'alarm-list',
   'fertigation-pair',
 ])
 

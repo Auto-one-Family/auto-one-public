@@ -36,6 +36,7 @@ const {
   cleanupAllWidgets,
 } = useDashboardWidgets({
   showConfigButton: false,
+  readOnly: true,
 })
 
 // GridStack instance

@@ -6,12 +6,13 @@
  * with optional threshold overlays using chartjs-plugin-annotation.
  *
  * Features:
- * - Time range selection: 1h, 6h, 24h, 7d
+ * - Optional time range chips: 1h, 6h, 24h, 7d, 30d (showRangeSelector)
+ * - Zoom/Pan + Reset via chartjs-plugin-zoom (8.0-A)
  * - Threshold lines (alarmLow, warnLow, warnHigh, alarmHigh)
  * - Live data append via WebSocket sensor_data events
- * - Zoom/Pan support via chartjs-plugin-zoom (8.0-A)
  * - Gap detection: line breaks when ESP was offline (8.0-C)
  * - Stats overlay: Min/Max/Avg from API + Avg annotation line (8.0-D)
+ * - Hover readout in stats row (no floating Chart.js tooltip over the plot)
  */
 
 import { ref, computed, watch, onMounted, shallowRef } from 'vue'
@@ -34,6 +35,8 @@ import { sensorsApi } from '@/api/sensors'
 import { useEspStore } from '@/stores/esp'
 import { tokens } from '@/utils/cssTokens'
 import { getAutoResolution, TIME_RANGE_MINUTES } from '@/utils/autoResolution'
+import { formatDateTime, formatNumber, formatSensorValue } from '@/utils/formatters'
+import { SENSOR_TYPE_CONFIG } from '@/utils/sensorDefaults'
 import {
   type GapDataPoint,
   type GapInfo,
@@ -87,6 +90,11 @@ interface Props {
    * snapshot sensors (Wave 1, MultispeQ) where interpolation is misleading.
    */
   scatterMode?: boolean
+  /**
+   * Inline 1h/6h/24h/… chips. Sensor-Kachel steuert den Zeitraum über Widget-Config
+   * und Zoom — dort false; Zoom-Reset bleibt unabhängig davon sichtbar.
+   */
+  showRangeSelector?: boolean
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -98,6 +106,7 @@ const props = withDefaults(defineProps<Props>(), {
   showThresholds: true,
   gapMarkingMode: 'auto',
   scatterMode: false,
+  showRangeSelector: true,
 })
 
 const espStore = useEspStore()
@@ -119,6 +128,15 @@ interface SensorStats {
 }
 const stats = ref<SensorStats | null>(null)
 
+/** Active hover point — shown in the stats row instead of a floating tooltip */
+interface HoverPoint {
+  timestamp: Date
+  value: number
+  minValue?: number
+  maxValue?: number
+}
+const hoverPoint = ref<HoverPoint | null>(null)
+
 // Zoom state (8.0-A)
 const chartRef = ref<InstanceType<typeof Line> | null>(null)
 const isZoomed = ref(false)
@@ -126,6 +144,44 @@ const isZoomed = ref(false)
 // Time range in minutes — uses shared TIME_RANGE_MINUTES from autoResolution
 
 const selectedRange = ref(props.timeRange)
+
+const yAxisDecimals = computed(() => SENSOR_TYPE_CONFIG[props.sensorType]?.decimals ?? 2)
+
+/** Fill parent (Sensor-Kachel) instead of a fixed px canvas height */
+const isFillHeight = computed(() => {
+  const h = (props.height || '').trim()
+  return h === '100%' || h === '100'
+})
+
+/**
+ * Data-driven Y bounds: Y-axis is anchored to the actual measurement range,
+ * not to threshold annotation positions. Thresholds use adjustScaleRange=false
+ * so they cannot push the scale beyond the data range (AUT-1058).
+ *
+ * Primary source: API stats (min_value / max_value for the loaded time range).
+ * Fallback: raw data points from dataBuffer.
+ * Padding: 12% of data span (min 0.5 units) to give the curve visual room.
+ */
+const dataYBounds = computed<{ min: number; max: number } | null>(() => {
+  if (
+    stats.value != null &&
+    Number.isFinite(stats.value.min) &&
+    Number.isFinite(stats.value.max)
+  ) {
+    const span = stats.value.max - stats.value.min
+    const padding = Math.max(span * 0.12, 0.5)
+    return { min: stats.value.min - padding, max: stats.value.max + padding }
+  }
+  const values = dataBuffer.value
+    .map(pt => pt.value)
+    .filter((v): v is number => v != null && Number.isFinite(v))
+  if (values.length === 0) return null
+  const dataMin = Math.min(...values)
+  const dataMax = Math.max(...values)
+  const span = dataMax - dataMin
+  const padding = Math.max(span * 0.12, 0.5)
+  return { min: dataMin - padding, max: dataMax + padding }
+})
 
 // Expected interval for gap detection (8.0-C / AUT-113)
 let expectedIntervalMs = 0
@@ -153,6 +209,8 @@ type AnnotationConfig = {
   borderCapStyle?: CanvasLineCap
   backgroundColor?: string
   label?: Record<string, unknown>
+  /** Prevent annotation from expanding the Y-axis range (chartjs-plugin-annotation). */
+  adjustScaleRange?: boolean
 }
 
 function sanitizeAnnotationLabel(raw: unknown): Record<string, unknown> | undefined {
@@ -214,6 +272,7 @@ function sanitizeAnnotationConfig(raw: unknown): AnnotationConfig | null {
   if (typeof config.backgroundColor === 'string') annotation.backgroundColor = config.backgroundColor
   if (borderWidth != null) annotation.borderWidth = borderWidth
   if (safeBorderDash && safeBorderDash.length > 0) annotation.borderDash = safeBorderDash
+  if (typeof config.adjustScaleRange === 'boolean') annotation.adjustScaleRange = config.adjustScaleRange
   const safeLabel = sanitizeAnnotationLabel(config.label)
   if (safeLabel) annotation.label = safeLabel
 
@@ -246,6 +305,7 @@ async function loadData() {
 
   loading.value = true
   error.value = null
+  clearHoverPoint()
 
   try {
     const minutes = TIME_RANGE_MINUTES[selectedRange.value] || 60
@@ -335,6 +395,15 @@ async function loadData() {
 
 onMounted(loadData)
 
+watch(
+  () => props.timeRange,
+  (range) => {
+    if (range && range !== selectedRange.value) {
+      selectedRange.value = range
+    }
+  },
+)
+
 watch(selectedRange, () => {
   isZoomed.value = false
   loadData()
@@ -395,7 +464,43 @@ function resetZoom() {
 // Format helper (8.0-D)
 // =============================================================================
 function formatStatValue(val: number): string {
-  return val.toFixed(2).replace('.', ',')
+  return formatNumber(val, yAxisDecimals.value)
+}
+
+function clearHoverPoint(): void {
+  hoverPoint.value = null
+}
+
+function updateHoverFromElements(activeElements: Array<{ index: number; datasetIndex: number }>): void {
+  if (!activeElements.length) {
+    clearHoverPoint()
+    return
+  }
+  const idx = activeElements[0].index
+  const point = dataBuffer.value[idx]
+  if (!point || point._gap || point.value == null || !Number.isFinite(point.value)) {
+    clearHoverPoint()
+    return
+  }
+  const next: HoverPoint = {
+    timestamp: point.timestamp,
+    value: point.value,
+  }
+  if (point.minValue != null && point.maxValue != null) {
+    next.minValue = point.minValue
+    next.maxValue = point.maxValue
+  }
+  const prev = hoverPoint.value
+  if (
+    prev
+    && prev.value === next.value
+    && prev.minValue === next.minValue
+    && prev.maxValue === next.maxValue
+    && +new Date(prev.timestamp) === +new Date(next.timestamp)
+  ) {
+    return
+  }
+  hoverPoint.value = next
 }
 
 // =============================================================================
@@ -448,9 +553,11 @@ const chartData = computed(() => {
       backgroundColor: `${props.color}10`,
       borderWidth: 0,
       pointRadius: 0,
-      tension: 0.3,
+      // AUT-1049: tension:0 — spline on band edges drew visible diagonal envelope lines
+      tension: 0,
       fill: '+1', // Fill down to the next dataset (min)
       spanGaps: false,
+      order: 2,
     })
     // Min line (lower bound of band)
     datasets.push({
@@ -460,9 +567,10 @@ const chartData = computed(() => {
       backgroundColor: 'transparent',
       borderWidth: 0,
       pointRadius: 0,
-      tension: 0.3,
+      tension: 0,
       fill: false,
       spanGaps: false,
+      order: 2,
     })
   }
 
@@ -483,6 +591,7 @@ const chartData = computed(() => {
     showLine: !props.scatterMode,
     fill: props.scatterMode ? false : !hasMinMax,
     spanGaps: false, // Break line at null values (8.0-C)
+    order: 0,
   })
 
   return { labels, datasets }
@@ -502,6 +611,7 @@ const resolvedAnnotations = computed(() => {
         type: 'line',
         yMin: alarmLow,
         yMax: alarmLow,
+        adjustScaleRange: false,
         borderColor: 'rgba(239, 68, 68, 0.6)',
         borderWidth: 1,
         borderDash: [4, 4],
@@ -522,6 +632,7 @@ const resolvedAnnotations = computed(() => {
         type: 'line',
         yMin: warnLow,
         yMax: warnLow,
+        adjustScaleRange: false,
         borderColor: 'rgba(234, 179, 8, 0.5)',
         borderWidth: 1,
         borderDash: [4, 4],
@@ -534,6 +645,7 @@ const resolvedAnnotations = computed(() => {
         type: 'line',
         yMin: warnHigh,
         yMax: warnHigh,
+        adjustScaleRange: false,
         borderColor: 'rgba(234, 179, 8, 0.5)',
         borderWidth: 1,
         borderDash: [4, 4],
@@ -546,6 +658,7 @@ const resolvedAnnotations = computed(() => {
         type: 'line',
         yMin: alarmHigh,
         yMax: alarmHigh,
+        adjustScaleRange: false,
         borderColor: 'rgba(239, 68, 68, 0.6)',
         borderWidth: 1,
         borderDash: [4, 4],
@@ -569,6 +682,7 @@ const resolvedAnnotations = computed(() => {
       type: 'line',
       yMin: avgValue,
       yMax: avgValue,
+      adjustScaleRange: false,
       borderColor: 'rgba(176, 176, 192, 0.4)',
       borderWidth: 1,
       borderDash: [6, 3],
@@ -684,36 +798,15 @@ const chartOptions = computed(() => {
     maintainAspectRatio: false,
     animation: { duration: 300 },
     interaction: { mode: 'index' as const, intersect: false },
+    onHover: (_event: unknown, activeElements: Array<{ index: number; datasetIndex: number }>) => {
+      updateHoverFromElements(activeElements)
+    },
     plugins: {
       legend: { display: false },
+      // Hover readout lives in the stats row — no floating overlay over the chart
       tooltip: {
-        backgroundColor: 'rgba(7, 7, 13, 0.9)',
-        borderColor: 'rgba(133, 133, 160, 0.3)',
-        borderWidth: 1,
-        titleFont: { family: 'JetBrains Mono', size: 11 },
-        bodyFont: { family: 'JetBrains Mono', size: 12 },
-        titleColor: tokens.textSecondary,
-        bodyColor: tokens.textPrimary,
-        padding: 8,
-        filter: (item: any) => {
-          // Hide Min/Max from tooltip — only show Avg
-          return item.dataset.label === 'Avg' || !item.dataset.label
-        },
-        callbacks: {
-          label: (ctx: any) => {
-            if (ctx.parsed.y == null) return ''
-            const suffix = props.unit ? ' ' + props.unit : ''
-            const val = `${ctx.parsed.y?.toFixed(2)}${suffix}`
-            if (!isAggregated.value) return val
-            // Show min/max range for aggregated data
-            const idx = ctx.dataIndex
-            const point = dataBuffer.value[idx]
-            if (point?.minValue != null && point?.maxValue != null) {
-              return `Avg: ${val}  (${point.minValue.toFixed(1)}–${point.maxValue.toFixed(1)}${suffix})`
-            }
-            return val
-          },
-        },
+        enabled: false,
+        external: () => {},
       },
       // Keep annotation plugin/options disabled unless we have valid annotations.
       ...(hasResolvedAnnotations.value ? { annotation: { annotations: safeAnnotations } } : {}),
@@ -746,9 +839,9 @@ const chartOptions = computed(() => {
             day: 'dd.MM.',
           },
         },
-        grid: { display: true, color: 'rgba(29, 29, 42, 0.8)' },
+        grid: { display: true, color: tokens.glassBorder },
         ticks: {
-          color: tokens.textMuted,
+          color: tokens.textSecondary,
           font: { family: 'JetBrains Mono', size: 10 },
           maxTicksLimit: 8,
           autoSkip: true,
@@ -758,11 +851,21 @@ const chartOptions = computed(() => {
       },
       y: {
         display: true,
-        grid: { display: true, color: 'rgba(29, 29, 42, 0.8)' },
+        // Data-first Y bounds: anchor scale to actual measurements, not to
+        // threshold positions. Threshold annotations use adjustScaleRange=false
+        // so they are rendered as overlays without pushing the scale (AUT-1058).
+        ...(dataYBounds.value
+          ? { suggestedMin: dataYBounds.value.min, suggestedMax: dataYBounds.value.max }
+          : {}),
+        grid: { display: true, color: tokens.glassBorder },
         ticks: {
-          color: tokens.textMuted,
+          color: tokens.textSecondary,
           font: { family: 'JetBrains Mono', size: 10 },
-          callback: (val: any) => `${val}${props.unit ? ' ' + props.unit : ''}`,
+          callback: (val: number | string) => {
+            const num = typeof val === 'string' ? Number(val) : val
+            if (!Number.isFinite(num)) return ''
+            return formatSensorValue(num, props.unit, yAxisDecimals.value)
+          },
         },
         border: { display: false },
       },
@@ -772,13 +875,21 @@ const chartOptions = computed(() => {
 </script>
 
 <template>
-  <div class="historical-chart">
-    <!-- Time Range Selector -->
-    <div class="historical-chart__header">
-      <div class="historical-chart__range-buttons">
+  <div
+    class="historical-chart"
+    :class="{ 'historical-chart--fill': isFillHeight }"
+  >
+    <!-- Zeitraum-Chips (optional) + Zoom-Reset (nur wenn gezoomt) -->
+    <div
+      v-if="showRangeSelector || isZoomed"
+      class="historical-chart__header"
+      :class="{ 'historical-chart__header--reset-only': !showRangeSelector }"
+    >
+      <div v-if="showRangeSelector" class="historical-chart__range-buttons">
         <button
           v-for="range in ['1h', '6h', '24h', '7d', '30d']"
           :key="range"
+          type="button"
           :class="['historical-chart__range-btn', { 'historical-chart__range-btn--active': selectedRange === range }]"
           @click="selectedRange = range as any"
         >
@@ -788,15 +899,14 @@ const chartOptions = computed(() => {
       <div class="historical-chart__header-right">
         <button
           v-if="isZoomed"
+          type="button"
           class="historical-chart__reset-zoom"
           title="Zoom zurücksetzen"
+          aria-label="Zoom zurücksetzen"
           @click="resetZoom"
         >
           <RotateCcw :size="14" />
         </button>
-        <span v-if="dataBuffer.length > 0" class="historical-chart__count">
-          {{ dataBuffer.length }} Datenpunkte
-        </span>
       </div>
     </div>
 
@@ -809,8 +919,12 @@ const chartOptions = computed(() => {
       <span>Wenige Datenpunkte ({{ realPointCount }}) — Darstellung kann ungenau sein</span>
     </div>
 
-    <!-- Chart -->
-    <div class="historical-chart__canvas" :style="{ height }">
+    <!-- Chart — fill mode uses flex growth; fixed mode keeps explicit height -->
+    <div
+      class="historical-chart__canvas"
+      :style="isFillHeight ? undefined : { height }"
+      @mouseleave="clearHoverPoint"
+    >
       <div v-if="loading" class="historical-chart__loading">Lade Daten...</div>
       <div v-else-if="error" class="historical-chart__error">{{ error }}</div>
       <div v-else-if="dataBuffer.length === 0" class="historical-chart__empty">
@@ -825,20 +939,51 @@ const chartOptions = computed(() => {
       />
     </div>
 
-    <!-- Stats Overlay (8.0-D) -->
-    <div v-if="stats && !loading" class="historical-chart__stats">
-      <span class="historical-chart__stat">
-        Min: {{ formatStatValue(stats.min) }}{{ unit ? ' ' + unit : '' }}
-      </span>
-      <span class="historical-chart__stat">
-        Avg: {{ formatStatValue(stats.avg) }}{{ unit ? ' ' + unit : '' }}
-      </span>
-      <span class="historical-chart__stat">
-        Max: {{ formatStatValue(stats.max) }}{{ unit ? ' ' + unit : '' }}
-      </span>
-      <span class="historical-chart__stat historical-chart__stat--muted">
-        &sigma; {{ formatStatValue(stats.stdDev) }} &middot; {{ stats.count }} Punkte
-      </span>
+    <!-- Stats / Hover readout (8.0-D) — hover replaces summary, no floating tooltip -->
+    <div
+      v-if="!loading && (stats || hoverPoint)"
+      class="historical-chart__stats"
+      :class="{ 'historical-chart__stats--hover': hoverPoint }"
+      :style="hoverPoint ? { '--hover-swatch': color } : undefined"
+    >
+      <template v-if="hoverPoint">
+        <span class="historical-chart__stat historical-chart__stat--datetime">
+          {{ formatDateTime(hoverPoint.timestamp) }}
+        </span>
+        <span class="historical-chart__stat historical-chart__stat--hover-avg">
+          <span class="historical-chart__stat-swatch" aria-hidden="true" />
+          <span class="historical-chart__stat-label">Avg</span>
+          <span class="historical-chart__stat-value">
+            {{ formatStatValue(hoverPoint.value) }}{{ unit ? ` ${unit}` : '' }}
+          </span>
+          <span
+            v-if="hoverPoint.minValue != null && hoverPoint.maxValue != null"
+            class="historical-chart__stat-range"
+          >
+            ({{ formatStatValue(hoverPoint.minValue) }}–{{ formatStatValue(hoverPoint.maxValue) }}{{ unit ? ` ${unit}` : '' }})
+          </span>
+        </span>
+      </template>
+      <template v-else-if="stats">
+        <span class="historical-chart__stat">
+          <span class="historical-chart__stat-label">Min</span>
+          <span class="historical-chart__stat-value">{{ formatStatValue(stats.min) }}{{ unit ? ` ${unit}` : '' }}</span>
+        </span>
+        <span class="historical-chart__stat">
+          <span class="historical-chart__stat-label">Avg</span>
+          <span class="historical-chart__stat-value">{{ formatStatValue(stats.avg) }}{{ unit ? ` ${unit}` : '' }}</span>
+        </span>
+        <span class="historical-chart__stat">
+          <span class="historical-chart__stat-label">Max</span>
+          <span class="historical-chart__stat-value">{{ formatStatValue(stats.max) }}{{ unit ? ` ${unit}` : '' }}</span>
+        </span>
+        <span class="historical-chart__stat historical-chart__stat--meta">
+          <span class="historical-chart__stat-label">&sigma;</span>
+          <span class="historical-chart__stat-value">{{ formatStatValue(stats.stdDev) }}</span>
+          <span class="historical-chart__stat-sep" aria-hidden="true">·</span>
+          <span class="historical-chart__stat-value">{{ stats.count }} Punkte</span>
+        </span>
+      </template>
     </div>
 
     <!-- AUT-113: Gap info summary -->
@@ -861,18 +1006,41 @@ const chartOptions = computed(() => {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
+  min-height: 0;
+}
+
+/* Sensor-Kachel / GridStack: occupy full host, chart grows, stats stay compact */
+.historical-chart--fill {
+  height: 100%;
+}
+
+.historical-chart--fill .historical-chart__canvas {
+  flex: 1 1 0;
+  min-height: 0;
+  height: auto;
+}
+
+.historical-chart--fill .historical-chart__canvas :deep(canvas) {
+  max-height: 100%;
 }
 
 .historical-chart__header {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-shrink: 0;
+  min-height: 28px;
+}
+
+.historical-chart__header--reset-only {
+  justify-content: flex-end;
 }
 
 .historical-chart__header-right {
   display: flex;
   align-items: center;
   gap: var(--space-2);
+  margin-left: auto;
 }
 
 .historical-chart__range-buttons {
@@ -933,6 +1101,11 @@ const chartOptions = computed(() => {
 .historical-chart__canvas {
   position: relative;
   width: 100%;
+  min-height: 0;
+}
+
+.historical-chart__canvas :deep(canvas) {
+  display: block;
 }
 
 .historical-chart__loading,
@@ -950,15 +1123,22 @@ const chartOptions = computed(() => {
   color: var(--color-status-alarm);
 }
 
-/* Stats overlay (8.0-D) */
+/* Stats / hover readout (8.0-D) */
 .historical-chart__stats {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: var(--space-3);
+  flex-shrink: 0;
+  min-height: 1.75rem;
   padding: var(--space-1) var(--space-2);
   font-size: var(--text-xs);
   font-family: var(--font-mono);
-  color: var(--color-text-secondary);
+  color: var(--color-text-primary);
+}
+
+.historical-chart__stats--hover {
+  gap: var(--space-4);
 }
 
 .historical-chart__stat {
@@ -967,9 +1147,45 @@ const chartOptions = computed(() => {
   gap: var(--space-1);
 }
 
-.historical-chart__stat--muted {
-  color: var(--color-text-muted);
+.historical-chart__stat-label {
+  color: var(--color-text-secondary);
+  font-weight: 500;
+}
+
+.historical-chart__stat-value {
+  color: var(--color-text-primary);
+  font-weight: 600;
+}
+
+.historical-chart__stat-range {
+  color: var(--color-text-secondary);
+  font-weight: 500;
+}
+
+.historical-chart__stat-sep {
+  color: var(--color-text-secondary);
+  margin: 0 var(--space-1);
+}
+
+.historical-chart__stat--meta {
   margin-left: auto;
+}
+
+.historical-chart__stat--datetime {
+  color: var(--color-text-primary);
+  font-weight: 600;
+}
+
+.historical-chart__stat--hover-avg {
+  gap: var(--space-2);
+}
+
+.historical-chart__stat-swatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  flex-shrink: 0;
+  background: var(--hover-swatch, var(--color-iridescent-1));
 }
 
 /* AUT-113: Sparse data warning banner */
@@ -990,6 +1206,7 @@ const chartOptions = computed(() => {
 .historical-chart__gap-info {
   display: flex;
   align-items: center;
+  flex-shrink: 0;
   gap: var(--space-2);
   padding: var(--space-1) var(--space-2);
   font-size: var(--text-xs);

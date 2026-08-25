@@ -79,11 +79,7 @@ const commandIsPending = computed(() =>
   espId.value ? actuatorStore.isActuatorCommandPending(espId.value, gpio.value) : false
 )
 
-const commandInCooldown = computed(() =>
-  espId.value ? actuatorStore.isActuatorCommandInCooldown(espId.value, gpio.value) : false
-)
-
-const commandToggleBlocked = computed(() => commandIsPending.value || commandInCooldown.value)
+const commandToggleBlocked = computed(() => commandIsPending.value)
 
 const showWarnBadge = ref(false)
 let pendingTimeoutHandle: ReturnType<typeof setTimeout> | null = null
@@ -145,7 +141,7 @@ function selectActuator(id: string) {
           class="actuator-card-widget__toggle"
           :class="{ 'actuator-card-widget__toggle--on': currentActuator.state, 'actuator-card-widget__toggle--pending': commandToggleBlocked }"
           :disabled="isEspOffline || isStale || commandToggleBlocked"
-          :title="commandIsPending ? 'Befehl wird ausgeführt...' : commandInCooldown ? 'Bitte kurz warten (min. 2s zwischen Befehlen)' : isEspOffline ? 'ESP ist offline' : isStale ? 'Status veraltet' : ''"
+          :title="commandIsPending ? 'Befehl wird ausgeführt...' : isEspOffline ? 'ESP ist offline' : isStale ? 'Status veraltet' : ''"
           @click.stop="toggle"
         >
           <Loader2 v-if="commandIsPending" class="w-4 h-4 actuator-card-widget__spinner" />
@@ -298,6 +294,14 @@ function selectActuator(id: string) {
 
 @keyframes spin {
   to { transform: rotate(360deg); }
+}
+
+/* AUT-1100: Touch targets — enlarge toggle to 44px (WCAG 2.5.5) */
+@media (pointer: coarse), (hover: none) {
+  .actuator-card-widget__toggle {
+    min-width: 44px;
+    min-height: 44px;
+  }
 }
 
 .actuator-card-widget__empty {

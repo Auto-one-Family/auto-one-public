@@ -82,6 +82,9 @@ const iconComponents: Record<string, Component> = {
 }
 
 // Basis-Sensor-Typen (physische Hardware)
+// AUT-1024: 'level' (0-100%, kein Server-Processor) war ein veralteter Eintrag ohne
+// Gegenstueck in der Praxis — ersetzt durch 'liquid_level' (digitaler Fuellstandsschalter,
+// z.B. XKC-Y26S-PNP), den tatsaechlich verbauten und server-seitig unterstuetzten Sensor-Typ.
 const BASE_SENSOR_TYPES = [
   'DS18B20',
   'SHT31',
@@ -92,7 +95,7 @@ const BASE_SENSOR_TYPES = [
   'light',
   'co2',
   'flow',
-  'level',
+  'liquid_level',
 ] as const
 
 // Kurzlabels für kompakte Darstellung
@@ -106,7 +109,7 @@ const SHORT_LABELS: Record<string, string> = {
   'light': 'Licht',
   'co2': 'CO2',
   'flow': 'Flow',
-  'level': 'Level',
+  'liquid_level': 'Level',
 }
 
 // Interface for sidebar items
@@ -201,6 +204,40 @@ function onDragEnd() {
   draggingItem.value = null
 }
 
+/**
+ * Touch-Fallback: Tippen statt Ziehen. Natives HTML5-DnD feuert auf Touch nicht,
+ * daher fuegt ein Tap die Komponente dem aktuell offenen ESP (Orbital/L2) hinzu.
+ * Nur im orbitalMode aktiv (dort ist genau ein Orbital offen, das die Anforderung
+ * ueber dragStore.consumeComponentAdd() abholt).
+ */
+function onItemClick(item: SidebarItem) {
+  if (!props.orbitalMode) return
+
+  if (item.type === 'sensor') {
+    const sensorConfig = item.config as SensorTypeConfig
+    const sensorType = item.id.replace('sensor-', '')
+    dragStore.requestComponentAdd({
+      action: 'add-sensor',
+      sensorType,
+      label: sensorConfig.label,
+      defaultUnit: sensorConfig.unit,
+      icon: sensorConfig.icon,
+    })
+    logger.info('[Tap] Add sensor requested', { sensorType })
+  } else {
+    const actuatorConfig = item.config as ActuatorTypeConfig
+    const actuatorType = item.id.replace('actuator-', '')
+    dragStore.requestComponentAdd({
+      action: 'add-actuator',
+      actuatorType,
+      label: actuatorConfig.label,
+      icon: actuatorConfig.icon,
+      isPwm: actuatorConfig.isPwm,
+    })
+    logger.info('[Tap] Add actuator requested', { actuatorType })
+  }
+}
+
 </script>
 
 <template>
@@ -208,7 +245,7 @@ function onDragEnd() {
     <div class="component-sidebar__content">
       <div class="component-sidebar__header">
         <span class="component-sidebar__title">Komponenten</span>
-        <span class="component-sidebar__hint">Auf ESP ziehen</span>
+        <span class="component-sidebar__hint">{{ props.orbitalMode ? 'Ziehen oder tippen' : 'Auf ESP ziehen' }}</span>
       </div>
 
       <div class="component-sidebar__items">
@@ -223,6 +260,7 @@ function onDragEnd() {
           draggable="true"
           @dragstart="onDragStart($event, item)"
           @dragend="onDragEnd"
+          @click="onItemClick(item)"
           :title="`${item.fullLabel}\n${item.description}`"
         >
           <component
@@ -430,6 +468,10 @@ function onDragEnd() {
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: none;
+  /* Touch: horizontale Wisch-Navigation durch die Komponentenliste */
+  touch-action: pan-x;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
 }
 
 .component-sidebar--orbital .component-sidebar__content::-webkit-scrollbar {
@@ -457,7 +499,10 @@ function onDragEnd() {
 
 .component-sidebar--orbital .component-item {
   min-width: 52px;
+  min-height: 44px; /* WCAG Touch-Target */
+  justify-content: center;
   flex-shrink: 0;
   padding: 0.375rem 0.5rem;
+  touch-action: manipulation; /* schnelles Tap-Feedback, kein 300ms Delay */
 }
 </style>

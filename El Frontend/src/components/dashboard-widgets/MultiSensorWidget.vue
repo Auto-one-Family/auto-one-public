@@ -1,23 +1,26 @@
 <script setup lang="ts">
 /**
- * MultiSensorWidget — Multi-sensor chart widget for dashboard
+ * MultiSensorWidget — Multi-sensor comparison chart widget (AUT-911)
  *
- * Two modes:
- * - Manual: user picks individual sensors via chip-based UI
- * - Compare: user picks sensorType + zone, system auto-fills
- *   all matching subzone sensors as overlay chart with subzone labels
+ * The user picks individual measurement points via the chip-based UI; all selected
+ * sensors are overlaid in one MultiSensorChart (multi-point comparison over time).
+ *
+ * Crosshair sync across separate charts (AUT-912) is a dashboard-level setting
+ * (useCrosshairSync) — not a per-widget toggle. This widget only forwards a stable
+ * `syncGroupId` and reacts to the shared on/off state.
  */
 import { ref, computed, watch, shallowRef, onMounted, onUnmounted, nextTick } from 'vue'
 import { useEspStore } from '@/stores/esp'
 import { useZoneStore } from '@/shared/stores/zone.store'
 import MultiSensorChart from '@/components/charts/MultiSensorChart.vue'
 import type { ActuatorOverlay, ActuatorOverlayBlock, ActuatorOverlayEvent } from '@/components/charts/MultiSensorChart.vue'
-import { BarChart3, Plus, X, Download, GitCompareArrows, Zap } from 'lucide-vue-next'
+import { BarChart3, Plus, X, Download, Zap } from 'lucide-vue-next'
 import { CHART_COLORS, getChartColors } from '@/utils/chartColors'
 import { SENSOR_TYPE_CONFIG } from '@/utils/sensorDefaults'
 import { useSensorOptions } from '@/composables/useSensorOptions'
 import { useExportCsv } from '@/composables/useExportCsv'
 import { useToast } from '@/composables/useToast'
+import { useCrosshairSync } from '@/composables/useCrosshairSync'
 import { parseSensorId } from '@/composables/useSensorId'
 import { getAutoResolution, TIME_RANGE_MINUTES } from '@/utils/autoResolution'
 import { tokens } from '@/utils/cssTokens'
@@ -28,6 +31,7 @@ import {
   ACTUATOR_TIME_RANGE_LIMITS,
   isActuatorOn,
   isActuatorOff,
+  isConfigAckEntry,
 } from '@/composables/useActuatorHistory'
 import type { MockSensor, MockActuator, ChartSensor } from '@/types'
 
@@ -36,19 +40,24 @@ interface Props {
   dataSources?: string
   zoneId?: string
   title?: string
-  timeRange?: '1h' | '6h' | '24h' | '7d'
-  /** Compare mode: auto-fill sensors by sensorType + zone */
-  compareMode?: boolean
-  /** Sensor type to compare across subzones (e.g. "sht31_temp") */
-  compareSensorType?: string
-  /** Zone filter for compare mode; empty = use dashboard zoneId */
-  compareZoneId?: string
+  timeRange?: '1h' | '6h' | '24h' | '7d' | '30d'
   /** Comma-separated actuator IDs: "espId:gpio:actuatorType" (max 2, P8-A6c) */
   actuatorIds?: string
+  /** AUT-913 B3 / AUT-1055: overlay vs. difference comparison mode (persisted in widget config) */
+  comparisonMode?: 'overlay' | 'difference'
+  /**
+   * AUT-912: dashboard-level crosshair-sync group id (injected at mount by the host view).
+   * Active state comes from useCrosshairSync → drives MultiSensorChart `syncGroup`.
+   */
+  syncGroupId?: string
+  /** Y-axis range override from the config panel (Zone "Darstellung") — forwarded to MultiSensorChart */
+  yMin?: number
+  yMax?: number
 }
 
 const props = withDefaults(defineProps<Props>(), {
   timeRange: '24h',
+  comparisonMode: 'overlay',
 })
 
 const emit = defineEmits<{
@@ -58,6 +67,7 @@ const emit = defineEmits<{
 const espStore = useEspStore()
 const zoneStore = useZoneStore()
 const { exportSensorCsv, isExporting } = useExportCsv()
+const { isActive: isCrosshairSyncActive } = useCrosshairSync()
 const toast = useToast()
 const resolvedChartColors = getChartColors()
 const chartColorPalette = resolvedChartColors.length > 0 ? resolvedChartColors : [...CHART_COLORS]
@@ -66,69 +76,35 @@ const chartColorPalette = resolvedChartColors.length > 0 ? resolvedChartColors :
 const localDataSources = ref(props.dataSources || '')
 const localTimeRange = ref(props.timeRange)
 const localZoneId = ref<string | undefined>(props.zoneId)
-const localCompareMode = ref(props.compareMode ?? false)
-const localCompareSensorType = ref(props.compareSensorType || '')
-const localCompareZoneId = ref(props.compareZoneId || '')
 
 const localActuatorIds = ref(props.actuatorIds || '')
+const localComparisonMode = ref<'overlay' | 'difference'>(props.comparisonMode)
 
-watch(() => props.dataSources, (v) => { if (v) localDataSources.value = v })
-watch(() => props.timeRange, (v) => { if (v) localTimeRange.value = v })
+watch(() => props.dataSources, (v) => { if (v != null) localDataSources.value = v })
+watch(() => props.timeRange, (v, prev) => {
+  // Only adopt real config changes — avoid clobbering a zoom-expanded local range
+  // when the parent re-renders with the same stale prop.
+  if (v && v !== prev) localTimeRange.value = v
+})
+
+function handleTimeRangeUpdate(range: '1h' | '6h' | '24h' | '7d' | '30d'): void {
+  if (range === localTimeRange.value) return
+  localTimeRange.value = range
+  emit('update:config', { timeRange: range })
+}
 watch(() => props.zoneId, (v) => { localZoneId.value = v })
-watch(() => props.compareMode, (v) => { if (v != null) localCompareMode.value = v })
-watch(() => props.compareSensorType, (v) => { if (v) localCompareSensorType.value = v })
-watch(() => props.compareZoneId, (v) => { if (v) localCompareZoneId.value = v })
 watch(() => props.actuatorIds, (v) => { if (v != null) localActuatorIds.value = v })
+watch(() => props.comparisonMode, (v) => { if (v != null) localComparisonMode.value = v })
 
-// --- Manual mode sensor options ---
+function handleComparisonModeUpdate(mode: 'overlay' | 'difference'): void {
+  localComparisonMode.value = mode
+  emit('update:config', { comparisonMode: mode })
+}
+
+// --- Sensor options (chip picker, grouped Zone → Subzone) ---
 const { groupedSensorOptions, flatSensorOptions } = useSensorOptions(localZoneId)
 
-// --- Compare mode ---
-const effectiveCompareZoneId = computed(() =>
-  localCompareZoneId.value || localZoneId.value || ''
-)
-const compareZoneIdRef = computed(() => effectiveCompareZoneId.value || undefined)
-const { groupedSensorOptions: compareGroupedOptions } = useSensorOptions(compareZoneIdRef)
-
-/** Available sensor types within the selected compare zone */
-const availableCompareSensorTypes = computed(() => {
-  const typeMap = new Map<string, string>()
-  for (const zone of compareGroupedOptions.value) {
-    for (const subgroup of zone.subgroups) {
-      for (const opt of subgroup.options) {
-        if (!typeMap.has(opt.sensorType)) {
-          typeMap.set(opt.sensorType, SENSOR_TYPE_CONFIG[opt.sensorType]?.label || opt.sensorType)
-        }
-      }
-    }
-  }
-  return [...typeMap.entries()]
-    .map(([value, label]) => ({ value, label }))
-    .sort((a, b) => a.label.localeCompare(b.label))
-})
-
-/** Auto-filled sensors for compare mode (max 4, sorted alphabetically by subzone) */
-const compareSensors = computed(() => {
-  if (!localCompareMode.value || !localCompareSensorType.value) return []
-
-  const raw = compareGroupedOptions.value
-    .flatMap(zone => zone.subgroups)
-    .flatMap(subzone =>
-      subzone.options
-        .filter(opt => opt.sensorType === localCompareSensorType.value)
-        .map(opt => ({
-          sensorId: opt.value,
-          subzoneName: subzone.label || 'Zone-weit',
-          subzoneId: subzone.subzoneId,
-        }))
-    )
-
-  return [...raw]
-    .sort((a, b) => a.subzoneName.localeCompare(b.subzoneName))
-    .slice(0, 4)
-})
-
-// Parse selected sensor IDs from comma-separated string (manual mode)
+// Parse selected sensor IDs from comma-separated string
 const selectedSensorIds = computed(() => {
   if (!localDataSources.value) return []
   return localDataSources.value.split(',').filter(Boolean)
@@ -136,35 +112,7 @@ const selectedSensorIds = computed(() => {
 
 // Build ChartSensor[] for MultiSensorChart
 const chartSensors = computed<ChartSensor[]>(() => {
-  if (localCompareMode.value) {
-    // Compare mode: build from auto-filled compareSensors
-    return compareSensors.value
-      .map((cs, index) => {
-        const parsed = parseSensorId(cs.sensorId)
-        if (!parsed.isValid || !parsed.espId || parsed.gpio === null) return null
-
-        const device = espStore.devices.find(d => espStore.getDeviceId(d) === parsed.espId)
-        const sensor = device
-          ? ((device.sensors as MockSensor[]) || []).find(s =>
-              s.gpio === parsed.gpio && (!parsed.sensorType || s.sensor_type === parsed.sensorType)
-            )
-          : null
-        const sensorType = parsed.sensorType || 'unknown'
-
-        return {
-          id: `${parsed.espId}_${parsed.gpio}_${sensorType}`,
-          espId: parsed.espId,
-          gpio: parsed.gpio,
-          sensorType,
-          name: cs.subzoneName,
-          unit: sensor?.unit || SENSOR_TYPE_CONFIG[sensorType]?.unit || '',
-          color: chartColorPalette[index % chartColorPalette.length] as string,
-        }
-      })
-      .filter((s): s is ChartSensor => s !== null)
-  }
-
-  // Manual mode: parse from dataSources via parseSensorId (filter invalid)
+  // Parse from dataSources via parseSensorId (filter invalid)
   const result: ChartSensor[] = []
   selectedSensorIds.value.forEach((sId, idx) => {
     const parsed = parseSensorId(sId)
@@ -204,25 +152,20 @@ const configuredActuatorCount = computed(() =>
   localActuatorIds.value.split(',').map(id => id.trim()).filter(Boolean).length
 )
 
-const chartMinHeight = computed(() => {
-  const sensorCount = chartSensors.value.length
-  let minHeight = 170
-
-  if (sensorCount > 2) {
-    minHeight += Math.min((sensorCount - 2) * 14, 56)
-  }
-  if (configuredActuatorCount.value > 0) {
-    minHeight += 20
-  }
-  if (localCompareMode.value) {
-    minHeight += 12
-  }
-
-  return Math.min(minHeight, 280)
-})
-
+// AUT-1062: must never exceed the measured host height — the host wraps the
+// chart in `overflow: hidden` (:773), so a taller value gets clipped, not scrolled.
 const effectiveChartHeight = computed(() =>
-  Math.max(chartMinHeight.value, Math.round(chartHostHeight.value))
+  Math.max(0, Math.round(chartHostHeight.value - 8))
+)
+
+/**
+ * AUT-912: crosshair sync group. Resolved from the dashboard-level toggle
+ * (useCrosshairSync) keyed by the injected `syncGroupId`. When the dashboard has
+ * sync enabled, every multi-sensor chart sharing this group id syncs its
+ * crosshair/tooltip. Undefined = no cross-chart sync.
+ */
+const crosshairSyncGroup = computed<string | undefined>(() =>
+  isCrosshairSyncActive(props.syncGroupId) ? props.syncGroupId : undefined
 )
 
 function updateChartHostHeight(): void {
@@ -245,21 +188,6 @@ function removeSensor(sensorId: string) {
   const ids = selectedSensorIds.value.filter(id => id !== sensorId)
   localDataSources.value = ids.join(',')
   emit('update:config', { dataSources: localDataSources.value })
-}
-
-function toggleCompareMode() {
-  localCompareMode.value = !localCompareMode.value
-  emit('update:config', { compareMode: localCompareMode.value })
-}
-
-function updateCompareSensorType(value: string) {
-  localCompareSensorType.value = value
-  emit('update:config', { compareSensorType: value })
-}
-
-function updateCompareZoneId(value: string) {
-  localCompareZoneId.value = value
-  emit('update:config', { compareZoneId: value })
 }
 
 // --- CSV Export ---
@@ -418,7 +346,10 @@ async function fetchActuatorHistory(): Promise<void> {
             end_time: now.toISOString(),
             limit,
           }, signal)
-          return { id, entries: response.entries }
+          // AUT-1132 (A2): config-push ack entries (value=null) are not switch
+          // events — isActuatorOn/isActuatorOff below would misread them as OFF
+          // and inject a spurious overlay-block break / OFF marker on the chart.
+          return { id, entries: response.entries.filter(e => !isConfigAckEntry(e)) }
         } catch {
           return { id, entries: [] as ActuatorHistoryEntry[] }
         }
@@ -559,7 +490,6 @@ onUnmounted(() => {
 watch(
   () => [
     chartSensors.value.length,
-    localCompareMode.value,
     configuredActuatorCount.value,
   ],
   async () => {
@@ -571,47 +501,6 @@ watch(
 
 <template>
   <div class="multi-sensor-widget">
-    <!-- Mode toggle -->
-    <div class="multi-sensor-widget__mode-toggle">
-      <button
-        class="multi-sensor-widget__toggle-btn"
-        :class="{ 'multi-sensor-widget__toggle-btn--active': localCompareMode }"
-        :title="localCompareMode ? 'Manueller Modus' : 'Vergleichs-Modus'"
-        @click="toggleCompareMode"
-      >
-        <GitCompareArrows :size="14" />
-        <span>Vergleich</span>
-      </button>
-    </div>
-
-    <!-- Compare mode config -->
-    <div v-if="localCompareMode" class="multi-sensor-widget__compare-config">
-      <select
-        class="multi-sensor-widget__select"
-        :value="localCompareZoneId || localZoneId || ''"
-        @change="updateCompareZoneId(($event.target as HTMLSelectElement).value)"
-      >
-        <option value="" disabled>— Zone —</option>
-        <option
-          v-for="zone in zoneStore.activeZones"
-          :key="zone.zone_id"
-          :value="zone.zone_id"
-        >{{ zone.name }}</option>
-      </select>
-      <select
-        class="multi-sensor-widget__select"
-        :value="localCompareSensorType"
-        @change="updateCompareSensorType(($event.target as HTMLSelectElement).value)"
-      >
-        <option value="" disabled>— Sensortyp —</option>
-        <option
-          v-for="st in availableCompareSensorTypes"
-          :key="st.value"
-          :value="st.value"
-        >{{ st.label }}</option>
-      </select>
-    </div>
-
     <!-- Chart content -->
     <template v-if="chartSensors.length > 0">
       <!-- Sensor chips -->
@@ -628,16 +517,15 @@ watch(
           />
           {{ sensor.name }}
           <button
-            v-if="!localCompareMode"
             class="multi-sensor-widget__chip-remove"
             @click="removeSensor(selectedSensorIds[idx])"
           >
             <X :size="10" />
           </button>
         </span>
-        <!-- Add button (manual mode only) -->
+        <!-- Add sensor -->
         <button
-          v-if="!localCompareMode && availableSensors.length > 0"
+          v-if="availableSensors.length > 0"
           class="multi-sensor-widget__add-btn"
           @click="showAddDropdown = !showAddDropdown"
         >
@@ -651,7 +539,7 @@ watch(
         >
           <Download :size="12" />
         </button>
-        <div v-if="!localCompareMode && showAddDropdown" class="multi-sensor-widget__dropdown">
+        <div v-if="showAddDropdown" class="multi-sensor-widget__dropdown">
           <template v-for="zoneGroup in groupedSensorOptions" :key="zoneGroup.zoneId ?? '__unassigned'">
             <template v-for="subgroup in zoneGroup.subgroups" :key="`${zoneGroup.zoneId}_${subgroup.subzoneId ?? '__nosub'}`">
               <div class="multi-sensor-widget__dropdown-group">
@@ -670,7 +558,7 @@ watch(
       </div>
 
       <!-- Actuator chips (P8-A6c) -->
-      <div v-if="!localCompareMode" class="multi-sensor-widget__actuator-section">
+      <div class="multi-sensor-widget__actuator-section">
         <div class="multi-sensor-widget__actuator-chips">
           <span
             v-for="actId in selectedActuatorIds"
@@ -715,6 +603,12 @@ watch(
           :enable-live-updates="true"
           :height="effectiveChartHeight"
           :actuator-overlays="actuatorOverlays"
+          :sync-group="crosshairSyncGroup"
+          :comparison-mode="localComparisonMode"
+          :y-min="props.yMin"
+          :y-max="props.yMax"
+          @update:time-range="handleTimeRangeUpdate"
+          @update:comparison-mode="handleComparisonModeUpdate"
         />
       </div>
     </template>
@@ -722,31 +616,24 @@ watch(
     <!-- Empty state -->
     <div v-else class="multi-sensor-widget__empty">
       <BarChart3 class="w-8 h-8" style="opacity: 0.3" />
-      <template v-if="localCompareMode">
-        <p v-if="!effectiveCompareZoneId">Bitte Zone auswählen</p>
-        <p v-else-if="!localCompareSensorType">Bitte Sensortyp auswählen</p>
-        <p v-else>Keine passenden Sensoren in dieser Zone</p>
-      </template>
-      <template v-else>
-        <p>Sensoren für Multi-Chart auswählen{{ props.title ? ` für ${props.title}` : '' }}:</p>
-        <select
-          class="multi-sensor-widget__select"
-          @change="addSensor(($event.target as HTMLSelectElement).value); ($event.target as HTMLSelectElement).value = ''"
-        >
-          <option value="" disabled selected>— Sensor hinzufügen —</option>
-          <template v-for="zoneGroup in groupedSensorOptions" :key="zoneGroup.zoneId ?? '__unassigned'">
-            <template v-for="subgroup in zoneGroup.subgroups" :key="`${zoneGroup.zoneId}_${subgroup.subzoneId ?? '__nosub'}`">
-              <optgroup :label="subgroup.label ? `${zoneGroup.label} / ${subgroup.label}` : zoneGroup.label">
-                <option
-                  v-for="opt in subgroup.options"
-                  :key="opt.value"
-                  :value="opt.value"
-                >{{ opt.label }}</option>
-              </optgroup>
-            </template>
+      <p>Sensoren für Multi-Chart auswählen{{ props.title ? ` für ${props.title}` : '' }}:</p>
+      <select
+        class="multi-sensor-widget__select"
+        @change="addSensor(($event.target as HTMLSelectElement).value); ($event.target as HTMLSelectElement).value = ''"
+      >
+        <option value="" disabled selected>— Sensor hinzufügen —</option>
+        <template v-for="zoneGroup in groupedSensorOptions" :key="zoneGroup.zoneId ?? '__unassigned'">
+          <template v-for="subgroup in zoneGroup.subgroups" :key="`${zoneGroup.zoneId}_${subgroup.subzoneId ?? '__nosub'}`">
+            <optgroup :label="subgroup.label ? `${zoneGroup.label} / ${subgroup.label}` : zoneGroup.label">
+              <option
+                v-for="opt in subgroup.options"
+                :key="opt.value"
+                :value="opt.value"
+              >{{ opt.label }}</option>
+            </optgroup>
           </template>
-        </select>
-      </template>
+        </template>
+      </select>
     </div>
   </div>
 </template>
@@ -756,52 +643,6 @@ watch(
   height: 100%;
   display: flex;
   flex-direction: column;
-}
-
-.multi-sensor-widget__mode-toggle {
-  display: flex;
-  justify-content: flex-end;
-  padding: var(--space-1) var(--space-2) 0;
-  flex-shrink: 0;
-}
-
-.multi-sensor-widget__toggle-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  padding: var(--space-1) var(--space-2);
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--color-text-muted);
-  font-size: var(--text-xs);
-  cursor: pointer;
-  transition: all var(--transition-fast);
-  min-height: 28px;
-}
-
-.multi-sensor-widget__toggle-btn:hover {
-  border-color: var(--color-accent);
-  color: var(--color-text-secondary);
-}
-
-.multi-sensor-widget__toggle-btn--active {
-  border-color: var(--color-accent);
-  background: rgba(96, 165, 250, 0.1);
-  color: var(--color-accent);
-}
-
-.multi-sensor-widget__compare-config {
-  display: flex;
-  gap: var(--space-2);
-  padding: var(--space-1) var(--space-2);
-  flex-shrink: 0;
-}
-
-.multi-sensor-widget__compare-config .multi-sensor-widget__select {
-  flex: 1;
-  min-width: 0;
-  max-width: none;
 }
 
 .multi-sensor-widget__chips {
@@ -941,6 +782,8 @@ watch(
   flex: 1;
   min-height: 0;
   overflow: hidden;
+  padding-bottom: var(--space-2);
+  box-sizing: border-box;
 }
 
 .multi-sensor-widget__empty {

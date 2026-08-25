@@ -37,6 +37,7 @@ export interface QuickAction {
 export type ViewContext =
   | 'hardware'
   | 'monitor'
+  | 'dashboards'
   | 'logic'
   | 'system-monitor'
   | 'editor'

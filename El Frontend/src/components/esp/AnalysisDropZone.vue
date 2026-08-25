@@ -338,7 +338,7 @@ function clearAll() {
       <!-- Chart -->
       <MultiSensorChart
         :sensors="selectedSensors"
-        :time-range="timeRange"
+        v-model:time-range="timeRange"
         :height="compact ? 160 : 300"
       />
 

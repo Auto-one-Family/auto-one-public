@@ -25,6 +25,10 @@ import {
   Puzzle,
   Mail,
   Inbox,
+  Sprout,
+  Droplets,
+  CalendarRange,
+  Layers,
 } from 'lucide-vue-next'
 
 defineProps<{
@@ -143,6 +147,61 @@ function handlePendingClick() {
         <span>Komponenten</span>
       </RouterLink>
 
+      <RouterLink
+        v-if="!authStore.isViewer"
+        to="/plants"
+        :class="['sidebar__link', matchesRoutePrefix('/plants') && 'sidebar__link--active']"
+        @click="handleNavClick"
+      >
+        <div class="sidebar__link-indicator" />
+        <Sprout class="sidebar__link-icon" />
+        <span>Pflanzen</span>
+      </RouterLink>
+
+      <RouterLink
+        v-if="!authStore.isViewer"
+        to="/nutrient-solution"
+        :class="['sidebar__link', matchesRoutePrefix('/nutrient-solution') && 'sidebar__link--active']"
+        @click="handleNavClick"
+      >
+        <div class="sidebar__link-indicator" />
+        <Droplets class="sidebar__link-icon" />
+        <span>Nährlösung</span>
+      </RouterLink>
+
+      <RouterLink
+        v-if="!authStore.isViewer"
+        to="/plan-timeline"
+        :class="['sidebar__link', matchesRoutePrefix('/plan-timeline') && 'sidebar__link--active']"
+        @click="handleNavClick"
+      >
+        <div class="sidebar__link-indicator" />
+        <CalendarRange class="sidebar__link-icon" />
+        <span>Planung</span>
+      </RouterLink>
+
+      <RouterLink
+        v-if="!authStore.isViewer"
+        to="/domains"
+        :class="['sidebar__link', matchesRoutePrefix('/domains') && 'sidebar__link--active']"
+        @click="handleNavClick"
+      >
+        <div class="sidebar__link-indicator" />
+        <Layers class="sidebar__link-icon" />
+        <span>Domänen</span>
+      </RouterLink>
+
+      <RouterLink
+        v-if="!authStore.isViewer"
+        to="/calibration"
+        :class="['sidebar__link', matchesRoutePrefix('/calibration') && 'sidebar__link--active']"
+        @click="handleNavClick"
+      >
+        <div class="sidebar__link-indicator" />
+        <SlidersHorizontal class="sidebar__link-icon" />
+        <span>Kalibrierung</span>
+      </RouterLink>
+
       <!-- TODO replace isViewer with capability check -->
       <RouterLink
         v-if="authStore.isViewer"
@@ -182,16 +241,6 @@ function handlePendingClick() {
         </RouterLink>
 
         <RouterLink
-          to="/calibration"
-          :class="['sidebar__link', matchesRoutePrefix('/calibration') && 'sidebar__link--active']"
-          @click="handleNavClick"
-        >
-          <div class="sidebar__link-indicator" />
-          <SlidersHorizontal class="sidebar__link-icon" />
-          <span>Kalibrierung</span>
-        </RouterLink>
-
-        <RouterLink
           to="/plugins"
           :class="['sidebar__link', matchesRoutePrefix('/plugins') && 'sidebar__link--active']"
           @click="handleNavClick"
@@ -223,7 +272,7 @@ function handlePendingClick() {
       >
         <div class="sidebar__link-indicator" />
         <Inbox class="sidebar__link-icon" />
-        <span>Geräte</span>
+        <span>Neue Geräte</span>
         <span v-if="pendingCount > 0" class="sidebar__pending-badge">{{ pendingCount }}</span>
       </button>
 

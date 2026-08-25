@@ -89,6 +89,11 @@ const decimals = computed(() => getSensorConfig(props.sensorType)?.decimals ?? 2
 
 const formattedValue = computed(() => {
   if (currentValue.value === null) return null
+  // AUT-1024: liquid_level shows a text status instead of a bare 0/1,
+  // mirroring SensorCard.vue's formatValue().
+  if (props.sensorType.toLowerCase() === 'liquid_level') {
+    return currentValue.value >= 1 ? 'Erkannt' : 'Kein Kontakt'
+  }
   return new Intl.NumberFormat('de-DE', {
     minimumFractionDigits: decimals.value,
     maximumFractionDigits: decimals.value,

@@ -1,17 +1,16 @@
 <script setup lang="ts">
 /**
- * SensorConfigPanel — Three-Zone Sensor Configuration
+ * SensorConfigPanel — Config-only tabs (AUT-1129 S4, same shell as ActuatorConfigPanel)
  *
- * Zone 1 (Basic, always visible): Name, Unit, Enabled, Subzone
- * Zone 2 (Accordion): Thresholds & Alarms, Operation & Interval, Calibration
- * Zone 3 (Accordion - Expert): Hardware (GPIO/I2C/OneWire), Live Preview
- *
- * Used inside ESPSettingsSheet as SlideOver panel (HardwareView only, Route /hardware).
+ * Grundlagen | Hardware | Kalibrierung (nur kalibrierungspflichtige Typen) | Alerts & Wartung.
+ * Live-Messwert und verknuepfte Regeln sind NICHT hier — sie leben in DeviceStatusPanel
+ * (docked next to this panel in ConfigWizardModal). Kalibrierungs-Assistent bleibt eine
+ * Stelle: Deep-Link zu CalibrationWizard.vue, keine Duplikat-UI.
  */
 
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { Save, Gauge, Settings, Cpu, Trash2, LayoutGrid, Workflow, ExternalLink, Info, FileText, Sprout, AlertTriangle, AlertCircle } from 'lucide-vue-next'
+import { Save, Gauge, Settings, Cpu, Droplets, Bell, Trash2, LayoutGrid, Workflow, ExternalLink, Info, FileText, Sprout, AlertTriangle, AlertCircle } from 'lucide-vue-next'
 import { sensorsApi } from '@/api/sensors'
 import { espApi } from '@/api/esp'
 import { useEspStore } from '@/stores/esp'
@@ -19,14 +18,12 @@ import { useUiStore } from '@/shared/stores/ui.store'
 import { useToast } from '@/composables/useToast'
 import { inferInterfaceType } from '@/utils/sensorDefaults'
 import { roundToDecimals } from '@/utils/formatters'
-import { SENSOR_TYPE_CONFIG, getSensorUnit } from '@/utils/sensorDefaults'
-import { AccordionSection } from '@/shared/design/primitives'
+import { SENSOR_TYPE_CONFIG, getSensorUnit, getSensorConfig, getMultiValueDeviceConfigBySensorType } from '@/utils/sensorDefaults'
+import { AccordionSection, type TabItem } from '@/shared/design/primitives'
 import RangeSlider from '@/shared/design/primitives/RangeSlider.vue'
-import LiveDataPreview from './LiveDataPreview.vue'
 import AlertConfigSection from '@/components/devices/AlertConfigSection.vue'
 import RuntimeMaintenanceSection from '@/components/devices/RuntimeMaintenanceSection.vue'
 import DeviceMetadataSection from '@/components/devices/DeviceMetadataSection.vue'
-import LinkedRulesSection from '@/components/devices/LinkedRulesSection.vue'
 import SubzoneAssignmentSection from '@/components/devices/SubzoneAssignmentSection.vue'
 import SettingsBreadcrumb from '@/components/settings/SettingsBreadcrumb.vue'
 import { useDashboardStore } from '@/shared/stores/dashboard.store'
@@ -61,12 +58,18 @@ interface Props {
   /** Sensor config UUID from database (required for DELETE on real ESPs) */
   configId?: string
   showMetadata?: boolean
+  /** AUT-1130 (Verify P10): tab selection now lives in ConfigWizardModal (full-width
+   *  header row, spans both panels) — this component only reads which tab is active. */
+  activeTab: string
+  /** AUT-1522: CWM owns BaseModal #footer — hide the inner-scroll action row. */
+  hideActions?: boolean
 }
 
 const props = withDefaults(defineProps<Props>(), {
   unit: '',
   configId: undefined,
   showMetadata: true,
+  hideActions: false,
 })
 
 const emit = defineEmits<{
@@ -74,6 +77,12 @@ const emit = defineEmits<{
   saved: []
   /** AUT-251: User wants to edit zone — open ESP-Settings-Sheet for current device */
   'open-esp-settings': [payload: { espId: string }]
+  /**
+   * AUT-911/912: Operator switched to a sibling sub-value of a multi-value sensor
+   * (e.g. SHT31 Temperatur ↔ Luftfeuchte). The parent re-opens the panel for the
+   * sibling config_id so each sub-value keeps its own base + alert thresholds.
+   */
+  'switch-sub-value': [payload: { configId: string | undefined; sensorType: string; unit: string }]
 }>()
 
 /** AUT-251: Emit request to open ESP-Settings-Sheet (zone is edited there). */
@@ -112,11 +121,16 @@ const subzoneId = ref<string | null>(null)
 // AUT-299: Linked temperature sensor for ATC (Automatic Temperature Compensation)
 const tempSensorConfigId = ref<string | null>(null)
 
-// Device Scope (T13-R3 WP4) — UI auf Sensor-Ebene entfernt (AUT-251),
-// Werte werden weiterhin geladen/gespeichert um Backend-Kompatibilitaet zu wahren.
+// Device Scope (T13-R3 WP4) — State bleibt kanonisch hier (AUT-1535 / S4).
+// UI hängt an localScope im Grundlagen-Tab; DeviceScopeSection bleibt unmounted.
 const localScope = ref<DeviceScope>('zone_local')
 const localAssignedZones = ref<string[]>([])
 const activeZoneId = ref<string | null>(null)
+const DEVICE_SCOPE_OPTIONS: ReadonlyArray<{ value: DeviceScope; label: string }> = [
+  { value: 'zone_local', label: 'Lokal' },
+  { value: 'multi_zone', label: 'Multi-Zone' },
+  { value: 'mobile', label: 'Mobil' },
+]
 
 // Operating mode (Block C: Phase 2B)
 const operatingMode = ref<'continuous' | 'on_demand' | 'scheduled' | 'paused'>('continuous')
@@ -137,7 +151,10 @@ const calibrationIntervalDays = ref<number | null>(null)
 const calibrationData = ref<Record<string, unknown> | null>(null)
 
 const calibrationStatusSummary = computed(() => {
-  const data = calibrationData.value
+  const storeCalibration = (contextSensor.value as { calibration?: Record<string, unknown> | null } | null)?.calibration
+  const data = (storeCalibration && typeof storeCalibration === 'object')
+    ? storeCalibration
+    : calibrationData.value
   if (!data || typeof data !== 'object') {
     return { calibrated: false, label: 'Nicht kalibriert — Werte unzuverlässig' }
   }
@@ -181,12 +198,46 @@ const CRON_PRESETS = [
 
 // Interface-specific
 const interfaceType = computed(() => inferInterfaceType(props.sensorType))
+
+// AUT-873 UX-01: Name-Platzhalter aus dem Interface ableiten statt überall "pH Becken Ost"
+const namePlaceholder = computed(() => {
+  switch (interfaceType.value) {
+    case 'UART': return 'z.B. CO2 Gewächshaus Mitte'
+    case 'I2C': return 'z.B. Luftfeuchte Überwinterung'
+    case 'ONEWIRE': return 'z.B. Temp Wurzelzone'
+    case 'DIGITAL': return 'z.B. Füllstand Tank A'
+    case 'ANALOG': return 'z.B. pH Becken Ost'
+    default: return 'z.B. Sensor-Beschreibung'
+  }
+})
+
 const gpioPin = ref(props.gpio)
 const i2cAddress = ref('0x44')
 const i2cBus = ref(0)
 const measureRangeMin = ref(0)
 const measureRangeMax = ref(100)
 const pulsesPerLiter = ref(330)
+
+// AUT-1313: Messintervall (API interval_ms ↔ UI Sekunden). FW honoriert nur ganze
+// Sekunden (1–300); Server mappt via ms_to_seconds (integer division).
+const MIN_INTERVAL_SECONDS = 1
+const MAX_INTERVAL_SECONDS = 300
+const DEFAULT_INTERVAL_SECONDS = 30
+const intervalSeconds = ref(DEFAULT_INTERVAL_SECONDS)
+
+/** Convert API interval_ms → clamped integer seconds for the form field. */
+function intervalMsToSeconds(intervalMs: number | null | undefined): number {
+  const ms = typeof intervalMs === 'number' && Number.isFinite(intervalMs) ? intervalMs : DEFAULT_INTERVAL_SECONDS * 1000
+  const seconds = Math.round(ms / 1000)
+  return Math.min(MAX_INTERVAL_SECONDS, Math.max(MIN_INTERVAL_SECONDS, seconds || DEFAULT_INTERVAL_SECONDS))
+}
+
+/** Convert form seconds → interval_ms for the save payload. */
+function intervalSecondsToMs(seconds: number | null | undefined): number {
+  const raw = typeof seconds === 'number' && Number.isFinite(seconds) ? Math.round(seconds) : DEFAULT_INTERVAL_SECONDS
+  const clamped = Math.min(MAX_INTERVAL_SECONDS, Math.max(MIN_INTERVAL_SECONDS, raw))
+  return clamped * 1000
+}
 
 // External ADC source (ADS1115) — only relevant for analog probes (pH/EC).
 // adc_source='internal' keeps the unchanged ESP32 12-bit ADC path (default).
@@ -205,6 +256,13 @@ const PGA_GAIN_OPTIONS: Array<{ value: typeof pgaGain.value; label: string }> = 
   { value: '0.512', label: '±0.512 V' },
   { value: '0.256', label: '±0.256 V' },
 ]
+
+// Digital sensor polarity (liquid_level: PNP = active_high, NPN = active_low)
+const polarity = ref<'active_low' | 'active_high'>('active_low')
+const POLARITY_OPTIONS: Array<{ value: typeof polarity.value; label: string }> = [
+  { value: 'active_low', label: 'NPN (LOW = erkannt)' },
+  { value: 'active_high', label: 'PNP (HIGH = erkannt)' },
+]
 const useAds1115 = computed(() => interfaceType.value === 'ANALOG' && adcSource.value === 'ads1115')
 
 // Thresholds
@@ -212,6 +270,10 @@ const alarmLow = ref(0)
 const warnLow = ref(0)
 const warnHigh = ref(100)
 const alarmHigh = ref(100)
+// AUT-1104: track whether the user has actively changed thresholds in this session
+const thresholdsTouched = ref(false)
+// AUT-1104: true when at least one threshold value was loaded from DB (non-null) — must re-send on save
+const thresholdsPreviouslyConfigured = ref(false)
 
 // Device Metadata
 const metadata = ref<DeviceMetadata>({})
@@ -221,6 +283,12 @@ const metadata = ref<DeviceMetadata>({})
 // =============================================================================
 
 const sensorConfig = computed(() => SENSOR_TYPE_CONFIG[props.sensorType])
+
+// AUT-873 UX-04: leeres/NULL operating_mode = "Typ-Default" — aus Registry aufloesen statt hart 'continuous'
+function resolveOperatingMode(value: unknown): 'continuous' | 'on_demand' | 'scheduled' | 'paused' {
+  const v = value as 'continuous' | 'on_demand' | 'scheduled' | 'paused' | null | undefined
+  return v || getSensorConfig(props.sensorType)?.recommendedMode || 'continuous'
+}
 const defaultUnit = computed(() => getSensorUnit(props.sensorType) || props.unit || '')
 
 // AUT-299: Is this sensor a pH or EC sensor that can use ATC?
@@ -264,12 +332,16 @@ const calibrationHealthState = computed((): {
   slopePct: number | null
   calibratedAt: string | null
 } => {
-  const data = calibrationData.value
+  const storeCalibration = (contextSensor.value as { calibration?: Record<string, unknown> | null } | null)?.calibration
+  const data = (storeCalibration && typeof storeCalibration === 'object')
+    ? storeCalibration
+    : calibrationData.value
   if (!data || typeof data !== 'object') return { state: 'uncalibrated', slopePct: null, calibratedAt: null }
   const result = (data.calibration_result as Record<string, unknown> | undefined) ?? data
+  const derived = (data.derived as Record<string, unknown> | undefined) ?? data
   const slopePct = result.slope_deviation_pct as number | null | undefined
   const calibratedAt = (data.metadata as Record<string, unknown> | undefined)?.calibrated_at
-    ?? data.calibrated_at ?? result.calibrated_at
+    ?? data.calibrated_at ?? derived.calibrated_at ?? result.calibrated_at
   const calStr = calibratedAt ? String(calibratedAt) : null
   if (slopePct == null) return calStr ? { state: 'healthy', slopePct: null, calibratedAt: calStr } : { state: 'uncalibrated', slopePct: null, calibratedAt: null }
   if (slopePct <= 15) return { state: 'healthy', slopePct, calibratedAt: calStr }
@@ -339,9 +411,9 @@ const recentLifecycleEvents = computed<PlantLifecycleEvent[]>(() => {
   const plant = subzonePlant.value
   if (!plant) return []
   const events = plant.lifecycle_events ?? []
-  // events kommen vom Server in der Regel absteigend; Defensiv erneut sortieren.
+  // AUT-1181: sort by event_timestamp (backfill-aware), not created_at.
   return [...events]
-    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+    .sort((a, b) => new Date(b.event_timestamp).getTime() - new Date(a.event_timestamp).getTime())
     .slice(0, 3)
 })
 
@@ -407,11 +479,19 @@ async function applyPlantThresholds(): Promise<void> {
     if (t.warn_low != null) warnLow.value = roundToDecimals(t.warn_low, 2)
     if (t.warn_high != null) warnHigh.value = roundToDecimals(t.warn_high, 2)
     if (t.alarm_high != null) alarmHigh.value = roundToDecimals(t.alarm_high, 2)
+    // AUT-1104: explicit user action — mark as touched so handleSave includes thresholds
+    thresholdsTouched.value = true
     await handleSave()
   } finally {
     applyingPlantThresholds.value = false
   }
 }
+
+// AUT-1104: RangeSlider update handlers — set thresholdsTouched on any drag
+function updateAlarmLow(v: number): void { alarmLow.value = v; thresholdsTouched.value = true }
+function updateWarnLow(v: number): void { warnLow.value = v; thresholdsTouched.value = true }
+function updateWarnHigh(v: number): void { warnHigh.value = v; thresholdsTouched.value = true }
+function updateAlarmHigh(v: number): void { alarmHigh.value = v; thresholdsTouched.value = true }
 
 const isI2C = computed(() => interfaceType.value === 'I2C')
 const isOneWire = computed(() => interfaceType.value === 'ONEWIRE')
@@ -420,6 +500,28 @@ const isDigital = computed(() => props.sensorType.toLowerCase().includes('flow')
 const contextDevice = computed(() =>
   espStore.devices.find((device) => espStore.getDeviceId(device) === props.espId),
 )
+const scopeZoneOptions = computed(() =>
+  zoneStore.zoneEntities.filter(z => z.status === 'active'),
+)
+
+function onLocalScopeChange(event: Event): void {
+  const next = (event.target as HTMLSelectElement).value as DeviceScope
+  localScope.value = next
+  if (next === 'zone_local') {
+    localAssignedZones.value = []
+  }
+}
+
+function onAssignedZoneToggle(zoneId: string, checked: boolean): void {
+  const current = [...localAssignedZones.value]
+  if (checked && !current.includes(zoneId)) {
+    current.push(zoneId)
+  } else if (!checked) {
+    const idx = current.indexOf(zoneId)
+    if (idx !== -1) current.splice(idx, 1)
+  }
+  localAssignedZones.value = current
+}
 const deviceHardwareType = computed(() => contextDevice.value?.hardware_type ?? null)
 const {
   layout: boardLayout,
@@ -455,6 +557,81 @@ const i2cAddressOptions = computed(() => {
 
 /** Storage key prefix for accordion persistence */
 const accordionKey = computed(() => `sensor-${props.espId}-${props.gpio}`)
+
+// =============================================================================
+// AUT-1129 (S4): Sensor-Paritaet — gleiche Tab-Huelle wie ActuatorConfigPanel.
+// Kalibrierung nur bei Sensor-Typen mit periodischer Kalibrierung (isCalibrationRequired) —
+// dieselbe Gating-Bedingung wie zuvor die "Kalibrierungs-Alerts"-Sub-Sektion.
+// AUT-1130 (Verify P10): die Tab-LEISTE selbst rendert ConfigWizardModal in einer
+// vollen-Breite Kopfzeile (statt in dieser schmalen Spalte gequetscht) — dieses
+// Component liefert per defineExpose nur noch die Tab-Liste, `activeTab` kommt als
+// Prop von dort.
+// =============================================================================
+const tabs = computed<TabItem[]>(() => {
+  const list: TabItem[] = [
+    { key: 'grundlagen', label: 'Grundlagen', icon: Settings },
+    { key: 'hardware', label: 'Hardware', icon: Cpu },
+  ]
+  if (isCalibrationRequired.value) {
+    list.push({ key: 'kalibrierung', label: 'Kalibrierung', icon: Droplets })
+  }
+  list.push({ key: 'alerts', label: 'Alerts & Wartung', icon: Bell })
+  return list
+})
+
+// =============================================================================
+// AUT-911/912: Multi-Value Sub-Wert-Umschalter
+// Each sub-value (sht31_temp, sht31_humidity, ...) is its own SensorConfig
+// (config_id) with its own base + alert thresholds. The panel edits exactly one
+// sub-value; this switcher lets the operator jump to a sibling without leaving
+// the panel. Mirrors the SensorTile subValueOptions pattern (config_id-based).
+// =============================================================================
+interface SubValueOption {
+  configId: string | undefined
+  sensorType: string
+  label: string
+  unit: string
+}
+
+const subValueOptions = computed<SubValueOption[]>(() => {
+  const device = contextDevice.value
+  if (!device) return []
+  const mvDevice = getMultiValueDeviceConfigBySensorType(props.sensorType)
+  if (!mvDevice) return []
+
+  const siblings = ((device.sensors ?? []) as Array<{
+    gpio: number
+    sensor_type: string
+    config_id?: string
+    unit?: string
+  }>).filter((s) => Number(s.gpio) === props.gpio)
+
+  const options: SubValueOption[] = []
+  for (const value of mvDevice.values) {
+    const match = siblings.find((s) => s.sensor_type === value.sensorType)
+    if (match) {
+      options.push({
+        configId: match.config_id,
+        sensorType: value.sensorType,
+        label: value.label,
+        unit: value.unit,
+      })
+    }
+  }
+  return options
+})
+
+/** Show the switcher only when at least two sub-values are configured on this GPIO. */
+const hasSubValues = computed(() => subValueOptions.value.length > 1)
+
+function selectSubValue(option: SubValueOption): void {
+  if (option.sensorType === props.sensorType) return
+  emit('switch-sub-value', {
+    configId: option.configId,
+    sensorType: option.sensorType,
+    unit: option.unit,
+  })
+}
 
 // =============================================================================
 // AUT-246: Cross-References (Verlinkte Quellen) — read-only
@@ -547,11 +724,6 @@ const sensorAlertIcon = computed(() => {
   return sensorActiveAlerts.value.some(n => n.severity === 'critical') ? AlertCircle : AlertTriangle
 })
 
-/** True when any active alert for this sensor was triggered by the logic engine */
-const hasRuleTriggeredAlert = computed(() =>
-  sensorActiveAlerts.value.some(n => n.source === 'logic_engine')
-)
-
 function navigateToWidget(entry: LinkedWidgetEntry): void {
   router.push({ name: 'editor-dashboard', params: { dashboardId: entry.layoutId } })
 }
@@ -582,7 +754,13 @@ onMounted(async () => {
       const i2cVal = config.i2c_address
       i2cAddress.value = i2cVal != null ? `0x${Number(i2cVal).toString(16)}` : '0x44'
       i2cBus.value = (configExt.i2c_bus as number) ?? 0
-      pulsesPerLiter.value = (configExt.pulses_per_liter as number) ?? 330
+      // AUT-873 C2-a: pulses_per_liter lebt im calibration-Vertrag (canonical: calibration.derived), nicht top-level
+      const calibObj = config.calibration as Record<string, unknown> | null | undefined
+      const calibDerived = ((calibObj?.derived ?? calibObj) as Record<string, unknown> | null | undefined)
+      pulsesPerLiter.value = (calibDerived?.pulses_per_liter as number) ?? 330
+
+      // AUT-1313: Messintervall aus GET (interval_ms) → Sekunden-Anzeige
+      intervalSeconds.value = intervalMsToSeconds(config.interval_ms)
 
       // External ADC source (ADS1115) — hydrate for analog probes
       adcSource.value = (configExt.adc_source as 'internal' | 'ads1115') ?? 'internal'
@@ -597,11 +775,15 @@ onMounted(async () => {
         pgaGain.value = loadedPga as typeof pgaGain.value
       }
 
+      // Polarity — liquid_level only
+      polarity.value = (configExt.polarity as 'active_low' | 'active_high') ?? 'active_low'
+
       // Subzone (C1: backend returns subzone_id in GET response)
       subzoneId.value = config.subzone_id ?? null
 
       // Operating mode (Block C: backend returns operating_mode, timeout_seconds)
-      operatingMode.value = (config.operating_mode as 'continuous' | 'on_demand' | 'scheduled' | 'paused') || 'continuous'
+      // AUT-873 UX-04: NULL = Typ-Default (z.B. pH -> on_demand), nicht pauschal 'continuous'
+      operatingMode.value = resolveOperatingMode(config.operating_mode)
       timeoutSeconds.value = config.timeout_seconds ?? 0
 
       // schedule_config (Auftrag 5: backend returns schedule_config)
@@ -620,6 +802,15 @@ onMounted(async () => {
       if (config.warning_min != null) warnLow.value = roundToDecimals(config.warning_min, 2)
       if (config.warning_max != null) warnHigh.value = roundToDecimals(config.warning_max, 2)
       if (config.threshold_max != null) alarmHigh.value = roundToDecimals(config.threshold_max, 2)
+      // AUT-1104: mark as previously configured if any threshold field was present in DB
+      if (
+        config.threshold_min != null ||
+        config.warning_min != null ||
+        config.warning_max != null ||
+        config.threshold_max != null
+      ) {
+        thresholdsPreviouslyConfigured.value = true
+      }
 
       metadata.value = parseDeviceMetadata(config.metadata)
 
@@ -646,7 +837,7 @@ onMounted(async () => {
         name.value = sensor.name ?? ''
         unitValue.value = sensor.unit ?? defaultUnit.value
         subzoneId.value = sensor.subzone_id ?? null
-        operatingMode.value = (sensor as any).operating_mode || 'continuous'
+        operatingMode.value = resolveOperatingMode((sensor as any).operating_mode)
         timeoutSeconds.value = (sensor as any).timeout_seconds ?? 0
         const sc = (sensor as any).schedule_config
         scheduleConfig.value =
@@ -655,6 +846,7 @@ onMounted(async () => {
             : null
         measurementFreshnessHours.value = (sensor as any).measurement_freshness_hours ?? null
         calibrationIntervalDays.value = (sensor as any).calibration_interval_days ?? null
+        intervalSeconds.value = intervalMsToSeconds((sensor as any).interval_ms)
       } else {
         unitValue.value = defaultUnit.value
       }
@@ -762,21 +954,31 @@ async function handleSave() {
     // Block A: Real AND Mock — persist via Backend (Single Source of Truth: subzone_configs)
     const config: Record<string, unknown> = {
       esp_id: props.espId,
-      gpio: props.gpio,
+      gpio: adcSource.value === 'ads1115' ? 0 : props.gpio,
       sensor_type: props.sensorType,
       name: name.value || null,
       description: description.value || null,
       unit: unitValue.value || null,
       enabled: enabled.value,
+      // AUT-1313: always send interval_ms so Schema-Default 30000 cannot silent-overwrite
+      interval_ms: intervalSecondsToMs(intervalSeconds.value),
       interface_type: interfaceType.value,
-      threshold_min: alarmLow.value,
-      threshold_max: alarmHigh.value,
-      warning_min: warnLow.value,
-      warning_max: warnHigh.value,
       operating_mode: operatingMode.value,
       timeout_seconds: timeoutSeconds.value,
       measurement_freshness_hours: measurementFreshnessHours.value,
       calibration_interval_days: calibrationIntervalDays.value,
+    }
+
+    // AUT-1104: only persist thresholds when the user has actively set them in this
+    // session (thresholdsTouched) or when they were already stored in the DB and must
+    // be retained on re-save (thresholdsPreviouslyConfigured). Omitting these keys
+    // entirely when neither flag is set prevents the generic UI default (0/100/0/100)
+    // from silently overwriting the server-side sensor-type fallback.
+    if (thresholdsTouched.value || thresholdsPreviouslyConfigured.value) {
+      config.threshold_min = alarmLow.value
+      config.threshold_max = alarmHigh.value
+      config.warning_min = warnLow.value
+      config.warning_max = warnHigh.value
     }
 
     // schedule_config (Auftrag 5): nur bei scheduled senden
@@ -795,7 +997,17 @@ async function handleSave() {
     }
 
     if (isDigital.value) {
-      config.pulses_per_liter = pulsesPerLiter.value
+      // AUT-873 C2-a: in den calibration-Vertrag schreiben (Backend canonicalisiert flach -> derived).
+      // Bestehende Kalibrierwerte erhalten; top-level pulses_per_liter wuerde vom Schema verworfen.
+      const existing = calibrationData.value as Record<string, unknown> | null
+      const baseDerived = ((existing?.derived ?? existing) as Record<string, unknown> | null) ?? {}
+      config.calibration = existing && 'derived' in existing
+        ? { ...existing, derived: { ...baseDerived, pulses_per_liter: pulsesPerLiter.value } }
+        : { ...baseDerived, pulses_per_liter: pulsesPerLiter.value }
+    }
+
+    if (props.sensorType.toLowerCase() === 'liquid_level') {
+      config.polarity = polarity.value
     }
 
     if (isAnalog.value) {
@@ -911,6 +1123,9 @@ async function handleSave() {
     saving.value = false
   }
 }
+
+/** AUT-1130 / AUT-1522: CWM reads tabs + footer actions. */
+defineExpose({ tabs, handleSave, confirmAndDelete, saving, deleting, loading })
 </script>
 
 <template>
@@ -923,8 +1138,29 @@ async function handleSave() {
         :zone="zoneContextLabel"
         :subzone="subzoneContextLabel"
         :esp-id="espId"
-        :gpio="gpio"
       />
+
+      <!-- AUT-911/912: Sub-Wert-Umschalter fuer Multi-Value-Sensoren (SHT31, BME280, ...).
+           Jeder Sub-Wert hat eigene Basis- und Alert-Schwellen — hier getrennt pflegbar. -->
+      <div
+        v-if="hasSubValues"
+        class="sensor-config__subvalue-switch"
+        role="tablist"
+        aria-label="Messwert dieses Multi-Value-Sensors waehlen"
+      >
+        <button
+          v-for="opt in subValueOptions"
+          :key="opt.sensorType"
+          type="button"
+          role="tab"
+          :aria-selected="opt.sensorType === sensorType"
+          class="sensor-config__subvalue-tab"
+          :class="{ 'sensor-config__subvalue-tab--active': opt.sensorType === sensorType }"
+          @click="selectSubValue(opt)"
+        >
+          {{ opt.label }}
+        </button>
+      </div>
 
       <!-- AUT-623: Active alert indicator (only shown when alert exists for this sensor) -->
       <div v-if="sensorHasActiveAlert" class="sensor-config__alert-notice">
@@ -935,10 +1171,16 @@ async function handleSave() {
       <section v-if="isMockEsp" class="sensor-config__simulation-badge" aria-label="Simulation Hinweis">
         [Simulation] Mock-ESP - Aktionen werden simuliert.
       </section>
-      <!-- ═══ ZONE 1: BASIC (always visible) ══════════════════════════════ -->
-      <section class="sensor-config__section">
-        <h3 class="sensor-config__section-title">Grundeinstellungen</h3>
 
+      <!-- AUT-1128 (S3): Live-Vorschau + Verknuepfte Regeln leben jetzt im
+           angedockten DeviceStatusPanel (ConfigWizardModal, rechte Spalte). -->
+
+      <!-- AUT-1129 (S4): gleiche Tab-Huelle wie ActuatorConfigPanel. AUT-1130
+           (Verify P10): Tab-Leiste selbst rendert jetzt ConfigWizardModal (volle
+           Modal-Breite, siehe defineExpose({ tabs }) unten) — hier nur der Inhalt. -->
+
+      <!-- Tab: Grundlagen -->
+      <div v-show="activeTab === 'grundlagen'" class="sensor-config__tab-panel">
         <!-- Zone: read-only, vom Geraet vererbt (Subzone wird unten als Dropdown gepflegt) -->
         <!-- AUT-251: Zone gehoert zum Geraet, NICHT zum Sensor — "im Geraet aendern" oeffnet ESP-Settings -->
         <div class="sensor-config__zone-header">
@@ -965,7 +1207,7 @@ async function handleSave() {
             v-model="name"
             type="text"
             class="sensor-config__input"
-            placeholder="z.B. pH Becken Ost"
+            :placeholder="namePlaceholder"
           />
         </div>
 
@@ -993,10 +1235,15 @@ async function handleSave() {
         <div class="sensor-config__field sensor-config__field--toggle">
           <label class="sensor-config__label">Aktiv</label>
           <button
-            :class="['sensor-config__toggle', { 'sensor-config__toggle--on': enabled }]"
+            type="button"
+            role="switch"
+            :aria-checked="enabled"
+            :class="['toggle-switch touch-target hardware-onoff-control', { 'toggle-switch--on': enabled }]"
+            data-testid="sensor-config-enable-toggle"
+            aria-label="Sensor aktivieren"
             @click="enabled = !enabled"
           >
-            <span class="sensor-config__toggle-dot" />
+            <span class="toggle-switch__thumb" />
           </button>
         </div>
 
@@ -1006,8 +1253,53 @@ async function handleSave() {
             v-model="subzoneId"
             :esp-id="espId"
             :gpio="gpio"
+            :sensor-config-id="props.configId ?? sensorDbId"
             :zone-id="espStore.devices.find(d => espStore.getDeviceId(d) === espId)?.zone_id ?? null"
           />
+        </div>
+
+        <!-- AUT-1388 / S4: vorhandenes localScope sichtbar — kein DeviceScopeSection-Mount. -->
+        <div class="sensor-config__field" data-testid="sensor-config-device-scope">
+          <label class="sensor-config__label" for="sensor-device-scope">Zonen-Reichweite</label>
+          <select
+            id="sensor-device-scope"
+            class="sensor-config__select"
+            :value="localScope"
+            aria-label="Zonen-Reichweite des Sensors"
+            data-testid="sensor-config-device-scope-select"
+            @change="onLocalScopeChange"
+          >
+            <option v-for="opt in DEVICE_SCOPE_OPTIONS" :key="opt.value" :value="opt.value">
+              {{ opt.label }}
+            </option>
+          </select>
+          <span class="sensor-config__helper">
+            Wie weit dieser Sensor Zonen bedient — nicht die Auswertungs-Domäne, nicht an die Firmware.
+          </span>
+        </div>
+
+        <div
+          v-if="localScope !== 'zone_local'"
+          class="sensor-config__field"
+          data-testid="sensor-config-assigned-zones"
+        >
+          <label class="sensor-config__label">Zugewiesene Zonen</label>
+          <label
+            v-for="zone in scopeZoneOptions"
+            :key="zone.zone_id"
+            class="sensor-config__checkbox"
+          >
+            <input
+              type="checkbox"
+              :checked="localAssignedZones.includes(zone.zone_id)"
+              :aria-label="`Zone ${zone.name} zuweisen`"
+              @change="onAssignedZoneToggle(zone.zone_id, ($event.target as HTMLInputElement).checked)"
+            />
+            <span>{{ zone.name }}</span>
+          </label>
+          <span v-if="scopeZoneOptions.length === 0" class="sensor-config__helper">
+            Keine aktiven Zonen vorhanden
+          </span>
         </div>
 
         <!-- Betriebsmodus (Block C) -->
@@ -1110,246 +1402,87 @@ async function handleSave() {
             </span>
           </div>
         </div>
-      </section>
 
-      <!-- ═══ ZONE 2: ADVANCED (Accordion sections) ═══════════════════════ -->
-
-      <!--
-        AUT-246: Schwellwerte & Alerts — vereinigtes Akkordeon
-        Vereint die früheren zwei Akkordeons:
-          1) "Sensor-Schwellwerte (Basis)" → SSoT für Sensor-Threshold-Alerts
-             (Speichert in SensorConfig.thresholds via createOrUpdate)
-          2) "Alert-Konfiguration"        → Override/Suppression (ISA-18.2)
-             (Speichert in SensorConfig.alert_config via PATCH /sensors/{id}/alert-config)
-        Inhalt 1:1 erhalten — nur visuelle Restrukturierung mit Sub-Sektionen.
-        Zusätzlich: Read-only Cross-Reference auf Widgets + Regeln (verlinkte Quellen).
-      -->
-      <AccordionSection
-        title="Schwellwerte & Alerts"
-        :storage-key="`${accordionKey}-thresholds-alerts`"
-        :icon="Gauge"
-      >
-        <!-- ─── Sub-Sektion 1: Sensor-Schwelle (Basis) ───────────────── -->
-        <div class="sensor-config__sub-section">
-          <div class="sensor-config__sub-header">
-            <h4 class="sensor-config__sub-title">Sensor-Schwelle (Basis)</h4>
-            <span class="sensor-config__source-tag">DB: sensor_config</span>
-          </div>
-          <p class="sensor-config__sub-hint">
-            <Info class="sensor-config__sub-hint-icon" aria-hidden="true" />
-            Diese Schwelle löst direkte Sensor-Alerts beim Datenempfang aus.
-          </p>
-
-          <RangeSlider
-            :min="sensorConfig?.min ?? 0"
-            :max="sensorConfig?.max ?? 100"
-            :alarm-low="alarmLow"
-            :warn-low="warnLow"
-            :warn-high="warnHigh"
-            :alarm-high="alarmHigh"
-            :unit="unitValue"
-            :step="0.1"
-            @update:alarm-low="alarmLow = $event"
-            @update:warn-low="warnLow = $event"
-            @update:warn-high="warnHigh = $event"
-            @update:alarm-high="alarmHigh = $event"
-          />
-
-          <div class="sensor-config__threshold-inputs">
-            <div class="sensor-config__field sensor-config__field--quarter">
-              <label class="sensor-config__label sensor-config__label--alarm">Alarm &#8595;</label>
-              <input v-model.number="alarmLow" type="number" step="0.1" class="sensor-config__input sensor-config__input--sm" />
+        <!-- AUT-252: Pflanzen-Kontext (nur wenn Subzone eine Pflanze hat). Verschoben
+             hierher aus vormaliger Position weiter unten (S1-Anker) — endgueltige
+             Tab-Zuordnung ist eine offene TM/Robin-Entscheidung (AUT-1125 Luecken). -->
+        <AccordionSection
+          v-if="subzonePlant"
+          title="Pflanzen-Kontext"
+          :storage-key="`${accordionKey}-plant-context`"
+          :icon="Sprout"
+        >
+          <div class="sensor-config__plant-context">
+            <!-- Stammdaten -->
+            <div class="sensor-config__plant-header">
+              <div class="sensor-config__plant-genotype">{{ subzonePlant.genotype }}</div>
+              <span class="sensor-config__plant-phase">{{ plantPhaseLabel }}</span>
             </div>
-            <div class="sensor-config__field sensor-config__field--quarter">
-              <label class="sensor-config__label sensor-config__label--warn">Warn &#8595;</label>
-              <input v-model.number="warnLow" type="number" step="0.1" class="sensor-config__input sensor-config__input--sm" />
+            <div v-if="subzonePlant.qr_code" class="sensor-config__plant-qr">
+              QR-Label: <span class="sensor-config__plant-qr-code">{{ subzonePlant.qr_code }}</span>
             </div>
-            <div class="sensor-config__field sensor-config__field--quarter">
-              <label class="sensor-config__label sensor-config__label--warn">Warn &#8593;</label>
-              <input v-model.number="warnHigh" type="number" step="0.1" class="sensor-config__input sensor-config__input--sm" />
-            </div>
-            <div class="sensor-config__field sensor-config__field--quarter">
-              <label class="sensor-config__label sensor-config__label--alarm">Alarm &#8593;</label>
-              <input v-model.number="alarmHigh" type="number" step="0.1" class="sensor-config__input sensor-config__input--sm" />
-            </div>
-          </div>
-        </div>
 
-        <!-- ─── Sub-Sektion 2: Alert-Override ────────────────────────── -->
-        <div v-if="sensorDbId" class="sensor-config__sub-section">
-          <div class="sensor-config__sub-header">
-            <h4 class="sensor-config__sub-title">Alert-Override</h4>
-            <span class="sensor-config__source-tag">DB: alert_config</span>
-          </div>
-          <p class="sensor-config__sub-hint">
-            <Info class="sensor-config__sub-hint-icon" aria-hidden="true" />
-            Override gilt zusätzlich zur Basis-Schwelle (ISA-18.2 Suppression-Hierarchie).
-          </p>
-
-          <AlertConfigSection
-            :entity-id="sensorDbId"
-            entity-type="sensor"
-            :fetch-fn="sensorsApi.getAlertConfig"
-            :update-fn="sensorsApi.updateAlertConfig"
-          />
-        </div>
-
-        <!-- ─── Sub-Sektion 3: Verlinkte Quellen (Cross-Reference) ───── -->
-        <div class="sensor-config__sub-section">
-          <div class="sensor-config__sub-header">
-            <h4 class="sensor-config__sub-title">Verlinkte Quellen</h4>
-            <span class="sensor-config__source-tag sensor-config__source-tag--readonly">read-only</span>
-          </div>
-
-          <ul class="sensor-config__cross-ref-list">
-            <li class="sensor-config__cross-ref-item">
-              <LayoutGrid class="sensor-config__cross-ref-icon" aria-hidden="true" />
-              <span class="sensor-config__cross-ref-count">{{ linkedWidgets.length }}</span>
-              <span class="sensor-config__cross-ref-text">
-                {{ linkedWidgets.length === 1 ? 'Widget nutzt' : 'Widgets nutzen' }} visuelle Schwellen
-              </span>
-            </li>
-            <li
-              v-for="entry in linkedWidgets"
-              :key="`widget-${entry.layoutId}-${entry.widgetId}`"
-              class="sensor-config__cross-ref-link-item"
-            >
-              <button
-                type="button"
-                class="sensor-config__cross-ref-link"
-                @click="navigateToWidget(entry)"
-              >
-                <span class="sensor-config__cross-ref-link-name">{{ entry.widgetTitle }}</span>
-                <span class="sensor-config__cross-ref-link-meta">in {{ entry.layoutName }}</span>
-                <ExternalLink class="sensor-config__cross-ref-nav-icon" aria-hidden="true" />
-              </button>
-            </li>
-
-            <li class="sensor-config__cross-ref-item">
-              <Workflow class="sensor-config__cross-ref-icon" aria-hidden="true" />
-              <span class="sensor-config__cross-ref-count">{{ linkedRules.length }}</span>
-              <span class="sensor-config__cross-ref-text">
-                {{ linkedRules.length === 1 ? 'Regel nutzt' : 'Regeln nutzen' }} diesen Sensor als Trigger
-              </span>
-            </li>
-            <li
-              v-for="entry in linkedRules"
-              :key="`rule-${entry.ruleId}`"
-              class="sensor-config__cross-ref-link-item"
-            >
-              <button
-                type="button"
-                class="sensor-config__cross-ref-link"
-                @click="navigateToRule(entry)"
-              >
-                <span class="sensor-config__cross-ref-link-name">{{ entry.ruleName }}</span>
-                <span
-                  :class="[
-                    'sensor-config__cross-ref-state',
-                    entry.enabled ? 'sensor-config__cross-ref-state--on' : 'sensor-config__cross-ref-state--off',
-                  ]"
-                >{{ entry.enabled ? 'Aktiv' : 'Inaktiv' }}</span>
-                <ExternalLink class="sensor-config__cross-ref-nav-icon" aria-hidden="true" />
-              </button>
-            </li>
-          </ul>
-        </div>
-
-        <!-- ─── Sub-Sektion 4: Kalibrierungs-Alerts (AUT-300) ──────────── -->
-        <div v-if="isCalibrationRequired" class="sensor-config__sub-section sensor-config__sub-section--calibration">
-          <div class="sensor-config__sub-header">
-            <h4 class="sensor-config__sub-title">Kalibrierungs-Alerts</h4>
-            <span class="sensor-config__source-tag">DB: sensor_config</span>
-          </div>
-          <p class="sensor-config__sub-hint">
-            <Info class="sensor-config__sub-hint-icon" aria-hidden="true" />
-            {{ calibrationHelpText }}
-          </p>
-
-          <div class="sensor-config__field">
-            <label class="sensor-config__label">Kalibrierungs-Erinnerung (Tage)</label>
-            <input
-              v-model.number="calibrationIntervalDays"
-              type="number"
-              min="1"
-              max="365"
-              step="1"
-              class="sensor-config__input"
-              placeholder="leer = deaktiviert"
-            />
-            <span class="sensor-config__helper">
-              Nach diesem Intervall erscheint eine Erinnerung im Benachrichtigungssystem.
-              Leer lassen = keine automatische Erinnerung.
-            </span>
-          </div>
-
-          <!-- AUT-686 S4: Kalibrierungsstatus für ph/ec/moisture/soil_moisture -->
-          <div class="sensor-config__calibration-status">
-            <!-- Status Badge -->
-            <div class="sensor-config__calibration-status-row">
-              <span class="sensor-config__label">Kalibrierungsstatus</span>
-              <span
-                :class="[
-                  'sensor-config__cal-badge',
-                  `sensor-config__cal-badge--${calibrationHealthState.state}`
-                ]"
-              >
-                <template v-if="calibrationHealthState.state === 'uncalibrated'">Nicht kalibriert</template>
-                <template v-else-if="calibrationHealthState.state === 'healthy'">
-                  Elektrode in gutem Zustand
-                  <template v-if="calibrationHealthState.calibratedAt"> — {{ calibrationStatusSummary.label }}</template>
-                </template>
-                <template v-else-if="calibrationHealthState.state === 'drifting'">
-                  Kalibrierung empfohlen — Slope weicht {{ Math.round(calibrationHealthState.slopePct ?? 0) }}% ab
-                </template>
-                <template v-else>
-                  Elektrodenwechsel prüfen — Slope {{ Math.round(calibrationHealthState.slopePct ?? 0) }}% außerhalb Nernst-Ideal
-                </template>
-              </span>
-            </div>
-            <!-- Detail message -->
-            <p v-if="calibrationHealthState.state === 'uncalibrated' && ['ph','ec'].includes(sensorType.toLowerCase())" class="sensor-config__cal-hint">
-              Unkalibriert bedeutet Default-Berechnung (kann bis ±2 pH / ±200 µS/cm abweichen).
-            </p>
-            <p v-else-if="calibrationHealthState.state === 'drifting'" class="sensor-config__cal-hint">
-              Elektrode zeigt frühe Drift-Zeichen. Kalibrierung mit frischen Pufferlösungen empfohlen.
-            </p>
-            <p v-else-if="calibrationHealthState.state === 'critical'" class="sensor-config__cal-hint">
-              Slope deutlich außerhalb Nernst-Ideal (±59.16 mV/pH). Elektrode möglicherweise erschöpft oder verschmutzt.
-            </p>
-            <!-- Collapsible guide (nur ph/ec) -->
-            <div v-if="CALIBRATION_GUIDES[sensorType.toLowerCase()]" class="sensor-config__cal-guide">
-              <button
-                type="button"
-                class="sensor-config__cal-guide-toggle"
-                @click="calGuideVisible = !calGuideVisible"
-              >
-                {{ calGuideVisible ? 'Anleitung verbergen ▲' : 'Kalibrierungs-Kurzanleitung anzeigen ▼' }}
-              </button>
-              <p v-if="calGuideVisible" class="sensor-config__cal-guide-text">
-                {{ CALIBRATION_GUIDES[sensorType.toLowerCase()] }}
+            <!-- Empfohlene Schwellwerte -->
+            <div class="sensor-config__plant-thresholds">
+              <h4 class="sensor-config__plant-section-title">Empfohlene Schwellwerte</h4>
+              <div v-if="hasPlantThresholds && plantThresholdsForSensor" class="sensor-config__plant-thresholds-grid">
+                <div v-if="plantThresholdsForSensor.alarm_low != null" class="sensor-config__plant-threshold">
+                  <span class="sensor-config__plant-threshold-label sensor-config__label--alarm">Alarm &#8595;</span>
+                  <span class="sensor-config__plant-threshold-value">{{ plantThresholdsForSensor.alarm_low }} {{ unitValue || defaultUnit }}</span>
+                </div>
+                <div v-if="plantThresholdsForSensor.warn_low != null" class="sensor-config__plant-threshold">
+                  <span class="sensor-config__plant-threshold-label sensor-config__label--warn">Warn &#8595;</span>
+                  <span class="sensor-config__plant-threshold-value">{{ plantThresholdsForSensor.warn_low }} {{ unitValue || defaultUnit }}</span>
+                </div>
+                <div v-if="plantThresholdsForSensor.warn_high != null" class="sensor-config__plant-threshold">
+                  <span class="sensor-config__plant-threshold-label sensor-config__label--warn">Warn &#8593;</span>
+                  <span class="sensor-config__plant-threshold-value">{{ plantThresholdsForSensor.warn_high }} {{ unitValue || defaultUnit }}</span>
+                </div>
+                <div v-if="plantThresholdsForSensor.alarm_high != null" class="sensor-config__plant-threshold">
+                  <span class="sensor-config__plant-threshold-label sensor-config__label--alarm">Alarm &#8593;</span>
+                  <span class="sensor-config__plant-threshold-value">{{ plantThresholdsForSensor.alarm_high }} {{ unitValue || defaultUnit }}</span>
+                </div>
+              </div>
+              <p v-else class="sensor-config__plant-hint">
+                <Info class="sensor-config__sub-hint-icon" aria-hidden="true" />
+                Fuer dieses Pflanzenprofil sind keine sensor-typ-spezifischen Schwellwerte hinterlegt. Werte werden manuell gepflegt.
               </p>
+
+              <button
+                v-if="hasPlantThresholds"
+                type="button"
+                class="sensor-config__plant-apply-btn"
+                :disabled="applyingPlantThresholds || saving"
+                @click="applyPlantThresholds"
+              >
+                <Save class="w-4 h-4" />
+                {{ applyingPlantThresholds ? 'Übernehme...' : 'Aus Pflanzenprofil übernehmen' }}
+              </button>
             </div>
-            <!-- Calibration button (ph + ec + moisture) -->
-            <button
-              type="button"
-              class="sensor-config__calibrate-btn"
-              @click="openCalibrationWizard"
-            >
-              Kalibrierung starten
-            </button>
+
+            <!-- Letzte Lifecycle-Events -->
+            <div v-if="recentLifecycleEvents.length > 0" class="sensor-config__plant-events">
+              <h4 class="sensor-config__plant-section-title">Letzte Ereignisse</h4>
+              <ul class="sensor-config__plant-events-list">
+                <li
+                  v-for="evt in recentLifecycleEvents"
+                  :key="evt.event_id"
+                  class="sensor-config__plant-event"
+                >
+                  <span class="sensor-config__plant-event-type">{{ getPlantEventTypeLabel(evt.event_type) }}</span>
+                  <!-- AUT-1181: show event_timestamp for relative display -->
+                  <span class="sensor-config__plant-event-time">{{ formatRelativeTime(evt.event_timestamp) }}</span>
+                  <!-- AUT-1181: server field is notes (plural) -->
+                  <p v-if="evt.notes" class="sensor-config__plant-event-note">{{ evt.notes }}</p>
+                </li>
+              </ul>
+            </div>
           </div>
-        </div>
-      </AccordionSection>
+        </AccordionSection>
+      </div>
 
-      <!-- ═══ ZONE 3: EXPERT (Hardware + Preview) ═════════════════════════ -->
-
-      <!-- Hardware / Interface -->
-      <AccordionSection
-        title="Hardware & Interface"
-        :storage-key="`${accordionKey}-hardware`"
-        :icon="Cpu"
-      >
+      <!-- Tab: Hardware (adc_source lebt hier, NICHT in Kalibrierung — S1-Vorgabe) -->
+      <div v-show="activeTab === 'hardware'" class="sensor-config__tab-panel">
         <div class="sensor-config__interface-badge-row">
           Interface:
           <span class="sensor-config__interface-badge">{{ interfaceType }}</span>
@@ -1485,196 +1618,382 @@ async function handleSave() {
           </div>
           <div class="sensor-config__field">
             <label class="sensor-config__label">Impulse pro Liter</label>
-            <input v-model.number="pulsesPerLiter" type="number" class="sensor-config__input" min="1" />
-            <span class="sensor-config__helper">Kalibrierungsfaktor des Durchfluss-Sensors</span>
+            <input
+              v-model.number="pulsesPerLiter"
+              type="number"
+              class="sensor-config__input"
+              min="1"
+              aria-label="Impulse pro Liter (FS300A Default 330)"
+            />
+            <span class="sensor-config__helper">
+              Kalibrierungsfaktor — FS300A G3/4: 330 Pulse/L (1–60 L/min); Legacy YF-S201: 450
+            </span>
           </div>
         </template>
-      </AccordionSection>
 
-      <!-- AUT-252: Sensor-Datenblatt (read-only, aus SENSOR_TYPE_CONFIG) -->
-      <AccordionSection
-        title="Sensor-Datenblatt"
-        :storage-key="`${accordionKey}-datasheet`"
-        :icon="FileText"
-      >
-        <div v-if="hasDatasheet && sensorConfig" class="sensor-config__datasheet">
-          <div class="sensor-config__datasheet-row">
-            <span class="sensor-config__datasheet-label">Typ</span>
-            <span class="sensor-config__datasheet-value">{{ sensorConfig.label }} ({{ sensorType }})</span>
+        <!-- Liquid Level: GPIO + Polarity -->
+        <template v-else-if="props.sensorType.toLowerCase() === 'liquid_level'">
+          <div class="sensor-config__field">
+            <label class="sensor-config__label">GPIO Pin</label>
+            <input :value="`GPIO ${props.gpio}`" disabled class="sensor-config__input sensor-config__input--disabled" />
+            <span class="sensor-config__helper">GPIO kann nach Sensor-Anlage nicht geändert werden</span>
           </div>
-          <div v-if="sensorConfig.manufacturer" class="sensor-config__datasheet-row">
-            <span class="sensor-config__datasheet-label">Hersteller</span>
-            <span class="sensor-config__datasheet-value">{{ sensorConfig.manufacturer }}</span>
-          </div>
-          <div v-if="sensorConfig.accuracy" class="sensor-config__datasheet-row">
-            <span class="sensor-config__datasheet-label">Genauigkeit</span>
-            <span class="sensor-config__datasheet-value">{{ sensorConfig.accuracy }}</span>
-          </div>
-          <div v-if="sensorConfig.calibrationRequired != null" class="sensor-config__datasheet-row">
-            <span class="sensor-config__datasheet-label">Kalibrierung</span>
-            <span class="sensor-config__datasheet-value">
-              {{ sensorConfig.calibrationRequired ? 'Periodisch erforderlich' : 'Werks-kalibriert' }}
-              <span v-if="sensorConfig.calibrationNote" class="sensor-config__datasheet-note">
-                — {{ sensorConfig.calibrationNote }}
-              </span>
-            </span>
-          </div>
-          <div v-if="sensorConfig.maintenanceYears != null" class="sensor-config__datasheet-row">
-            <span class="sensor-config__datasheet-label">Wartungsintervall</span>
-            <span class="sensor-config__datasheet-value">
-              {{ sensorConfig.maintenanceYears }} {{ sensorConfig.maintenanceYears === 1 ? 'Jahr' : 'Jahre' }}
-            </span>
-          </div>
-          <div v-if="sensorConfig.datasheetUrl" class="sensor-config__datasheet-row">
-            <span class="sensor-config__datasheet-label">Datenblatt</span>
-            <a
-              class="sensor-config__datasheet-link"
-              :href="sensorConfig.datasheetUrl"
-              target="_blank"
-              rel="noopener noreferrer"
+          <div class="sensor-config__field">
+            <label class="sensor-config__label" for="polarity-select">Signalpolarität</label>
+            <select
+              id="polarity-select"
+              v-model="polarity"
+              class="sensor-config__select"
+              aria-label="Signalpolarität wählen"
             >
-              Hersteller-Dokumentation
-              <ExternalLink class="sensor-config__datasheet-link-icon" aria-hidden="true" />
-            </a>
+              <option v-for="opt in POLARITY_OPTIONS" :key="opt.value" :value="opt.value">
+                {{ opt.label }}
+              </option>
+            </select>
+            <span class="sensor-config__helper">
+              NPN (z.B. XKC-Y25-NPN): LOW = Flüssigkeit erkannt. PNP (z.B. XKC-Y26S-PNP): HIGH = Flüssigkeit erkannt.
+            </span>
           </div>
+        </template>
+
+        <!-- AUT-1313: Messintervall — generisch für ALLE Sensortypen (nicht typ-gated).
+             UI: ganze Sekunden (1–300); Payload: interval_ms. Muster wie adc_source. -->
+        <div class="sensor-config__field">
+          <label class="sensor-config__label" for="measurement-interval-seconds">Messintervall (Sekunden)</label>
+          <input
+            id="measurement-interval-seconds"
+            v-model.number="intervalSeconds"
+            type="number"
+            class="sensor-config__input"
+            :min="MIN_INTERVAL_SECONDS"
+            :max="MAX_INTERVAL_SECONDS"
+            step="1"
+            inputmode="numeric"
+            aria-label="Messintervall in Sekunden"
+          />
+          <span class="sensor-config__helper">
+            Gültiger Bereich: {{ MIN_INTERVAL_SECONDS }}–{{ MAX_INTERVAL_SECONDS }} Sekunden
+            (Firmware-Minimum 1&nbsp;s). Wie oft der Sensor einen neuen Wert liest und meldet.
+          </span>
         </div>
-        <div v-else class="sensor-config__datasheet-empty">
-          <Info class="sensor-config__datasheet-empty-icon" aria-hidden="true" />
-          <div>
-            <p class="sensor-config__datasheet-empty-title">Datenblatt nicht hinterlegt</p>
-            <p class="sensor-config__datasheet-empty-hint">
-              Hersteller- und Genauigkeitsdaten werden zentral in der Komponenten-Bibliothek gepflegt.
+      </div>
+
+      <!-- Tab: Kalibrierung — nur Sensor-Typen mit periodischer Kalibrierung.
+           SSOT: heutiger IST bleibt einzige Stelle — openCalibrationWizard() →
+           router.push /calibration → CalibrationView.vue → CalibrationWizard.vue
+           (kanonische 2-Punkt/1413/ATC-Logik). Nichts dupliziert, nur Status-Badge
+           + Deep-Link 1:1 uebernommen. -->
+      <div v-if="isCalibrationRequired" v-show="activeTab === 'kalibrierung'" class="sensor-config__tab-panel">
+        <p class="sensor-config__sub-hint">
+          <Info class="sensor-config__sub-hint-icon" aria-hidden="true" />
+          {{ calibrationHelpText }}
+        </p>
+
+        <div class="sensor-config__field">
+          <label class="sensor-config__label">Kalibrierungs-Erinnerung (Tage)</label>
+          <input
+            v-model.number="calibrationIntervalDays"
+            type="number"
+            min="1"
+            max="365"
+            step="1"
+            class="sensor-config__input"
+            placeholder="leer = deaktiviert"
+          />
+          <span class="sensor-config__helper">
+            Nach diesem Intervall erscheint eine Erinnerung im Benachrichtigungssystem.
+            Leer lassen = keine automatische Erinnerung.
+          </span>
+        </div>
+
+        <!-- AUT-686 S4: Kalibrierungsstatus für ph/ec/moisture/soil_moisture -->
+        <div class="sensor-config__calibration-status">
+          <!-- AUT-1506: no empty badge — uncalibrated without a value stays out of the bar -->
+          <div
+            v-if="calibrationHealthState.state !== 'uncalibrated'"
+            class="sensor-config__calibration-status-row"
+          >
+            <span class="sensor-config__label">Kalibrierungsstatus</span>
+            <span
+              :class="[
+                'sensor-config__cal-badge',
+                `sensor-config__cal-badge--${calibrationHealthState.state}`
+              ]"
+            >
+              <template v-if="calibrationHealthState.state === 'healthy'">
+                Elektrode in gutem Zustand
+                <template v-if="calibrationHealthState.calibratedAt"> — {{ calibrationStatusSummary.label }}</template>
+              </template>
+              <template v-else-if="calibrationHealthState.state === 'drifting'">
+                Kalibrierung empfohlen — Slope weicht {{ Math.round(calibrationHealthState.slopePct ?? 0) }}% ab
+              </template>
+              <template v-else>
+                Elektrodenwechsel prüfen — Slope {{ Math.round(calibrationHealthState.slopePct ?? 0) }}% außerhalb Nernst-Ideal
+              </template>
+            </span>
+          </div>
+          <!-- Detail message -->
+          <p v-if="calibrationHealthState.state === 'uncalibrated' && ['ph','ec'].includes(sensorType.toLowerCase())" class="sensor-config__cal-hint">
+            Unkalibriert bedeutet Default-Berechnung (kann bis ±2 pH / ±200 µS/cm abweichen).
+          </p>
+          <p v-else-if="calibrationHealthState.state === 'drifting'" class="sensor-config__cal-hint">
+            Elektrode zeigt frühe Drift-Zeichen. Kalibrierung mit frischen Pufferlösungen empfohlen.
+          </p>
+          <p v-else-if="calibrationHealthState.state === 'critical'" class="sensor-config__cal-hint">
+            Slope deutlich außerhalb Nernst-Ideal (±59.16 mV/pH). Elektrode möglicherweise erschöpft oder verschmutzt.
+          </p>
+          <!-- Collapsible guide (nur ph/ec) -->
+          <div v-if="CALIBRATION_GUIDES[sensorType.toLowerCase()]" class="sensor-config__cal-guide">
+            <button
+              type="button"
+              class="sensor-config__cal-guide-toggle"
+              @click="calGuideVisible = !calGuideVisible"
+            >
+              {{ calGuideVisible ? 'Anleitung verbergen ▲' : 'Kalibrierungs-Kurzanleitung anzeigen ▼' }}
+            </button>
+            <p v-if="calGuideVisible" class="sensor-config__cal-guide-text">
+              {{ CALIBRATION_GUIDES[sensorType.toLowerCase()] }}
             </p>
           </div>
+          <!-- Calibration button (ph + ec + moisture) -->
+          <button
+            type="button"
+            class="sensor-config__calibrate-btn"
+            @click="openCalibrationWizard"
+          >
+            Kalibrierung starten
+          </button>
         </div>
-      </AccordionSection>
+      </div>
 
-      <!-- Live Preview -->
-      <AccordionSection
-        title="Live-Vorschau"
-        :storage-key="`${accordionKey}-preview`"
-        :icon="Settings"
-      >
-        <div class="sensor-config__preview">
-          <LiveDataPreview :esp-id="espId" :gpio="gpio" :sensor-type="sensorType" :unit="unitValue || defaultUnit" />
-        </div>
-      </AccordionSection>
+      <!-- Tab: Alerts & Wartung -->
+      <div v-show="activeTab === 'alerts'" class="sensor-config__tab-panel">
+        <!--
+          AUT-246: Schwellwerte & Alerts — vereinigtes Akkordeon
+          Vereint die früheren zwei Akkordeons:
+            1) "Sensor-Schwellwerte (Basis)" → SSoT für Sensor-Threshold-Alerts
+               (Speichert in SensorConfig.thresholds via createOrUpdate)
+            2) "Alert-Konfiguration"        → Override/Suppression (ISA-18.2)
+               (Speichert in SensorConfig.alert_config via PATCH /sensors/{id}/alert-config)
+          Sub-Sektion 4 (Kalibrierungs-Alerts) ist jetzt eigener Kalibrierung-Tab (AUT-1129).
+        -->
+        <AccordionSection
+          title="Schwellwerte & Alerts"
+          :storage-key="`${accordionKey}-thresholds-alerts`"
+          :icon="Gauge"
+          :default-open="true"
+        >
+          <!-- ─── Sub-Sektion 1: Sensor-Schwelle (Basis) ───────────────── -->
+          <div class="sensor-config__sub-section">
+            <div class="sensor-config__sub-header">
+              <h4 class="sensor-config__sub-title">Sensor-Schwelle (Basis)</h4>
+              <span class="sensor-config__source-tag">DB: sensor_config</span>
+            </div>
+            <p class="sensor-config__sub-hint">
+              <Info class="sensor-config__sub-hint-icon" aria-hidden="true" />
+              Diese Schwelle löst direkte Sensor-Alerts beim Datenempfang aus.
+            </p>
 
-      <!-- AUT-252: Pflanzen-Kontext (nur wenn Subzone eine Pflanze hat) -->
-      <AccordionSection
-        v-if="subzonePlant"
-        title="Pflanzen-Kontext"
-        :storage-key="`${accordionKey}-plant-context`"
-        :icon="Sprout"
-      >
-        <div class="sensor-config__plant-context">
-          <!-- Stammdaten -->
-          <div class="sensor-config__plant-header">
-            <div class="sensor-config__plant-genotype">{{ subzonePlant.genotype }}</div>
-            <span class="sensor-config__plant-phase">{{ plantPhaseLabel }}</span>
-          </div>
-          <div v-if="subzonePlant.qr_code" class="sensor-config__plant-qr">
-            QR-Label: <span class="sensor-config__plant-qr-code">{{ subzonePlant.qr_code }}</span>
-          </div>
+            <RangeSlider
+              :min="sensorConfig?.min ?? 0"
+              :max="sensorConfig?.max ?? 100"
+              :alarm-low="alarmLow"
+              :warn-low="warnLow"
+              :warn-high="warnHigh"
+              :alarm-high="alarmHigh"
+              :unit="unitValue"
+              :step="0.1"
+              @update:alarm-low="updateAlarmLow"
+              @update:warn-low="updateWarnLow"
+              @update:warn-high="updateWarnHigh"
+              @update:alarm-high="updateAlarmHigh"
+            />
 
-          <!-- Empfohlene Schwellwerte -->
-          <div class="sensor-config__plant-thresholds">
-            <h4 class="sensor-config__plant-section-title">Empfohlene Schwellwerte</h4>
-            <div v-if="hasPlantThresholds && plantThresholdsForSensor" class="sensor-config__plant-thresholds-grid">
-              <div v-if="plantThresholdsForSensor.alarm_low != null" class="sensor-config__plant-threshold">
-                <span class="sensor-config__plant-threshold-label sensor-config__label--alarm">Alarm &#8595;</span>
-                <span class="sensor-config__plant-threshold-value">{{ plantThresholdsForSensor.alarm_low }} {{ unitValue || defaultUnit }}</span>
+            <div class="sensor-config__threshold-inputs">
+              <div class="sensor-config__field sensor-config__field--quarter">
+                <label class="sensor-config__label sensor-config__label--alarm">Alarm &#8595;</label>
+                <input v-model.number="alarmLow" type="number" step="0.1" class="sensor-config__input sensor-config__input--sm" @change="thresholdsTouched = true" />
               </div>
-              <div v-if="plantThresholdsForSensor.warn_low != null" class="sensor-config__plant-threshold">
-                <span class="sensor-config__plant-threshold-label sensor-config__label--warn">Warn &#8595;</span>
-                <span class="sensor-config__plant-threshold-value">{{ plantThresholdsForSensor.warn_low }} {{ unitValue || defaultUnit }}</span>
+              <div class="sensor-config__field sensor-config__field--quarter">
+                <label class="sensor-config__label sensor-config__label--warn">Warn &#8595;</label>
+                <input v-model.number="warnLow" type="number" step="0.1" class="sensor-config__input sensor-config__input--sm" @change="thresholdsTouched = true" />
               </div>
-              <div v-if="plantThresholdsForSensor.warn_high != null" class="sensor-config__plant-threshold">
-                <span class="sensor-config__plant-threshold-label sensor-config__label--warn">Warn &#8593;</span>
-                <span class="sensor-config__plant-threshold-value">{{ plantThresholdsForSensor.warn_high }} {{ unitValue || defaultUnit }}</span>
+              <div class="sensor-config__field sensor-config__field--quarter">
+                <label class="sensor-config__label sensor-config__label--warn">Warn &#8593;</label>
+                <input v-model.number="warnHigh" type="number" step="0.1" class="sensor-config__input sensor-config__input--sm" @change="thresholdsTouched = true" />
               </div>
-              <div v-if="plantThresholdsForSensor.alarm_high != null" class="sensor-config__plant-threshold">
-                <span class="sensor-config__plant-threshold-label sensor-config__label--alarm">Alarm &#8593;</span>
-                <span class="sensor-config__plant-threshold-value">{{ plantThresholdsForSensor.alarm_high }} {{ unitValue || defaultUnit }}</span>
+              <div class="sensor-config__field sensor-config__field--quarter">
+                <label class="sensor-config__label sensor-config__label--alarm">Alarm &#8593;</label>
+                <input v-model.number="alarmHigh" type="number" step="0.1" class="sensor-config__input sensor-config__input--sm" @change="thresholdsTouched = true" />
               </div>
             </div>
-            <p v-else class="sensor-config__plant-hint">
-              <Info class="sensor-config__sub-hint-icon" aria-hidden="true" />
-              Fuer dieses Pflanzenprofil sind keine sensor-typ-spezifischen Schwellwerte hinterlegt. Werte werden manuell gepflegt.
-            </p>
-
-            <button
-              v-if="hasPlantThresholds"
-              type="button"
-              class="sensor-config__plant-apply-btn"
-              :disabled="applyingPlantThresholds || saving"
-              @click="applyPlantThresholds"
-            >
-              <Save class="w-4 h-4" />
-              {{ applyingPlantThresholds ? 'Übernehme...' : 'Aus Pflanzenprofil übernehmen' }}
-            </button>
           </div>
 
-          <!-- Letzte Lifecycle-Events -->
-          <div v-if="recentLifecycleEvents.length > 0" class="sensor-config__plant-events">
-            <h4 class="sensor-config__plant-section-title">Letzte Ereignisse</h4>
-            <ul class="sensor-config__plant-events-list">
+          <!-- ─── Sub-Sektion 2: Alert-Override ────────────────────────── -->
+          <div v-if="sensorDbId" class="sensor-config__sub-section">
+            <div class="sensor-config__sub-header">
+              <h4 class="sensor-config__sub-title">Alert-Override</h4>
+              <span class="sensor-config__source-tag">DB: alert_config</span>
+            </div>
+            <p class="sensor-config__sub-hint">
+              <Info class="sensor-config__sub-hint-icon" aria-hidden="true" />
+              Override gilt zusätzlich zur Basis-Schwelle (ISA-18.2 Suppression-Hierarchie).
+            </p>
+
+            <AlertConfigSection
+              :entity-id="sensorDbId"
+              entity-type="sensor"
+              :fetch-fn="sensorsApi.getAlertConfig"
+              :update-fn="sensorsApi.updateAlertConfig"
+            />
+          </div>
+
+          <!-- ─── Sub-Sektion 3: Verlinkte Quellen (Cross-Reference) ───── -->
+          <div class="sensor-config__sub-section">
+            <div class="sensor-config__sub-header">
+              <h4 class="sensor-config__sub-title">Verlinkte Quellen</h4>
+              <span class="sensor-config__source-tag sensor-config__source-tag--readonly">read-only</span>
+            </div>
+
+            <ul class="sensor-config__cross-ref-list">
+              <li class="sensor-config__cross-ref-item">
+                <LayoutGrid class="sensor-config__cross-ref-icon" aria-hidden="true" />
+                <span class="sensor-config__cross-ref-count">{{ linkedWidgets.length }}</span>
+                <span class="sensor-config__cross-ref-text">
+                  {{ linkedWidgets.length === 1 ? 'Widget nutzt' : 'Widgets nutzen' }} visuelle Schwellen
+                </span>
+              </li>
               <li
-                v-for="evt in recentLifecycleEvents"
-                :key="evt.id"
-                class="sensor-config__plant-event"
+                v-for="entry in linkedWidgets"
+                :key="`widget-${entry.layoutId}-${entry.widgetId}`"
+                class="sensor-config__cross-ref-link-item"
               >
-                <span class="sensor-config__plant-event-type">{{ getPlantEventTypeLabel(evt.event_type) }}</span>
-                <span class="sensor-config__plant-event-time">{{ formatRelativeTime(evt.created_at) }}</span>
-                <p v-if="evt.note" class="sensor-config__plant-event-note">{{ evt.note }}</p>
+                <button
+                  type="button"
+                  class="sensor-config__cross-ref-link"
+                  @click="navigateToWidget(entry)"
+                >
+                  <span class="sensor-config__cross-ref-link-name">{{ entry.widgetTitle }}</span>
+                  <span class="sensor-config__cross-ref-link-meta">in {{ entry.layoutName }}</span>
+                  <ExternalLink class="sensor-config__cross-ref-nav-icon" aria-hidden="true" />
+                </button>
+              </li>
+
+              <li class="sensor-config__cross-ref-item">
+                <Workflow class="sensor-config__cross-ref-icon" aria-hidden="true" />
+                <span class="sensor-config__cross-ref-count">{{ linkedRules.length }}</span>
+                <span class="sensor-config__cross-ref-text">
+                  {{ linkedRules.length === 1 ? 'Regel nutzt' : 'Regeln nutzen' }} diesen Sensor als Trigger
+                </span>
+              </li>
+              <li
+                v-for="entry in linkedRules"
+                :key="`rule-${entry.ruleId}`"
+                class="sensor-config__cross-ref-link-item"
+              >
+                <button
+                  type="button"
+                  class="sensor-config__cross-ref-link"
+                  @click="navigateToRule(entry)"
+                >
+                  <span class="sensor-config__cross-ref-link-name">{{ entry.ruleName }}</span>
+                  <span
+                    :class="[
+                      'sensor-config__cross-ref-state',
+                      entry.enabled ? 'sensor-config__cross-ref-state--on' : 'sensor-config__cross-ref-state--off',
+                    ]"
+                  >{{ entry.enabled ? 'Aktiv' : 'Inaktiv' }}</span>
+                  <ExternalLink class="sensor-config__cross-ref-nav-icon" aria-hidden="true" />
+                </button>
               </li>
             </ul>
           </div>
-        </div>
-      </AccordionSection>
+        </AccordionSection>
 
-      <!-- AUT-246: "Alert-Konfiguration" Akkordeon entfernt — Inhalt jetzt
-           als Sub-Sektion innerhalb von "Schwellwerte & Alerts" oben. -->
+        <!-- AUT-252: Sensor-Datenblatt (read-only, aus SENSOR_TYPE_CONFIG) -->
+        <AccordionSection
+          title="Sensor-Datenblatt"
+          :storage-key="`${accordionKey}-datasheet`"
+          :icon="FileText"
+        >
+          <div v-if="hasDatasheet && sensorConfig" class="sensor-config__datasheet">
+            <div class="sensor-config__datasheet-row">
+              <span class="sensor-config__datasheet-label">Typ</span>
+              <span class="sensor-config__datasheet-value">{{ sensorConfig.label }} ({{ sensorType }})</span>
+            </div>
+            <div v-if="sensorConfig.manufacturer" class="sensor-config__datasheet-row">
+              <span class="sensor-config__datasheet-label">Hersteller</span>
+              <span class="sensor-config__datasheet-value">{{ sensorConfig.manufacturer }}</span>
+            </div>
+            <div v-if="sensorConfig.accuracy" class="sensor-config__datasheet-row">
+              <span class="sensor-config__datasheet-label">Genauigkeit</span>
+              <span class="sensor-config__datasheet-value">{{ sensorConfig.accuracy }}</span>
+            </div>
+            <div v-if="sensorConfig.calibrationRequired != null" class="sensor-config__datasheet-row">
+              <span class="sensor-config__datasheet-label">Kalibrierung</span>
+              <span class="sensor-config__datasheet-value">
+                {{ sensorConfig.calibrationRequired ? 'Periodisch erforderlich' : 'Werks-kalibriert' }}
+                <span v-if="sensorConfig.calibrationNote" class="sensor-config__datasheet-note">
+                  — {{ sensorConfig.calibrationNote }}
+                </span>
+              </span>
+            </div>
+            <div v-if="sensorConfig.maintenanceYears != null" class="sensor-config__datasheet-row">
+              <span class="sensor-config__datasheet-label">Wartungsintervall</span>
+              <span class="sensor-config__datasheet-value">
+                {{ sensorConfig.maintenanceYears }} {{ sensorConfig.maintenanceYears === 1 ? 'Jahr' : 'Jahre' }}
+              </span>
+            </div>
+            <div v-if="sensorConfig.datasheetUrl" class="sensor-config__datasheet-row">
+              <span class="sensor-config__datasheet-label">Datenblatt</span>
+              <a
+                class="sensor-config__datasheet-link"
+                :href="sensorConfig.datasheetUrl"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Hersteller-Dokumentation
+                <ExternalLink class="sensor-config__datasheet-link-icon" aria-hidden="true" />
+              </a>
+            </div>
+          </div>
+          <div v-else class="sensor-config__datasheet-empty">
+            <Info class="sensor-config__datasheet-empty-icon" aria-hidden="true" />
+            <div>
+              <p class="sensor-config__datasheet-empty-title">Datenblatt nicht hinterlegt</p>
+              <p class="sensor-config__datasheet-empty-hint">
+                Hersteller- und Genauigkeitsdaten werden zentral in der Komponenten-Bibliothek gepflegt.
+              </p>
+            </div>
+          </div>
+        </AccordionSection>
 
-      <!-- ═══ RUNTIME & MAINTENANCE (Phase 4A.8) ══════════════════════ -->
-      <AccordionSection
-        v-if="sensorDbId"
-        title="Laufzeit & Wartung"
-        :storage-key="`${accordionKey}-runtime`"
-      >
-        <RuntimeMaintenanceSection
-          :entity-id="sensorDbId"
-          entity-type="sensor"
-          :fetch-fn="sensorsApi.getRuntime"
-          :update-fn="sensorsApi.updateRuntime"
-        />
-      </AccordionSection>
+        <!-- ═══ RUNTIME & MAINTENANCE (Phase 4A.8) ══════════════════════ -->
+        <AccordionSection
+          v-if="sensorDbId"
+          title="Laufzeit & Wartung"
+          :storage-key="`${accordionKey}-runtime`"
+        >
+          <RuntimeMaintenanceSection
+            :entity-id="sensorDbId"
+            entity-type="sensor"
+            :fetch-fn="sensorsApi.getRuntime"
+            :update-fn="sensorsApi.updateRuntime"
+          />
+        </AccordionSection>
 
-      <!-- ═══ DEVICE INFO (Metadata) ═════════════════════════════════════ -->
-      <AccordionSection
-        v-if="showMetadata"
-        title="Geräte-Informationen"
-        :storage-key="`${accordionKey}-device-info`"
-      >
-        <DeviceMetadataSection
-          :metadata="metadata"
-          @update:metadata="metadata = $event"
-        />
-      </AccordionSection>
-
-      <!-- ═══ LINKED RULES ════════════════════════════════════════════════ -->
-      <!-- AUT-623: AlertTriangle icon when a rule has triggered an active alert for this sensor -->
-      <AccordionSection
-        title="Verknüpfte Regeln"
-        :storage-key="`${accordionKey}-linked-rules`"
-        :icon="hasRuleTriggeredAlert ? AlertTriangle : undefined"
-      >
-        <LinkedRulesSection
-          :esp-id="espId"
-          :gpio="gpio"
-          device-type="sensor"
-        />
-      </AccordionSection>
+        <!-- ═══ DEVICE INFO (Metadata) ═════════════════════════════════════ -->
+        <AccordionSection
+          v-if="showMetadata"
+          title="Geräte-Informationen"
+          :storage-key="`${accordionKey}-device-info`"
+        >
+          <DeviceMetadataSection
+            :metadata="metadata"
+            @update:metadata="metadata = $event"
+          />
+        </AccordionSection>
+      </div>
 
       <!-- AUT-251: Zone-Zuordnung wird ausschliesslich auf Geraete-Ebene gepflegt
            (HardwareView -> ESPSettingsSheet). Sensoren erben die Zone vom Geraet
@@ -1688,7 +2007,7 @@ async function handleSave() {
       />
 
       <!-- ═══ ACTIONS ══════════════════════════════════════════════════════ -->
-      <div class="sensor-config__actions">
+      <div v-if="!hideActions" class="sensor-config__actions">
         <button
           class="sensor-config__save"
           :disabled="saving || loading"
@@ -1755,17 +2074,41 @@ async function handleSave() {
   color: var(--color-text-muted);
 }
 
-/* ═══════════════════════════════════════════════════════════════════════════
-   SECTIONS (Zone 1)
-   ═══════════════════════════════════════════════════════════════════════════ */
-
-.sensor-config__section {
+/* AUT-911/912: Multi-Value Sub-Wert-Umschalter (segmented control) */
+.sensor-config__subvalue-switch {
   display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  padding-bottom: var(--space-4);
-  border-bottom: 1px solid var(--glass-border);
+  gap: var(--space-1);
+  padding: var(--space-1);
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
 }
+
+.sensor-config__subvalue-tab {
+  flex: 1;
+  padding: var(--space-2) var(--space-3);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  cursor: pointer;
+  transition: color var(--transition-fast), background var(--transition-fast);
+}
+
+.sensor-config__subvalue-tab:hover {
+  color: var(--color-text-secondary);
+}
+
+.sensor-config__subvalue-tab--active {
+  background: var(--color-accent);
+  color: white;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   SECTIONS
+   ═══════════════════════════════════════════════════════════════════════════ */
 
 .sensor-config__simulation-badge {
   padding: var(--space-2) var(--space-3);
@@ -1777,13 +2120,12 @@ async function handleSave() {
   font-weight: 600;
 }
 
-.sensor-config__section-title {
-  font-size: var(--text-sm);
-  font-weight: 600;
-  color: var(--color-text-secondary);
-  text-transform: uppercase;
-  letter-spacing: var(--tracking-wide);
-  margin: 0;
+/* AUT-1129 (S4): Tab-Inhalt (ersetzt ZONE-1/2/3-Sektionen) */
+.sensor-config__tab-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding-top: var(--space-1);
 }
 
 .sensor-config__context-anchor {
@@ -1985,6 +2327,15 @@ async function handleSave() {
   color: var(--color-text-muted);
 }
 
+.sensor-config__checkbox {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
 .sensor-config__input-row {
   display: flex;
   align-items: center;
@@ -2096,37 +2447,7 @@ async function handleSave() {
   text-transform: uppercase;
 }
 
-/* Toggle */
-.sensor-config__toggle {
-  position: relative;
-  width: 40px;
-  height: 22px;
-  background: var(--color-bg-quaternary);
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-full);
-  cursor: pointer;
-  transition: all var(--transition-fast);
-}
-
-.sensor-config__toggle--on {
-  background: var(--color-status-good);
-  border-color: transparent;
-}
-
-.sensor-config__toggle-dot {
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 16px;
-  height: 16px;
-  background: white;
-  border-radius: 50%;
-  transition: transform var(--transition-fast);
-}
-
-.sensor-config__toggle--on .sensor-config__toggle-dot {
-  transform: translateX(18px);
-}
+/* Toggle field layout — switch uses shared .toggle-switch from main.css */
 
 /* Threshold inputs */
 .sensor-config__threshold-inputs {
@@ -2440,14 +2761,6 @@ async function handleSave() {
 .sensor-config__cal-actions {
   display: flex;
   gap: var(--space-2);
-}
-
-/* ═══════════════════════════════════════════════════════════════════════════
-   LIVE PREVIEW
-   ═══════════════════════════════════════════════════════════════════════════ */
-
-.sensor-config__preview {
-  height: 180px;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════

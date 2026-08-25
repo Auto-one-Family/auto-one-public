@@ -2,11 +2,12 @@
 import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useDashboardStore } from '@/shared/stores/dashboard.store'
-import { useAlertCenterStore } from '@/shared/stores'
+import { useAlertCenterStore, useNotificationInboxStore } from '@/shared/stores'
 
 const router = useRouter()
 const dashStore = useDashboardStore()
 const alertStore = useAlertCenterStore()
+const inboxStore = useNotificationInboxStore()
 
 const onlineCount = computed(() => dashStore.statusCounts.online)
 const offlineCount = computed(() => dashStore.statusCounts.offline)
@@ -39,14 +40,18 @@ function navigateAndFilter(statusKey: 'online' | 'offline') {
       <span class="hds__label">{{ offlineCount }} Offline</span>
     </button>
 
-    <span
+    <button
       v-if="alarmCount > 0"
+      type="button"
       class="hds__chip hds__chip--alarm"
-      :title="`${alarmCount} aktive Alarme`"
+      data-testid="header-alert-chip"
+      :title="`${alarmCount} aktive Alarme — Inbox öffnen`"
+      :aria-label="`${alarmCount} aktive Alarme — Inbox öffnen`"
+      @click="inboxStore.openDrawerWithActiveAlertsFocus()"
     >
       <span class="hds__label" aria-hidden="true">&#9888;</span>
       <span class="hds__label">{{ alarmCount }}</span>
-    </span>
+    </button>
 
   </div>
 </template>
@@ -91,10 +96,14 @@ function navigateAndFilter(statusKey: 'online' | 'offline') {
   color: var(--color-error);
   background: rgba(248, 113, 113, 0.08);
   border-color: rgba(248, 113, 113, 0.25);
-  cursor: default;
   display: inline-flex;
   align-items: center;
   gap: 4px;
+}
+
+.hds__chip--alarm:hover {
+  background: rgba(248, 113, 113, 0.14);
+  border-color: rgba(248, 113, 113, 0.4);
 }
 
 .hds__dot {

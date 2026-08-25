@@ -87,7 +87,7 @@ const activeTab = computed(() => {
 
 .view-tab-bar__tab:hover {
   color: var(--color-text-secondary);
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--glass-bg-l2);
 }
 
 .view-tab-bar__tab--active {
@@ -104,9 +104,9 @@ const activeTab = computed(() => {
   transform: translateX(-50%);
   width: 24px;
   height: 2px;
-  background: var(--color-accent-bright);
+  background: var(--gradient-iridescent);
   border-radius: 1px;
-  box-shadow: 0 0 6px rgba(96, 165, 250, 0.4);
+  box-shadow: 0 0 8px var(--color-iridescent-glow-hover);
 }
 
 .view-tab-bar__tab--active .view-tab-bar__icon {

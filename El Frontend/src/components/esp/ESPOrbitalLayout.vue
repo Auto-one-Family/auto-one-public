@@ -360,7 +360,7 @@ function handleActuatorClick(gpio: number) {
         :gpio="sat.gpio"
         :sensor-type="sat.sensor_type"
         :name="sat.name"
-        :value="sat.processed_value ?? sat.raw_value ?? 0"
+        :value="sat.quality === 'warming_up' ? null : (sat.processed_value ?? sat.raw_value ?? 0)"
         :quality="sat.quality"
         :unit="sat.unit"
         :device-type="sat.device_type"

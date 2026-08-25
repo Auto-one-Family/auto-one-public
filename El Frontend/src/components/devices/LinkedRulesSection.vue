@@ -138,10 +138,10 @@ onMounted(() => {
             <span
               v-if="formatCooldown(rule.cooldown_seconds)"
               class="linked-rules__chip"
-              title="Mindestabstand zwischen Auslösungen"
+              title="Regel-Cooldown: Mindestabstand zwischen zwei Auslösungen DIESER Regel (Ebene: Logic-Engine, gilt nur für diese Regel). Der Aktor-Cooldown (Geräte-Ebene) ist separat konfiguriert."
             >
               <Clock class="w-3 h-3" />
-              Cooldown: {{ formatCooldown(rule.cooldown_seconds) }}
+              Regel-Pause: {{ formatCooldown(rule.cooldown_seconds) }}
             </span>
             <span
               v-if="findTimeWindow(rule)"

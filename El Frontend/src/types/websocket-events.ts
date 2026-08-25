@@ -48,7 +48,7 @@ export interface SensorDataEvent extends WebSocketEventBase {
     esp_id: string
     gpio: number
     sensor_type: string
-    value: number
+    value: number | null
     unit: string
     quality: string
     timestamp: number
@@ -732,16 +732,32 @@ export interface LogicExecutionEvent extends WebSocketEventBase {
 }
 
 /**
- * System event (maintenance, health checks)
- * Sent by maintenance jobs
+ * System event (maintenance, health checks, backup restore)
+ * Sent by maintenance jobs and the backup restore pipeline.
+ *
+ * Hinweis: Der konkrete Subtyp steht im verschachtelten Feld `event`
+ * (Live-Broadcast, z.B. `mqtt_disconnected`). `event_type` ist das
+ * dokumentierte Contract-Feld; `message` wird nicht immer mitgesendet.
+ * Labels/Aufloesung via `getSystemEventLabel` (utils/eventTypeLabels).
  */
 export interface SystemEvent extends WebSocketEventBase {
   event: 'system_event'
   source_type: 'system'
   data: {
-    event_type: string
-    message: string
+    /** Concrete sub-type discriminator (server broadcast field). */
+    event?: string
+    /** Documented contract alias for the sub-type. */
+    event_type?: string
+    message?: string
+    /** database_restore_status: pipeline phase (preflight/quiesce/restore/reconcile/terminal). */
+    phase?: string
+    /** database_restore_status: outcome (started/success/failed). */
+    status?: string
+    run_id?: string
+    timestamp?: string
     details?: Record<string, unknown>
+    payload?: Record<string, unknown>
+    [key: string]: unknown
   }
 }
 

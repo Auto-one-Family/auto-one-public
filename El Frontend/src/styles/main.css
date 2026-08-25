@@ -56,6 +56,18 @@
     scrollbar-width: thin;
     scrollbar-color: var(--glass-border) transparent;
   }
+
+  /* Touch devices (coarse pointer): wider, easier-to-grab scrollbars */
+  @media (pointer: coarse) {
+    ::-webkit-scrollbar {
+      width: 10px;
+      height: 10px;
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background-color: var(--color-text-muted);
+    }
+  }
 }
 
 /* 7. Component styles */
@@ -668,8 +680,62 @@
 
   /* Touch-friendly minimum target size (44x44px — WCAG 2.1) */
   .touch-target {
-    min-height: 44px;
-    min-width: 44px;
+    min-height: var(--touch-min-target);
+    min-width: var(--touch-min-target);
+  }
+
+  /* Shared toggle switch — hardware ON/OFF controls (ActuatorSatellite, config panels) */
+  .toggle-switch {
+    position: relative;
+    flex-shrink: 0;
+    width: var(--toggle-width);
+    height: var(--toggle-height);
+    min-width: var(--touch-min-target);
+    min-height: var(--touch-min-target);
+    padding: 0;
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-full);
+    background: var(--color-bg-quaternary);
+    cursor: pointer;
+    transition:
+      background var(--transition-fast),
+      border-color var(--transition-fast);
+    box-sizing: border-box;
+  }
+
+  .toggle-switch--on {
+    background: var(--color-status-good);
+    border-color: transparent;
+  }
+
+  .toggle-switch--on.toggle-switch--accent {
+    background: var(--color-real);
+    border-color: var(--color-real);
+  }
+
+  .toggle-switch:disabled,
+  .toggle-switch--disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  .toggle-switch__thumb {
+    position: absolute;
+    top: 50%;
+    left: var(--toggle-thumb-offset);
+    width: var(--toggle-thumb-size);
+    height: var(--toggle-thumb-size);
+    transform: translateY(-50%);
+    background: var(--color-text-primary);
+    border-radius: 50%;
+    transition: transform var(--transition-fast);
+    pointer-events: none;
+  }
+
+  .toggle-switch--on .toggle-switch__thumb {
+    left: auto;
+    right: var(--toggle-thumb-offset);
+    transform: translateY(-50%);
   }
 
   /* Responsive typography */
@@ -725,6 +791,11 @@
   .grid-auto-lg {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+  }
+
+  .grid-auto-lg-fit {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr));
   }
 
   /* Breakpoint policy: prefer sm/md/lg/xl/2xl; keep 3xl/4xl for explicit widescreen cases */

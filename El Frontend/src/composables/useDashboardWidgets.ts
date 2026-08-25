@@ -43,11 +43,21 @@ export interface WidgetTypeMeta {
   label: string
   description: string
   icon: Component
+  /** Serializable icon name (lucide export name) — used by DnD/FAB catalog where Component objects cannot be transferred. Resolve via WIDGET_ICON_MAP. */
+  iconName: string
   w: number
   h: number
   minW: number
   minH: number
   category: string
+  /**
+   * AUT-1107: Optional per-display-mode size overrides for widgets that expose a
+   * mode picker in the config panel (currently only sensor-tile). Each key maps to
+   * the SensorTileDisplayMode value. When a new widget is placed and its default
+   * config has a displayMode, the matching entry is used instead of w/h/minW/minH.
+   * Widgets without modeSizes fall back to the flat w/h/minW/minH fields.
+   */
+  modeSizes?: Partial<Record<string, { w: number; h: number; minW: number; minH: number }>>
 }
 
 export interface UseDashboardWidgetsOptions {
@@ -71,6 +81,12 @@ export interface UseDashboardWidgetsOptions {
    * Ref so keep-alive / prop changes re-mount with correct semantics via existing watch on widgets.
    */
   compactTileGaugeSemantics?: Ref<boolean>
+  /**
+   * Dashboard-level crosshair-sync group id (AUT-912) propagated to Multi-Sensor charts.
+   * Stable identity (e.g. the active layout id) injected once at mount; the on/off state is
+   * read reactively from useCrosshairSync, so toggling never requires a re-mount.
+   */
+  syncGroupId?: Ref<string | undefined>
 }
 
 export interface UseDashboardWidgetsReturn {
@@ -86,7 +102,7 @@ export interface UseDashboardWidgetsReturn {
 
 // ─── Static Data (shared across all instances) ──────────────────────────────
 
-/** Widget component registry — all 11 types */
+/** Widget component registry — all 16 types */
 const widgetComponentMap: Record<string, Component> = {
   'sensor-tile': SensorTile,
   'line-chart': LineChartWidget,
@@ -106,30 +122,106 @@ const widgetComponentMap: Record<string, Component> = {
   'claude-chat': ClaudeChatWidget,
 }
 
-/** Widget type metadata for catalog and auto-generation */
-const WIDGET_TYPE_META: WidgetTypeMeta[] = [
+/**
+ * Widget type metadata for catalog and auto-generation.
+ *
+ * Single source of truth for the widget catalog (AUT-901). Each entry carries
+ * both `icon` (Component, for in-setup render like the editor sidebar) and
+ * `iconName` (serializable string, resolved via WIDGET_ICON_MAP for the
+ * AddWidgetDialog and the FAB QuickWidgetPanel). Exported so the FAB drag path
+ * (useWidgetDragFromFab) can derive its items instead of hand-copying them.
+ */
+/** AUT-1528: B2 add-catalog only. Render map stays complete for placed B1 cards. */
+export const B2_CATALOG_WIDGET_TYPES = [
+  'sensor-tile',
+  'gauge',
+  'historical',
+  'multi-sensor',
+  'statistics',
+  'alarm-list',
+  'fertigation-pair',
+] as const
+
+export type B2CatalogWidgetType = typeof B2_CATALOG_WIDGET_TYPES[number]
+
+export function isB2CatalogWidgetType(type: string): type is B2CatalogWidgetType {
+  return (B2_CATALOG_WIDGET_TYPES as readonly string[]).includes(type)
+}
+
+export const WIDGET_TYPE_META: WidgetTypeMeta[] = [
   // AUT-247: SensorTile is the unified sensor widget — listed first as preferred
-  { type: 'sensor-tile', label: 'Sensor-Kachel', description: 'Wert, Kurve oder Kreisanzeige — umschaltbar', icon: Activity, w: 4, h: 3, minW: 3, minH: 2, category: 'Sensoren' },
-  { type: 'line-chart', label: 'Linien-Chart', description: 'Kurve mit automatischer Skalierung', icon: BarChart3, w: 6, h: 4, minW: 4, minH: 3, category: 'Sensoren' },
-  { type: 'gauge', label: 'Gauge-Chart', description: 'Kreisanzeige für aktuelle Messwerte', icon: Gauge, w: 3, h: 3, minW: 2, minH: 3, category: 'Sensoren' },
-  { type: 'sensor-card', label: 'Sensor-Karte', description: 'Kompakte Karte mit aktuellem Wert', icon: Activity, w: 3, h: 2, minW: 2, minH: 2, category: 'Sensoren' },
-  { type: 'historical', label: 'Historische Zeitreihe', description: 'Historischer Verlauf aus der Datenbank', icon: BarChart3, w: 6, h: 4, minW: 6, minH: 4, category: 'Sensoren' },
-  { type: 'multi-sensor', label: 'Multi-Sensor-Chart', description: 'Mehrere Sensoren in einem Chart vergleichen', icon: BarChart3, w: 8, h: 5, minW: 6, minH: 4, category: 'Sensoren' },
-  { type: 'actuator-card', label: 'Aktor-Status', description: 'Aktor-Status und Steuerung', icon: Zap, w: 3, h: 2, minW: 2, minH: 2, category: 'Aktoren' },
-  { type: 'actuator-runtime', label: 'Aktor-Laufzeit', description: 'Laufzeitstatistik eines Aktors', icon: BarChart3, w: 4, h: 3, minW: 3, minH: 3, category: 'Aktoren' },
-  { type: 'esp-health', label: 'ESP-Health', description: 'Health-Metriken eines ESP32', icon: Cpu, w: 6, h: 3, minW: 4, minH: 3, category: 'System' },
-  { type: 'alarm-list', label: 'Alarm-Liste', description: 'Liste aktiver und vergangener Alarme', icon: Bell, w: 4, h: 4, minW: 4, minH: 4, category: 'System' },
-  { type: 'statistics', label: 'Statistik', description: 'Statistik eines Sensors über einen Zeitraum', icon: BarChart3, w: 4, h: 3, minW: 3, minH: 2, category: 'Sensoren' },
-  { type: 'fertigation-pair', label: 'Fertigation-Paar', description: 'EC/pH Eingang und Ausgang im Vergleich', icon: Droplets, w: 6, h: 4, minW: 4, minH: 3, category: 'Sensoren' },
-  { type: 'comparison-boxplot', label: 'MultispeQ Boxplot', description: 'Vergleich von MultispeQ-Aggregaten (Min/Q1/Median/Q3/Max) pro Gruppe', icon: BoxSelect, w: 6, h: 4, minW: 4, minH: 3, category: 'MultispeQ' },
-  { type: 'correlation-scatter', label: 'MultispeQ Korrelation', description: 'Scatter-Plot Sensorwert vs. Metadaten (z. B. PPFD vs. Yield)', icon: GitCompareArrows, w: 6, h: 4, minW: 4, minH: 3, category: 'MultispeQ' },
-  { type: 'climate-rule-health', label: 'Klima-Regel Cockpit', description: 'Soll/IST/ESP-Status/Dispatch für eine kritische Klimaregel', icon: ThermometerSun, w: 4, h: 3, minW: 3, minH: 2, category: 'Regeln' },
-  { type: 'claude-chat', label: 'Claude Assistant', description: 'KI-gestütztes Debugging und Stack-Analyse', icon: Sparkles, w: 4, h: 6, minW: 3, minH: 4, category: 'System' },
+  // AUT-1107: modeSizes provide content-driven initial placement dimensions per displayMode.
+  // Rationale: numeric = compact number display (small footprint), gauge = semicircle needs
+  // equal aspect ratio (mirrors GaugeWidget entry), sparkline = line chart needs width,
+  // historic = time-series chart needs substantial space (mirrors historical entry but with
+  // relaxed minW since SensorTile has no inline time-range chips).
+  // The base w/h/minW/minH remain as fallback for FAB-drag-in and any unknown modes.
+  {
+    type: 'sensor-tile',
+    label: 'Sensor-Kachel',
+    description: 'Wert, Kurve oder Kreisanzeige — umschaltbar',
+    icon: Activity,
+    iconName: 'Activity',
+    w: 4, h: 3, minW: 3, minH: 4,
+    category: 'Sensoren',
+    modeSizes: {
+      numeric:   { w: 3, h: 2, minW: 2, minH: 2 },
+      gauge:     { w: 3, h: 3, minW: 2, minH: 3 },
+      sparkline: { w: 4, h: 3, minW: 3, minH: 3 },
+      historic:  { w: 6, h: 4, minW: 4, minH: 4 },
+    },
+  },
+  { type: 'gauge', label: 'Gauge-Chart', description: 'Kreisanzeige für aktuelle Messwerte', icon: Gauge, iconName: 'Gauge', w: 3, h: 3, minW: 2, minH: 3, category: 'Sensoren' },
+  { type: 'historical', label: 'Historische Zeitreihe', description: 'Historischer Verlauf aus der Datenbank', icon: BarChart3, iconName: 'BarChart3', w: 6, h: 4, minW: 6, minH: 4, category: 'Sensoren' },
+  { type: 'multi-sensor', label: 'Multi-Sensor-Chart', description: 'Mehrere Sensoren in einem Chart vergleichen', icon: BarChart3, iconName: 'BarChart3', w: 8, h: 5, minW: 6, minH: 4, category: 'Sensoren' },
+  { type: 'actuator-card', label: 'Aktor-Status', description: 'Aktor-Status und Steuerung', icon: Zap, iconName: 'Zap', w: 3, h: 2, minW: 2, minH: 2, category: 'Aktoren' },
+  { type: 'actuator-runtime', label: 'Aktor-Laufzeit', description: 'Laufzeitstatistik eines Aktors', icon: BarChart3, iconName: 'BarChart3', w: 4, h: 3, minW: 3, minH: 3, category: 'Aktoren' },
+  { type: 'esp-health', label: 'ESP-Health', description: 'Health-Metriken eines ESP32', icon: Cpu, iconName: 'Cpu', w: 6, h: 3, minW: 4, minH: 3, category: 'System' },
+  { type: 'alarm-list', label: 'Alarm-Liste', description: 'Liste aktiver und vergangener Alarme', icon: Bell, iconName: 'Bell', w: 4, h: 4, minW: 4, minH: 4, category: 'System' },
+  { type: 'statistics', label: 'Statistik', description: 'Statistik eines Sensors über einen Zeitraum', icon: BarChart3, iconName: 'BarChart3', w: 4, h: 3, minW: 3, minH: 2, category: 'Sensoren' },
+  { type: 'fertigation-pair', label: 'Fertigation-Paar', description: 'EC/pH Eingang und Ausgang im Vergleich', icon: Droplets, iconName: 'Droplets', w: 6, h: 4, minW: 4, minH: 3, category: 'Sensoren' },
+  { type: 'comparison-boxplot', label: 'MultispeQ Boxplot', description: 'Vergleich von MultispeQ-Aggregaten (Min/Q1/Median/Q3/Max) pro Gruppe', icon: BoxSelect, iconName: 'BoxSelect', w: 6, h: 4, minW: 4, minH: 3, category: 'MultispeQ' },
+  { type: 'correlation-scatter', label: 'MultispeQ Korrelation', description: 'Scatter-Plot Sensorwert vs. Metadaten (z. B. PPFD vs. Yield)', icon: GitCompareArrows, iconName: 'GitCompareArrows', w: 6, h: 4, minW: 4, minH: 3, category: 'MultispeQ' },
+  { type: 'climate-rule-health', label: 'Klima-Regel Cockpit', description: 'Soll/IST/ESP-Status/Dispatch für eine kritische Klimaregel', icon: ThermometerSun, iconName: 'ThermometerSun', w: 4, h: 3, minW: 3, minH: 2, category: 'Regeln' },
+  { type: 'claude-chat', label: 'Claude Assistant', description: 'KI-gestütztes Debugging und Stack-Analyse', icon: Sparkles, iconName: 'Sparkles', w: 4, h: 6, minW: 3, minH: 4, category: 'System' },
 ]
+
+export const B2_CATALOG_WIDGET_TYPE_META: WidgetTypeMeta[] = WIDGET_TYPE_META.filter(
+  (meta) => isB2CatalogWidgetType(meta.type),
+)
+
+/**
+ * Shared widget icon map (AUT-901) — serializable `iconName` -> Lucide Component.
+ *
+ * Single icon lookup for the AddWidgetDialog and the FAB QuickWidgetPanel,
+ * replacing two drifting local ICON_MAPs that only covered 6 icons (the 5
+ * newer types fell back to BarChart3). Keep in sync with the `iconName` values
+ * in WIDGET_TYPE_META above.
+ */
+export const WIDGET_ICON_MAP: Record<string, Component> = {
+  BarChart3,
+  Gauge,
+  Activity,
+  Zap,
+  Bell,
+  Cpu,
+  Droplets,
+  BoxSelect,
+  GitCompareArrows,
+  ThermometerSun,
+  Sparkles,
+}
 
 /** Default config per widget type */
 const WIDGET_DEFAULT_CONFIGS: Record<string, Record<string, unknown>> = {
-  'sensor-tile': { displayMode: 'numeric', timeRange: '1h', showThresholds: false },
+  // AUT-1107: Mode-Leiste + Qualitäts-Punkt aus der Kachel — Konfiguration nur im Panel.
+  'sensor-tile': {
+    displayMode: 'numeric',
+    timeRange: '1h',
+    showThresholds: false,
+    hideModeToggle: true,
+    showQualityDot: false,
+  },
   'line-chart': { timeRange: '1h', showThresholds: false },
   'gauge': {},
   'sensor-card': {},
@@ -184,6 +276,7 @@ export function useDashboardWidgets(options: UseDashboardWidgetsOptions = {}): U
     readOnly = false,
     zoneId,
     compactTileGaugeSemantics,
+    syncGroupId,
   } = options
 
   // Capture appContext in setup() context — CRITICAL: do not move into callbacks
@@ -218,30 +311,42 @@ export function useDashboardWidgets(options: UseDashboardWidgetsOptions = {}): U
 
       header.append(titleEl)
 
-      // Gear icon for widget configuration (only when showConfigButton is true)
+      // Actions in eigener Flex-Gruppe — Settings/Remove bleiben im Header und
+      // überdecken nicht Mode-Leiste oder Chart-Controls der Sensor-Kachel.
+      const actions = document.createElement('div')
+      actions.className = 'dashboard-widget__actions'
+
       if (showConfigButton && onConfigClick) {
         const gearBtn = document.createElement('button')
         gearBtn.className = 'dashboard-widget__gear-btn'
+        gearBtn.type = 'button'
         gearBtn.title = 'Konfigurieren'
+        gearBtn.setAttribute('aria-label', 'Widget konfigurieren')
         gearBtn.innerHTML = GEAR_SVG
         gearBtn.addEventListener('click', (e) => {
           e.stopPropagation()
           onConfigClick(widgetId, type)
         })
-        header.appendChild(gearBtn)
+        actions.appendChild(gearBtn)
       }
 
-      // Remove (X) button (only when onRemoveClick callback is provided)
-      if (onRemoveClick) {
+      // Sensor-Kachel: kein Delete im Kachel-Header (Overlap). Entfernen über Config-Panel.
+      if (onRemoveClick && type !== 'sensor-tile') {
         const removeBtn = document.createElement('button')
         removeBtn.className = 'dashboard-widget__remove-btn'
+        removeBtn.type = 'button'
         removeBtn.title = 'Widget entfernen'
+        removeBtn.setAttribute('aria-label', 'Widget entfernen')
         removeBtn.innerHTML = REMOVE_SVG
         removeBtn.addEventListener('click', (e) => {
           e.stopPropagation()
           onRemoveClick(widgetId)
         })
-        header.appendChild(removeBtn)
+        actions.appendChild(removeBtn)
+      }
+
+      if (actions.childElementCount > 0) {
+        header.appendChild(actions)
       }
 
       container.appendChild(header)
@@ -291,7 +396,9 @@ export function useDashboardWidgets(options: UseDashboardWidgetsOptions = {}): U
     if (config.maxItems) props.maxItems = config.maxItems
     if (config.showResolved != null) props.showResolved = config.showResolved
     if (config.actuatorFilter) props.actuatorFilter = config.actuatorFilter
-    if (config.dataSources) props.dataSources = config.dataSources
+    if (config.dataSources != null) props.dataSources = config.dataSources
+    if (config.actuatorIds != null) props.actuatorIds = config.actuatorIds
+    if (config.comparisonMode != null) props.comparisonMode = config.comparisonMode
     if (config.yMin != null) props.yMin = config.yMin
     if (config.yMax != null) props.yMax = config.yMax
     if (config.color) props.color = config.color
@@ -301,17 +408,21 @@ export function useDashboardWidgets(options: UseDashboardWidgetsOptions = {}): U
     if (config.alarmHigh != null) props.alarmHigh = config.alarmHigh
     if (config.showStdDev != null) props.showStdDev = config.showStdDev
     if (config.showQuality != null) props.showQuality = config.showQuality
-    if (config.compareMode != null) props.compareMode = config.compareMode
-    if (config.compareSensorType) props.compareSensorType = config.compareSensorType
-    if (config.compareZoneId) props.compareZoneId = config.compareZoneId
 
     // AUT-247: SensorTile-specific props
     if (config.displayMode) props.displayMode = config.displayMode
     if (config.liveBufferSize != null) props.liveBufferSize = config.liveBufferSize
     if (config.unit) props.unit = config.unit
     if (config.showTrendIcon != null) props.showTrendIcon = config.showTrendIcon
-    if (config.showQualityDot != null) props.showQualityDot = config.showQualityDot
-    if (config.hideModeToggle != null) props.hideModeToggle = config.hideModeToggle
+    // Force-hide for sensor-tile: alte Layout-JSONs ohne Flags sollen die Mode-Leiste /
+    // den Qualitäts-Punkt nicht wieder einblenden (Editor + Inline-Monitor).
+    if (type === 'sensor-tile') {
+      props.hideModeToggle = true
+      props.showQualityDot = false
+    } else {
+      if (config.showQualityDot != null) props.showQualityDot = config.showQualityDot
+      if (config.hideModeToggle != null) props.hideModeToggle = config.hideModeToggle
+    }
 
     // FertigationPairWidget props
     if (config.inflowSensorId) props.inflowSensorId = config.inflowSensorId
@@ -353,6 +464,12 @@ export function useDashboardWidgets(options: UseDashboardWidgetsOptions = {}): U
     // Zone ID for zone-scoped sensor filtering (PA-02c)
     if (zoneId?.value) {
       props.zoneId = zoneId.value
+    }
+
+    // Dashboard-level crosshair-sync group (AUT-912) — only the multi-sensor chart consumes it.
+    // Stable identity injected at mount; useCrosshairSync drives the reactive on/off.
+    if (type === 'multi-sensor' && unref(syncGroupId)) {
+      props.syncGroupId = unref(syncGroupId)
     }
 
     // L1 zone-tile: Spot-Gauge vs Zonenmittel (gleiche Aggregation wie ZoneTileCard-Ø)

@@ -10,6 +10,7 @@
 import { computed } from 'vue'
 import { Doughnut } from 'vue-chartjs'
 import { tokens } from '@/utils/cssTokens'
+import { formatNumber } from '@/utils/formatters'
 import {
   Chart as ChartJS,
   ArcElement,
@@ -30,6 +31,8 @@ interface Props {
   max?: number
   /** Unit suffix displayed with value */
   unit?: string
+  /** Explicit decimals (de-DE). Default: 1 if fractional, else 0 */
+  decimals?: number
   /** Color thresholds for gauge segments */
   thresholds?: GaugeThreshold[]
   /** Gauge size */
@@ -40,6 +43,7 @@ const props = withDefaults(defineProps<Props>(), {
   min: 0,
   max: 100,
   unit: '',
+  decimals: undefined,
   thresholds: () => [
     { value: 0, color: tokens.statusGood },
     { value: 60, color: tokens.statusWarning },
@@ -47,14 +51,6 @@ const props = withDefaults(defineProps<Props>(), {
   ],
   size: 'md',
 })
-
-const SIZES: Record<string, number> = {
-  sm: 80,
-  md: 120,
-  lg: 160,
-}
-
-const sizePixels = computed(() => SIZES[props.size] ?? SIZES.md)
 
 const range = computed(() => props.max - props.min)
 
@@ -69,58 +65,76 @@ const normalizedValue = computed(() =>
 )
 
 /**
- * Build gauge segments based on thresholds.
- * The filled portion uses threshold colors, the remaining is transparent.
+ * Fixed top-semicircle geometry (AUT-1099): rotation 270° (9 o'clock start)
+ * + circumference 180° (sweeping through 12 o'clock to 3 o'clock). The arc
+ * segments (chartData) AND the needle marker (markerDeg + CSS pivot/length
+ * below) all derive from these two constants so they cannot drift apart
+ * again the way they did across the AUT-1099 Teil b/c regressions.
+ *
+ * Chart.js internally computes the canvas start angle as `(rotation - 90)`deg,
+ * measured clockwise from the 3-o'clock axis (see DoughnutController
+ * _getRotation() in chart.js). rotation:270 therefore starts at 9 o'clock,
+ * not rotation:180 (which starts at 6 o'clock and draws the left half
+ * instead of the top half) — confirmed against the installed chart.js source
+ * after a rotation:180 regression produced a visibly skewed ring.
+ */
+const ARC_ROTATION_DEG = 270
+const ARC_CIRCUMFERENCE_DEG = 180
+
+/**
+ * Zone-Ring: all threshold segments are always fully visible regardless of
+ * the current value (AUT-1099 E1). The current value is shown via the
+ * `.gauge-chart__marker` needle element below. This replaces the previous
+ * Fill-Bogen approach where segments were only painted up to `normalizedValue`.
+ *
+ * Why no hidden bottom segment:
+ *   The visible segments sum to 100 (full range = 0..1 mapped to 0..100).
+ *   With circumference:180 and no extra data, Chart.js maps all 100 units to
+ *   the full 180°, giving the correct semicircle. Adding a transparent "100"
+ *   segment would dilute the arc to only 90° (a quarter-circle) — the bug
+ *   present in Part (a).
  */
 const chartData = computed(() => {
   const sorted = [...props.thresholds].sort((a, b) => a.value - b.value)
   const segments: number[] = []
   const colors: string[] = []
 
-  // Calculate filled segments based on value position in threshold ranges
   for (let i = 0; i < sorted.length; i++) {
-    const thresholdStart = (sorted[i].value - props.min) / range.value
-    const thresholdEnd = i < sorted.length - 1
+    const start = (sorted[i].value - props.min) / range.value
+    const end = i < sorted.length - 1
       ? (sorted[i + 1].value - props.min) / range.value
       : 1
-
-    if (normalizedValue.value <= thresholdStart) {
-      // Value hasn't reached this threshold
-      break
-    }
-
-    const segmentEnd = Math.min(normalizedValue.value, thresholdEnd)
-    const segmentSize = segmentEnd - thresholdStart
-
-    if (segmentSize > 0) {
-      segments.push(segmentSize * 100)
+    const s = Math.min(1, Math.max(0, start))
+    const e = Math.min(1, Math.max(0, end))
+    const size = Math.max(0, e - s) * 100
+    if (size > 0) {
+      segments.push(size)
       colors.push(sorted[i].color)
     }
   }
-
-  // Remaining unfilled portion
-  const filledTotal = segments.reduce((sum, s) => sum + s, 0)
-  const remaining = 100 - filledTotal
-
-  if (remaining > 0) {
-    segments.push(remaining)
-    colors.push('rgba(29, 29, 42, 0.5)')
-  }
-
-  // Bottom half (hidden) - same size as top to create 180° gauge
-  segments.push(100)
-  colors.push('transparent')
 
   return {
     datasets: [{
       data: segments,
       backgroundColor: colors,
       borderWidth: 0,
-      circumference: 180,
-      rotation: 270,
+      // rotation:270 = start at 9 o'clock (west); circumference:180 sweeps
+      // clockwise to 3 o'clock (east) through 12 o'clock (north).
+      circumference: ARC_CIRCUMFERENCE_DEG,
+      rotation: ARC_ROTATION_DEG,
     }],
   }
 })
+
+/**
+ * Rotation angle (deg) for the needle marker.
+ * Maps normalizedValue 0→1 to CSS rotation -90°→+90° so that:
+ *   min (0) → 9 o'clock (−90°), mid (0.5) → 12 o'clock (0°), max (1) → 3 o'clock (+90°)
+ * Derived from the same ARC_CIRCUMFERENCE_DEG as the arc segments above.
+ */
+const markerDeg = computed(
+  () => normalizedValue.value * ARC_CIRCUMFERENCE_DEG - ARC_CIRCUMFERENCE_DEG / 2
+)
 
 const chartOptions = computed(() => ({
   responsive: true,
@@ -146,8 +160,8 @@ const valueColor = computed(() => {
 })
 
 const displayValue = computed(() => {
-  const decimals = props.value % 1 !== 0 ? 1 : 0
-  return props.value.toFixed(decimals)
+  const decimals = props.decimals ?? (props.value % 1 !== 0 ? 1 : 0)
+  return formatNumber(props.value, decimals)
 })
 </script>
 
@@ -155,45 +169,75 @@ const displayValue = computed(() => {
   <div
     class="gauge-chart"
     :class="{ 'gauge-chart--sm': size === 'sm' }"
-    :style="{
-      width: `${sizePixels}px`,
-      height: `${sizePixels * 0.6}px`,
-    }"
   >
-    <div class="gauge-chart__canvas">
-      <Doughnut
-        :data="chartData"
-        :options="chartOptions"
+    <div class="gauge-chart__stage">
+      <div class="gauge-chart__canvas">
+        <Doughnut
+          :data="chartData"
+          :options="chartOptions"
+        />
+      </div>
+      <!-- Needle marker — pivots at doughnut center (bottom of element) -->
+      <div
+        class="gauge-chart__marker"
+        aria-hidden="true"
+        :style="{ transform: `rotate(${markerDeg}deg)` }"
       />
-    </div>
-    <div class="gauge-chart__value" :style="{ color: valueColor }">
-      <span class="gauge-chart__number">{{ displayValue }}</span>
-      <span v-if="unit" class="gauge-chart__unit">{{ unit }}</span>
-    </div>
-    <div class="gauge-chart__range">
-      <span class="gauge-chart__min">{{ min }}</span>
-      <span class="gauge-chart__max">{{ max }}</span>
+      <div class="gauge-chart__value" :style="{ color: valueColor }">
+        <span class="gauge-chart__number">{{ displayValue }}</span>
+        <span v-if="unit" class="gauge-chart__unit">{{ unit }}</span>
+      </div>
+      <div class="gauge-chart__range">
+        <span class="gauge-chart__min">{{ min }}</span>
+        <span class="gauge-chart__max">{{ max }}</span>
+      </div>
     </div>
   </div>
 </template>
 
 <style scoped>
+/*
+ * AUT-902: container-relative gauge (no fixed SIZES px).
+ * The root fills the widget cell; the stage keeps the gauge's 5:3 shape and is
+ * "contained" to the largest box that fits BOTH cell width and height. chart.js
+ * (responsive + maintainAspectRatio:false) resizes the canvas to the stage on
+ * cell resize via its own ResizeObserver — including 0-height→visible mounts
+ * (zone-tile preview, tabs). Text scales with the cell via container queries.
+ */
 .gauge-chart {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  container-type: size;
+}
+
+.gauge-chart__stage {
   position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
+  aspect-ratio: 5 / 3;
+  width: min(100%, calc(100cqh * 5 / 3));
+  max-width: 100%;
+  max-height: 100%;
+  font-size: clamp(0.5rem, 14cqmin, 1.25rem);
 }
 
 .gauge-chart__canvas {
   position: relative;
   width: 100%;
   height: 100%;
+  min-height: 0;
 }
 
 .gauge-chart__value {
   position: absolute;
-  bottom: 4px;
+  bottom: 0.25em;
   left: 50%;
   transform: translateX(-50%);
   text-align: center;
@@ -224,24 +268,64 @@ const displayValue = computed(() => {
 .gauge-chart__min,
 .gauge-chart__max {
   font-family: var(--font-mono);
-  font-size: var(--text-xxs);
+  font-size: 0.6em;
   color: var(--color-text-muted);
 }
 
-/* Compact size: hide range labels, shrink value text to fit 70px containers */
+/*
+ * Hide range labels when the cell is too short to read them (small live tiles,
+ * compact zone-tile preview). Container query replaces the old fixed `--sm` px
+ * breakpoint so it reacts to the actual cell, not just the size prop.
+ */
+@container (max-height: 96px) {
+  .gauge-chart__range {
+    display: none;
+  }
+}
+
+/* Legacy `size="sm"` callers keep range hidden + value tucked a touch lower. */
 .gauge-chart--sm .gauge-chart__range {
   display: none;
 }
 
 .gauge-chart--sm .gauge-chart__value {
-  bottom: 2px;
+  bottom: 0.15em;
 }
 
-.gauge-chart--sm .gauge-chart__number {
-  font-size: 1em;
-}
-
-.gauge-chart--sm .gauge-chart__unit {
-  font-size: 0.55em;
+/*
+ * AUT-1099 (needle-anchor fix) — Zone-Ring needle marker.
+ * Centered horizontally at 50%, but the pivot is NOT at 50% of the stage
+ * height. For a circumference:180/rotation:270 doughnut (top semicircle,
+ * 9→12→3 o'clock), Chart.js's DoughnutController.getRatioAndOffset() (see
+ * installed chart.js source, dist/chart.js) shifts the drawn circle's
+ * center DOWN from the canvas midpoint by 0.5 * outerRadius, so the
+ * semicircle fills the full available canvas height instead of just the
+ * top half. With the stage's fixed 5:3 aspect ratio (AUT-902) this
+ * resolves to an exact 1/12 (~8.33%) pivot offset from the bottom edge —
+ * the old 50% pivot was the actual cause of the ~15-20° needle/arc
+ * mismatch (not the rotation constant, which already matched the arc).
+ * Needle length reaches exactly to the arc's outer radius: 5/6 (~83.33%)
+ * of the stage height from this pivot — independent of `cutout` for this
+ * specific rotation/circumference span. Both fractions are tied to
+ * ARC_ROTATION_DEG/ARC_CIRCUMFERENCE_DEG above: if those ever change,
+ * recompute via getRatioAndOffset before touching these values.
+ *
+ * The marker element points straight up by default; the JS `markerDeg`
+ * rotation maps min→-90° (9 o'clock), mid→0° (12 o'clock), max→+90°
+ * (3 o'clock) — consistent with the 180° semicircle arc geometry.
+ *
+ * Contrast: white (--color-text-primary) stands apart from all zone segment
+ * colors (green/yellow/red family), satisfying the Design-Spec contrast rule.
+ */
+.gauge-chart__marker {
+  position: absolute;
+  left: calc(50% - 1px);
+  bottom: calc(100% / 12);
+  width: 2px;
+  height: calc(100% * 5 / 6);
+  background: var(--color-text-primary);
+  transform-origin: bottom center;
+  border-radius: 1px 1px 0 0;
+  pointer-events: none;
 }
 </style>

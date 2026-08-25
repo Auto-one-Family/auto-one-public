@@ -13,6 +13,9 @@
  *   - POST   /v1/plants/{id}/lifecycle-event     (AUT-221)
  *   - GET    /v1/plants/{id}/qr-code.png         (AUT-222, returns image/png)
  *
+ * AUT-1178: unwrap() detects the `plants` envelope key from PlantListResponse
+ * (`{ plants: [...], total: N }`) in addition to the legacy `data` envelope.
+ *
  * @see El Servador/god_kaiser_server/src/api/v1/plants.py
  */
 
@@ -22,7 +25,9 @@ import type {
   PlantCreate,
   PlantLifecycleEvent,
   PlantLifecycleEventCreate,
+  PlantLifecycleEventStatusUpdate,
   PlantMeasurement,
+  PlantTankIncidentEvent,
   PlantUpdate,
 } from '@/types'
 
@@ -30,15 +35,59 @@ import type {
 // Envelope helpers
 // =============================================================================
 
+/** Legacy `{ data: T }` envelope used by some endpoints. */
 interface Envelope<T> {
   data?: T
 }
 
-function unwrap<T>(payload: T | Envelope<T>): T {
-  if (payload && typeof payload === 'object' && 'data' in payload) {
-    const inner = (payload as Envelope<T>).data
-    if (inner !== undefined) return inner
+/**
+ * PlantListResponse envelope: `{ plants: Plant[], total: number }`.
+ * This is what `GET /v1/plants` returns (AUT-1178).
+ */
+interface PlantListEnvelope {
+  plants?: Plant[]
+  total?: number
+}
+
+/**
+ * LifecycleEventListResponse envelope:
+ * `{ plant_id: string, total: number, events: PlantLifecycleEvent[],
+ * tank_incidents: PlantTankIncidentEvent[] }`.
+ * This is what `GET /v1/plants/{id}/lifecycle-events` returns (AUT-1181,
+ * `tank_incidents` added AUT-1211).
+ */
+interface PlantLifecycleEventListEnvelope {
+  plant_id?: string
+  total?: number
+  events?: PlantLifecycleEvent[]
+  tank_incidents?: PlantTankIncidentEvent[]
+}
+
+/** Return shape of {@link plantsApi.getLifecycleEvents}. */
+export interface PlantLifecycleEventsResult {
+  events: PlantLifecycleEvent[]
+  tankIncidents: PlantTankIncidentEvent[]
+}
+
+/**
+ * Unwrap a server response that may arrive in one of three shapes:
+ *   1) PlantListResponse `{ plants: [...], total: N }` — detected first
+ *   2) Legacy data envelope `{ data: T }`
+ *   3) Raw value T
+ */
+function unwrap<T>(payload: T | Envelope<T> | PlantListEnvelope): T {
+  if (payload && typeof payload === 'object') {
+    // Shape 1: PlantListResponse
+    if ('plants' in payload && Array.isArray((payload as PlantListEnvelope).plants)) {
+      return (payload as PlantListEnvelope).plants as unknown as T
+    }
+    // Shape 2: legacy data envelope
+    if ('data' in payload) {
+      const inner = (payload as Envelope<T>).data
+      if (inner !== undefined) return inner
+    }
   }
+  // Shape 3: raw value
   return payload as T
 }
 
@@ -49,8 +98,8 @@ function unwrap<T>(payload: T | Envelope<T>): T {
 export const plantsApi = {
   /** List all plants. */
   async getList(): Promise<Plant[]> {
-    const response = await api.get<Plant[] | Envelope<Plant[]>>('/plants')
-    const value = unwrap(response.data)
+    const response = await api.get<Plant[] | Envelope<Plant[]> | PlantListEnvelope>('/plants')
+    const value = unwrap<Plant[]>(response.data as Plant[] | Envelope<Plant[]> | PlantListEnvelope)
     return Array.isArray(value) ? value : []
   },
 
@@ -87,6 +136,44 @@ export const plantsApi = {
     return Array.isArray(value) ? value : []
   },
 
+  /**
+   * Load all lifecycle events for a plant from the dedicated endpoint.
+   *
+   * Server: GET /v1/plants/{id}/lifecycle-events
+   * Response envelope: { plant_id, total, events: PlantLifecycleEvent[],
+   * tank_incidents: PlantTankIncidentEvent[] }
+   * Events are ordered by event_timestamp ASC (oldest first) on the server.
+   *
+   * AUT-1181: Befund 2 — use the dedicated endpoint instead of the embedded
+   * field on the plant detail response (which the server does not populate).
+   *
+   * AUT-1211: tank_incidents are system-wide tank incidents affecting this
+   * plant via its subzone/tank assignment — kept separate from `events`
+   * since they are not per-plant lifecycle events.
+   */
+  async getLifecycleEvents(id: string): Promise<PlantLifecycleEventsResult> {
+    const response = await api.get<PlantLifecycleEventListEnvelope | PlantLifecycleEvent[]>(
+      `/plants/${id}/lifecycle-events`,
+    )
+    const payload = response.data
+    if (
+      payload &&
+      typeof payload === 'object' &&
+      'events' in payload &&
+      Array.isArray((payload as PlantLifecycleEventListEnvelope).events)
+    ) {
+      const envelope = payload as PlantLifecycleEventListEnvelope
+      return {
+        events: envelope.events ?? [],
+        tankIncidents: envelope.tank_incidents ?? [],
+      }
+    }
+    return {
+      events: Array.isArray(payload) ? payload : [],
+      tankIncidents: [],
+    }
+  },
+
   /** Append a lifecycle event (phase change, note, harvest, ...). */
   async addLifecycleEvent(
     id: string,
@@ -95,6 +182,23 @@ export const plantsApi = {
     const response = await api.post<PlantLifecycleEvent | Envelope<PlantLifecycleEvent>>(
       `/plants/${id}/lifecycle-event`,
       event,
+    )
+    return unwrap(response.data)
+  },
+
+  /**
+   * Change the truth status of an existing lifecycle event (AUT-1207) —
+   * e.g. mark it as 'reverted' with a reason. The only mutable field on an
+   * otherwise append-only event.
+   */
+  async updateLifecycleEventStatus(
+    id: string,
+    eventId: string,
+    update: PlantLifecycleEventStatusUpdate,
+  ): Promise<PlantLifecycleEvent> {
+    const response = await api.patch<PlantLifecycleEvent | Envelope<PlantLifecycleEvent>>(
+      `/plants/${id}/lifecycle-event/${eventId}/status`,
+      update,
     )
     return unwrap(response.data)
   },

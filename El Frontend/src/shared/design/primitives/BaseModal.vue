@@ -29,6 +29,11 @@ interface Props {
   closeOnEscape?: boolean
   /** Z-index level: 'dialog' (default, 65) or 'prompt' (78, for confirm dialogs above other modals) */
   level?: 'dialog' | 'prompt'
+  /**
+   * AUT-1524: let hits pass through the inset-0 wrapper (Focus+Context).
+   * Overlay and shell do not capture clicks; modal-content stays interactive.
+   */
+  allowBackgroundInteraction?: boolean
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -37,6 +42,7 @@ const props = withDefaults(defineProps<Props>(), {
   closeOnOverlay: true,
   closeOnEscape: true,
   level: 'dialog',
+  allowBackgroundInteraction: false,
 })
 
 const emit = defineEmits<{
@@ -88,6 +94,7 @@ onUnmounted(() => {
       <div
         v-if="open"
         class="fixed inset-0 flex items-center justify-center p-2 sm:p-4"
+        :class="{ 'base-modal--pass-through': allowBackgroundInteraction }"
         :style="{ zIndex: `var(--z-${level})` }"
         role="dialog"
         aria-modal="true"
@@ -96,6 +103,7 @@ onUnmounted(() => {
         <!-- Glass Overlay -->
         <div
           class="glass-overlay absolute inset-0"
+          :class="{ 'base-modal__overlay--pass-through': allowBackgroundInteraction }"
           @click="handleOverlayClick"
         />
 
@@ -105,7 +113,8 @@ onUnmounted(() => {
             'modal-content relative w-full',
             maxWidth,
             'max-h-[90vh] overflow-hidden flex flex-col',
-            'transform transition-all duration-200'
+            'transform transition-all duration-200',
+            allowBackgroundInteraction ? 'base-modal__content--interactive' : '',
           ]"
           @click.stop
         >
@@ -193,6 +202,19 @@ onUnmounted(() => {
   border-top: 1px solid var(--glass-border);
   flex-shrink: 0;
   background-color: rgba(26, 26, 36, 0.5);
+}
+
+/* AUT-1524: CWM Focus+Context — backdrop does not eat Satellite hits */
+.base-modal--pass-through {
+  pointer-events: none;
+}
+
+.base-modal__overlay--pass-through {
+  pointer-events: none;
+}
+
+.base-modal__content--interactive {
+  pointer-events: auto;
 }
 
 /* Modal enter/leave transitions */

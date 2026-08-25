@@ -140,8 +140,11 @@ function onTileUpdate(cfg: { sensorId?: string; timeRange?: string }) {
   color: var(--color-accent);
 }
 
-@media (hover: none) {
+/* AUT-1100: Touch targets — always visible + 44px (WCAG 2.5.5); merged from prior hover:none opacity-only rule */
+@media (pointer: coarse), (hover: none) {
   .historical-widget__export-btn {
+    min-width: 44px;
+    min-height: 44px;
     opacity: 0.8;
   }
 }

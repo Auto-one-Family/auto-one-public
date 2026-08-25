@@ -1,12 +1,16 @@
 import { computed } from 'vue'
 import type {
   LogicRule,
+  LogicCondition,
+  LogicAction,
   SensorCondition,
   ActuatorAction,
   HysteresisCondition,
   TimeCondition,
   CompoundCondition,
   SensorDiffCondition,
+  NotificationAction,
+  NotRunningCondition,
 } from '@/types/logic'
 import { getSensorLabel, getSensorUnit } from '@/utils/sensorDefaults'
 
@@ -42,18 +46,120 @@ function formatTimeRange(tc: TimeCondition): string {
   return `Täglich ${range}`
 }
 
+function formatSensorCondition(sc: SensorCondition): string {
+  const label = getSensorLabel(sc.sensor_type)
+  const rawUnit = getSensorUnit(sc.sensor_type)
+  const unitStr = rawUnit && rawUnit !== 'raw' ? ` ${rawUnit}` : ''
+  if (sc.operator === 'between' && sc.min !== undefined && sc.max !== undefined) {
+    return `${label} zwischen ${sc.min} und ${sc.max}${unitStr}`
+  }
+  const opLabel = OPERATOR_LABELS[sc.operator] ?? sc.operator
+  return `${label} ${opLabel} ${sc.value}${unitStr}`
+}
+
+function formatConditionBrief(cond: LogicCondition | undefined, fallbackIndex: number): string {
+  if (!cond) return `C${fallbackIndex}`
+  if (cond.type === 'sensor' || cond.type === 'sensor_threshold') {
+    return formatSensorCondition(cond as SensorCondition)
+  }
+  if (cond.type === 'hysteresis') {
+    const hc = cond as HysteresisCondition
+    const unit = hc.sensor_type ? getSensorUnit(hc.sensor_type) : ''
+    const unitStr = unit && unit !== 'raw' ? ` ${unit}` : ''
+    if (hc.activate_above != null && hc.deactivate_below != null) {
+      return `Hysterese Ein>${hc.activate_above}${unitStr}/Aus<${hc.deactivate_below}${unitStr}`
+    }
+    if (hc.activate_below != null && hc.deactivate_above != null) {
+      return `Hysterese Ein<${hc.activate_below}${unitStr}/Aus>${hc.deactivate_above}${unitStr}`
+    }
+    return 'Hysterese'
+  }
+  if (cond.type === 'time_window' || cond.type === 'time') {
+    return formatTimeRange(cond as TimeCondition)
+  }
+  if (cond.type === 'sensor_diff') {
+    const dc = cond as SensorDiffCondition
+    const opLabel = OPERATOR_LABELS[dc.operator] ?? dc.operator
+    return `Sensordifferenz ${opLabel} ${dc.value}`
+  }
+  if (cond.type === 'not_running') {
+    const nr = cond as NotRunningCondition
+    return nr.target === 'sequence' ? 'Sequenz läuft nicht' : `Aktor GPIO ${nr.gpio ?? '?'} läuft nicht`
+  }
+  if (cond.type === 'compound') {
+    const cc = cond as CompoundCondition
+    return `Kombiniert (${cc.logic}, ${cc.conditions.length})`
+  }
+  if (cond.type === 'diagnostics_status') {
+    return 'Diagnose-Status'
+  }
+  return `C${fallbackIndex}`
+}
+
+function formatActionBrief(action: LogicAction): string {
+  if (action.type === 'actuator' || action.type === 'actuator_command') {
+    const aa = action as ActuatorAction
+    const cmd = COMMAND_LABELS[aa.command] ?? aa.command
+    return `Aktor GPIO ${aa.gpio} ${cmd}`
+  }
+  if (action.type === 'notification') {
+    const na = action as NotificationAction
+    return `Notification (${na.channel})`
+  }
+  if (action.type === 'delay') return `Delay ${action.seconds}s`
+  if (action.type === 'sequence') return 'Sequenz'
+  if (action.type === 'plugin' || action.type === 'autoops_trigger') return 'Plugin'
+  if (action.type === 'run_diagnostic') return 'Diagnose'
+  return 'Aktion'
+}
+
+function hasConditionRefs(action: LogicAction): boolean {
+  return Array.isArray(action.condition_refs) && action.condition_refs.length > 0
+}
+
+function buildRoutedReadableText(rule: LogicRule): string {
+  const clauses: string[] = []
+  for (const action of rule.actions) {
+    const actionText = formatActionBrief(action)
+    if (hasConditionRefs(action)) {
+      const refs = action.condition_refs as number[]
+      const op = action.condition_op || rule.logic_operator
+      const join = op === 'OR' ? ' oder ' : ' und '
+      const condTexts = refs.map((i) => formatConditionBrief(rule.conditions[i], i))
+      clauses.push(`Wenn ${condTexts.join(join)} → ${actionText}`)
+    } else {
+      clauses.push(`Wenn alle Bedingungen → ${actionText}`)
+    }
+  }
+  return clauses.join('; ')
+}
+
+function buildLegacyActionSuffix(rule: LogicRule): string {
+  const actuators = rule.actions.filter(
+    (a) => a.type === 'actuator' || a.type === 'actuator_command',
+  ) as ActuatorAction[]
+  if (actuators.length === 0) {
+    if (rule.actions.length === 0) return ''
+    return ` → ${rule.actions.map(formatActionBrief).join(', ')}`
+  }
+  const parts = actuators.map((a) => {
+    const cmd = COMMAND_LABELS[a.command] ?? a.command
+    return actuators.length > 1 ? `GPIO ${a.gpio} ${cmd}` : `Aktor ${cmd}`
+  })
+  return ` → ${parts.join(', ')}`
+}
+
 function buildReadableText(rule: LogicRule): string {
+  // AUT-1318: routed rules — one clause per action with its refs
+  if (rule.actions.some(hasConditionRefs)) {
+    return buildRoutedReadableText(rule)
+  }
+
   const sensorConditions = rule.conditions.filter(
     c => c.type === 'sensor' || c.type === 'sensor_threshold'
   ) as SensorCondition[]
 
-  const firstAction = rule.actions.find(
-    a => a.type === 'actuator' || a.type === 'actuator_command'
-  ) as ActuatorAction | undefined
-
-  const actionSuffix = firstAction
-    ? ` → Aktor ${COMMAND_LABELS[firstAction.command] ?? firstAction.command}`
-    : ''
+  const actionSuffix = buildLegacyActionSuffix(rule)
 
   if (sensorConditions.length === 0) {
     const hc = rule.conditions.find(c => c.type === 'hysteresis') as HysteresisCondition | undefined
@@ -91,20 +197,15 @@ function buildReadableText(rule: LogicRule): string {
   }
 
   const firstCond = sensorConditions[0]
-  const label = getSensorLabel(firstCond.sensor_type)
-  const rawUnit = getSensorUnit(firstCond.sensor_type)
-  const unitStr = rawUnit && rawUnit !== 'raw' ? ` ${rawUnit}` : ''
-
   let condPart: string
   if (
     firstCond.operator === 'between' &&
     firstCond.min !== undefined &&
     firstCond.max !== undefined
   ) {
-    condPart = `Wenn ${label} zwischen ${firstCond.min} und ${firstCond.max}${unitStr}`
+    condPart = `Wenn ${formatSensorCondition(firstCond)}`
   } else {
-    const opLabel = OPERATOR_LABELS[firstCond.operator] ?? firstCond.operator
-    condPart = `Wenn ${label} ${opLabel} ${firstCond.value}${unitStr}`
+    condPart = `Wenn ${formatSensorCondition(firstCond)}`
   }
 
   const extraCount = sensorConditions.length - 1
@@ -113,7 +214,7 @@ function buildReadableText(rule: LogicRule): string {
     condPart += ` (${logicWord} ${extraCount} weitere)`
   }
 
-  return firstAction ? `${condPart}${actionSuffix}` : condPart
+  return actionSuffix ? `${condPart}${actionSuffix}` : condPart
 }
 
 /**

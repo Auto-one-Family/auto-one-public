@@ -4,7 +4,6 @@
  * Mirrors server-side schemas from Phase 2 (gpio_validation_service.py, esp.py schemas).
  * Used throughout frontend for GPIO visualization and validation.
  *
- * @author KI-Agent (Claude)
  * @since Phase 3 (GPIO-Status Frontend Integration)
  * @see El Servador/god_kaiser_server/src/schemas/esp.py (GpioStatusItem, GpioStatusResponse)
  */

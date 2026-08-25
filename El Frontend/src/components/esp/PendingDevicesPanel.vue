@@ -550,7 +550,7 @@ async function executeFlashForPort(port: string, eraseConfirm = false) {
 
               <BaseInput
                 label="MQTT Broker (Host/IP)"
-                placeholder="192.168.x.x"
+                placeholder="192.168.1.100"
                 v-model="flashStore.serverAddress"
               />
 
@@ -737,7 +737,7 @@ async function executeFlashForPort(port: string, eraseConfirm = false) {
         </div>
         <div class="pdp-info-note">
           <Info class="w-4 h-4" />
-          <span>Firmware: <code>El Trabajante/</code> · Docs: <code>CLAUDE.md</code></span>
+          <span>Firmware: <code>El Trabajante/</code> · Docs: <code>README.md</code></span>
         </div>
       </div>
     </div>

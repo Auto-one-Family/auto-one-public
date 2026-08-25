@@ -30,14 +30,19 @@ import {
   Activity,
   Thermometer,
   ChevronRight,
+  Layers,
+  Droplets,
 } from 'lucide-vue-next'
 import SlideOver from '@/shared/design/primitives/SlideOver.vue'
 import { Badge, AccordionSection } from '@/shared/design/primitives'
+import BaseSelect from '@/shared/design/primitives/BaseSelect.vue'
 import ZoneAssignmentPanel from '@/components/zones/ZoneAssignmentPanel.vue'
 import ZoneSwitchDialog from '@/components/zones/ZoneSwitchDialog.vue'
 import DeviceAlertConfigSection from '@/components/devices/DeviceAlertConfigSection.vue'
+import { DOMAIN_SELECT_OPTIONS } from '@/components/domains/domainLabels'
 import type { ESPDevice } from '@/api/esp'
 import { useEspStore } from '@/stores/esp'
+import { useTankStore } from '@/shared/stores/tank.store'
 import { useUiStore } from '@/shared/stores'
 import { useESPStatus, getESPStatus } from '@/composables/useESPStatus'
 import { useIntentSignalsStore } from '@/shared/stores/intentSignals.store'
@@ -83,6 +88,7 @@ function handleSubzoneDrilldown(subzoneId: string, subzoneName: string) {
 // =============================================================================
 
 const espStore = useEspStore()
+const tankStore = useTankStore()
 const uiStore = useUiStore()
 const intentSignalsStore = useIntentSignalsStore()
 const { success: showSuccess, error: showError } = useToast()
@@ -150,6 +156,78 @@ const autoHeartbeatLoading = ref(false)
 // =============================================================================
 
 const espId = computed(() => props.device?.device_id || props.device?.esp_id || '')
+
+// Report domain + tank (AUT-1321 / AUT-1224) — operator self-service in this sheet
+const deviceDomain = ref('')
+const deviceTank = ref('')
+const domainSaving = ref(false)
+const domainError = ref('')
+
+const isWasserDomain = computed(
+  () => deviceDomain.value === 'wasser' || props.device.domain === 'wasser',
+)
+
+const tankOptions = computed(() => [
+  { value: '', label: 'Kein Tank' },
+  ...tankStore.tanks
+    .slice()
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map((tank) => ({
+      value: tank.id,
+      label: tank.name?.trim() || 'Tank ohne Namen',
+    })),
+])
+
+/**
+ * Read domain/tank from the live store entry (SSOT), not the possibly stale
+ * props.device snapshot held by HardwareView.settingsDevice after updateDevice
+ * replaces the array item. Mirrors syncAutoHeartbeatFromStore.
+ */
+function syncDomainFieldsFromDevice(): void {
+  const currentId = espId.value
+  const storeDevice = currentId
+    ? espStore.devices.find((d) => (d.device_id || d.esp_id) === currentId)
+    : undefined
+  const source = storeDevice ?? props.device
+  deviceDomain.value = source.domain ?? ''
+  deviceTank.value = source.tank_id ?? ''
+  domainError.value = ''
+}
+
+async function saveDomainAssignment(): Promise<void> {
+  if (!espId.value || domainSaving.value) return
+  domainSaving.value = true
+  domainError.value = ''
+  try {
+    await espStore.updateDevice(espId.value, {
+      domain: deviceDomain.value || null,
+      ...(deviceDomain.value === 'wasser'
+        ? { tank_id: deviceTank.value || null }
+        : { tank_id: null }),
+    })
+    showSuccess('Domäne gespeichert')
+  } catch (err) {
+    log.error('Failed to save domain assignment', err)
+    domainError.value = 'Domäne konnte nicht gespeichert werden'
+    showError(domainError.value)
+    syncDomainFieldsFromDevice()
+  } finally {
+    domainSaving.value = false
+  }
+}
+
+async function onDomainChange(value: string | number): Promise<void> {
+  deviceDomain.value = String(value)
+  if (deviceDomain.value !== 'wasser') {
+    deviceTank.value = ''
+  }
+  await saveDomainAssignment()
+}
+
+async function onTankChange(value: string | number): Promise<void> {
+  deviceTank.value = String(value)
+  await saveDomainAssignment()
+}
 
 const healthPresentation = computed(() => {
   const vm = props.device?.runtime_health_view
@@ -565,11 +643,19 @@ watch(
   (isOpen) => {
     if (isOpen) {
       syncAutoHeartbeatFromStore()
+      syncDomainFieldsFromDevice()
+      void tankStore.fetchTanks().catch(() => {
+        showError('Tanks konnten nicht geladen werden')
+      })
       uiStore.pushModal('esp-settings-sheet')
     } else {
       uiStore.popModal('esp-settings-sheet')
     }
-  }
+  },
+  // Component mounts with isOpen already true (HardwareView sets device + open
+  // in one tick, v-if recreates the sheet). Without immediate, domain/tank
+  // local refs stay '' → "Keine Domäne" despite DB/store values.
+  { immediate: true },
 )
 
 // Sync when device changes while sheet is open
@@ -578,8 +664,25 @@ watch(
   (newId, oldId) => {
     if (newId && newId !== oldId && props.isOpen) {
       syncAutoHeartbeatFromStore()
+      syncDomainFieldsFromDevice()
     }
-  }
+  },
+)
+
+// Keep local selects in sync when store patches domain/tank after save
+watch(
+  () => {
+    const currentId = espId.value
+    const storeDevice = currentId
+      ? espStore.devices.find((d) => (d.device_id || d.esp_id) === currentId)
+      : undefined
+    const source = storeDevice ?? props.device
+    return [source?.domain, source?.tank_id] as const
+  },
+  () => {
+    if (!props.isOpen || domainSaving.value) return
+    syncDomainFieldsFromDevice()
+  },
 )
 
 // Watch store value for auto-heartbeat sync
@@ -701,6 +804,40 @@ onUnmounted(() => {
               <span class="text-muted text-sm ml-2">{{ deviceType }}</span>
             </div>
           </div>
+        </div>
+      </section>
+
+      <!-- DOMAIN Section (AUT-1321 — Auswertungs-Kategorie, keine Steuerungsgrenze) -->
+      <section class="sheet-section">
+        <h4 class="sheet-section__title">
+          <Layers class="w-3.5 h-3.5" />
+          Domäne
+        </h4>
+        <div class="sheet-section__content space-y-3">
+          <BaseSelect
+            :model-value="deviceDomain"
+            :options="[...DOMAIN_SELECT_OPTIONS]"
+            label="Auswertungs-Domäne"
+            :disabled="domainSaving"
+            @update:model-value="onDomainChange"
+          />
+
+          <BaseSelect
+            v-if="isWasserDomain"
+            :model-value="deviceTank"
+            :options="tankOptions"
+            label="Zugeordneter Tank"
+            :disabled="domainSaving"
+            @update:model-value="onTankChange"
+          />
+
+          <p v-if="domainError" class="name-edit__error" role="alert">
+            {{ domainError }}
+          </p>
+          <p class="sheet-hint">
+            <Droplets class="w-3 h-3" />
+            Domäne steuert die Auswertung (z.&nbsp;B. unter Domänen) — keine Aktor- oder Regelsteuerung.
+          </p>
         </div>
       </section>
 

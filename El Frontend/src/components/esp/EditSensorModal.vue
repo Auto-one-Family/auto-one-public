@@ -210,7 +210,9 @@ async function triggerMeasureNow() {
   isMeasuring.value = true
   measureSuccess.value = null
   try {
-    await sensorsApi.triggerMeasurement(props.espId, editingSensor.value.gpio)
+    await sensorsApi.triggerMeasurement(props.espId, editingSensor.value.gpio, {
+      sensor_type: editingSensor.value.sensor_type,
+    })
     measureSuccess.value = 'Messung angefordert'
     setTimeout(() => { measureSuccess.value = null }, 3000)
   } catch (err: any) {

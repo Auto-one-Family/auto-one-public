@@ -11,7 +11,6 @@
  * </script>
  * ```
  *
- * @author KI-Agent (Claude)
  * @since Phase 3 (GPIO-Status Frontend Integration)
  */
 

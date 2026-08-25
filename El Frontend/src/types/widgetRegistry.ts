@@ -50,6 +50,8 @@ export interface WidgetCapabilities {
   hasStatisticsOptions?: boolean
   /** Fertigation-pair config (inflow/runoff/sensorType/diff thresholds) */
   isFertigationPair?: boolean
+  /** Display-mode picker (numeric/gauge/sparkline/historic) — sensor-tile only (AUT-1107) */
+  hasDisplayModePicker?: boolean
 }
 
 /**
@@ -80,6 +82,7 @@ const DEFAULT_CAPABILITIES: ResolvedWidgetCapabilities = {
   hasZoneFilter: false,
   hasStatisticsOptions: false,
   isFertigationPair: false,
+  hasDisplayModePicker: false,
 }
 
 /**
@@ -102,6 +105,7 @@ export const WIDGET_REGISTRY: Record<string, WidgetCapabilities> = {
     hasYRange: true,
     hasThresholds: true,
     hasColor: true,
+    hasDisplayModePicker: true,
   },
   'sensor-card': {
     hasSensorPicker: true,

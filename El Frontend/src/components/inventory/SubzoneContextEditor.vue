@@ -4,25 +4,30 @@
  *
  * Manages subzone-specific custom_data: plant info, material, notes
  * that are more specific than the zone-level context.
+ * AUT-1241: optional position_label (Raum-Standort, kein Pflichtfeld).
  */
 
 import { ref, onMounted } from 'vue'
 import { Save, Leaf } from 'lucide-vue-next'
 import { useToast } from '@/composables/useToast'
 import { subzonesApi } from '@/api/subzones'
+import { SUBZONE_ASSIGNMENT_LABELS } from '@/utils/labels'
 
 const props = defineProps<{
   espId: string
   subzoneId: string
   subzoneName?: string
   initialData?: Record<string, unknown>
+  /** AUT-1241: optional spatial position Klarname */
+  initialPositionLabel?: string | null
 }>()
 
 const emit = defineEmits<{
-  (e: 'saved', data: Record<string, unknown>): void
+  (e: 'saved', data: Record<string, unknown>, positionLabel: string | null): void
 }>()
 
 const { success, error: showError } = useToast()
+const positionLabels = SUBZONE_ASSIGNMENT_LABELS
 
 const isSaving = ref(false)
 const isDirty = ref(false)
@@ -32,6 +37,7 @@ const form = ref({
   substrate: '',
   notes: '',
   responsible_person: '',
+  position_label: '',
 })
 
 function loadFromData(data: Record<string, unknown> | undefined) {
@@ -42,8 +48,21 @@ function loadFromData(data: Record<string, unknown> | undefined) {
   form.value.responsible_person = (data.responsible_person as string) || ''
 }
 
-onMounted(() => {
+onMounted(async () => {
   loadFromData(props.initialData)
+  form.value.position_label = props.initialPositionLabel?.trim() || ''
+  // Load current position from API when not provided via props
+  if (props.initialPositionLabel === undefined) {
+    try {
+      const info = await subzonesApi.getSubzone(props.espId, props.subzoneId)
+      form.value.position_label = info.position_label?.trim() || ''
+      if (!props.initialData) {
+        loadFromData(info.custom_data)
+      }
+    } catch {
+      // keep empty — optional field
+    }
+  }
 })
 
 function markDirty() {
@@ -59,10 +78,16 @@ async function save() {
     if (form.value.notes) customData.notes = form.value.notes
     if (form.value.responsible_person) customData.responsible_person = form.value.responsible_person
 
-    const result = await subzonesApi.updateMetadata(props.espId, props.subzoneId, customData)
+    const positionLabel = form.value.position_label.trim()
+    const result = await subzonesApi.updateMetadata(
+      props.espId,
+      props.subzoneId,
+      customData,
+      positionLabel,
+    )
     isDirty.value = false
     success('Subzone-Metadaten gespeichert')
-    emit('saved', result.custom_data || {})
+    emit('saved', result.custom_data || {}, result.position_label ?? null)
   } catch (e) {
     showError(e instanceof Error ? e.message : 'Fehler beim Speichern')
   } finally {
@@ -81,6 +106,19 @@ async function save() {
     </div>
 
     <div class="subzone-ctx__grid">
+      <label class="subzone-ctx__label col-span-full">
+        <span class="text-xs text-[var(--color-text-muted)]">{{ positionLabels.positionLabel }}</span>
+        <input
+          v-model="form.position_label"
+          type="text"
+          :placeholder="positionLabels.positionPlaceholder"
+          class="subzone-ctx__input"
+          :aria-label="positionLabels.positionLabel"
+          data-testid="subzone-context-position"
+          @input="markDirty"
+        />
+      </label>
+
       <label class="subzone-ctx__label">
         <span class="text-xs text-[var(--color-text-muted)]">Sorte / Variante</span>
         <input
@@ -130,6 +168,7 @@ async function save() {
       <button
         class="subzone-ctx__save"
         :disabled="isSaving"
+        aria-label="Subzone-Metadaten speichern"
         @click="save"
       >
         <Save :size="14" />

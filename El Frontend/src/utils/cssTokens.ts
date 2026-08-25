@@ -88,6 +88,8 @@ export const tokens = {
   get zoneAlarm() { return getCssToken('--color-zone-alarm', ['--color-error-bg']) },
   get zoneWarning() { return getCssToken('--color-zone-warning', ['--color-warning-bg']) },
   get zoneNormal() { return getCssToken('--color-zone-normal', ['--color-success-bg']) },
+  // Solid-surface variant for gauge ring segments (AUT-1099) — see tokens.css comment.
+  get zoneNormalRing() { return getCssToken('--color-zone-normal-ring', ['--color-success-bg']) },
 
   // Glass
   get glassBorder() { return getCssToken('--glass-border', ['--color-border']) },

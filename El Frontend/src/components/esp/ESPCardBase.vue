@@ -2,7 +2,8 @@
 /**
  * ESPCardBase — Unified base component for all ESP device card variants.
  *
- * Provides consistent: status dot, device name, mock/real badge, border styling.
+ * Provides consistent: status dot, device name, mock/real badge (hidden on mini),
+ * optional header badge slot, border styling.
  * Variant-specific content via named slots.
  *
  * Variants:
@@ -80,7 +81,14 @@ const sizeClass = computed(() => `esp-card-base--${props.variant}`)
           {{ displayName }}
         </slot>
       </span>
-      <span class="esp-card-base__badge" :class="badgeClass">{{ badgeText }}</span>
+      <span
+        v-if="variant !== 'mini'"
+        class="esp-card-base__badge"
+        :class="badgeClass"
+      >{{ badgeText }}</span>
+      <div v-if="$slots.badge" class="esp-card-base__badge-slot">
+        <slot name="badge" :device-id="deviceId" :is-mock="isMock" />
+      </div>
       <div v-if="actionsVisible" class="esp-card-base__actions">
         <slot name="actions" :device-id="deviceId" :is-online="isOnline" :is-mock="isMock" />
       </div>
@@ -222,6 +230,13 @@ const sizeClass = computed(() => `esp-card-base--${props.variant}`)
   background-color: rgba(34, 211, 238, 0.12);
   color: var(--color-real);
   border: 1px solid rgba(34, 211, 238, 0.25);
+}
+
+.esp-card-base__badge-slot {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  margin-left: auto;
 }
 
 .esp-card-base__actions {

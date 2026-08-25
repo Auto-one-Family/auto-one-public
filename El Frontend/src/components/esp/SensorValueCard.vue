@@ -141,7 +141,9 @@ async function handleTriggerMeasurement(): Promise<void> {
   preMeasureLastRead = props.sensor.last_read ?? null
   preMeasureLastEventAt = props.sensor.last_event_at ?? null
   try {
-    await sensorsApi.triggerMeasurement(props.espId, props.sensor.gpio)
+    await sensorsApi.triggerMeasurement(props.espId, props.sensor.gpio, {
+      sensor_type: props.sensor.sensor_type,
+    })
     log.info('Measurement command sent, waiting for WS finality', { gpio: props.sensor.gpio })
     measureTimeoutId = setTimeout(() => {
       isMeasuring.value = false

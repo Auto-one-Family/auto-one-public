@@ -7,6 +7,19 @@ import { createLogger } from '@/utils/logger'
 
 import './styles/main.css'
 
+/** Pi / touchscreens: set data-ui-density when coarse pointer or touch viewport detected. */
+function syncTouchUiDensity(): void {
+  if (
+    window.matchMedia('(pointer: coarse)').matches ||
+    window.matchMedia('(hover: none) and (max-width: 1280px)').matches
+  ) {
+    document.documentElement.dataset.uiDensity = 'touch'
+  }
+}
+
+syncTouchUiDensity()
+window.matchMedia('(pointer: coarse)').addEventListener('change', syncTouchUiDensity)
+
 const app = createApp(App)
 const logger = createLogger('Global')
 
@@ -21,6 +34,18 @@ function reportToBackend(payload: Record<string, unknown>): void {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   }).catch(() => {})
+}
+
+/**
+ * Benigne Browser-Meldungen, die keinen echten Fehler darstellen und nicht
+ * geloggt/an das Backend gemeldet werden sollen.
+ *
+ * "ResizeObserver loop ..." entsteht, wenn ein ResizeObserver-Callback im selben
+ * Frame ein Re-Layout ausloest. Der Browser liefert die Notifications im naechsten
+ * Frame nach — nichts crasht. Siehe w3c/csswg-drafts#5023.
+ */
+function isBenignError(message: string): boolean {
+  return message.startsWith('ResizeObserver loop')
 }
 
 app.use(createPinia())
@@ -58,6 +83,8 @@ window.addEventListener('unhandledrejection', (event) => {
   const message = event.reason instanceof Error ? event.reason.message : String(event.reason)
   const stack = event.reason instanceof Error ? event.reason.stack : undefined
 
+  if (isBenignError(message)) return
+
   logger.error('Unhandled rejection', { reason: message, stack })
 
   reportToBackend({
@@ -73,6 +100,8 @@ window.addEventListener('unhandledrejection', (event) => {
 // Global window.onerror Handler - catches synchronous JS errors
 window.onerror = (message, source, lineno, colno, error) => {
   const msg = String(message)
+
+  if (isBenignError(msg)) return false
 
   logger.error('Uncaught error', { message: msg, source, lineno, colno, stack: error?.stack })
 

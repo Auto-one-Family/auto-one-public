@@ -21,13 +21,14 @@ import { GridStack, type GridItemHTMLElement, type GridStackNode } from 'gridsta
 import 'gridstack/dist/gridstack.min.css'
 import {
   LayoutGrid, Plus, Trash2, Download, Upload,
-  ChevronDown, AlertTriangle,
+  ChevronDown, AlertTriangle, Crosshair,
 } from 'lucide-vue-next'
 import { useDashboardStore, type WidgetType } from '@/shared/stores/dashboard.store'
 import { useUiStore } from '@/shared/stores'
 import { useDragStateStore } from '@/shared/stores/dragState.store'
 import { useToast } from '@/composables/useToast'
-import { useDashboardWidgets } from '@/composables/useDashboardWidgets'
+import { isB2CatalogWidgetType, useDashboardWidgets } from '@/composables/useDashboardWidgets'
+import { useCrosshairSync } from '@/composables/useCrosshairSync'
 import { useEspStore } from '@/stores/esp'
 import { useZoneStore } from '@/shared/stores/zone.store'
 import { getSensorDisplayName, formatSensorType } from '@/utils/sensorDefaults'
@@ -57,6 +58,14 @@ const configWidgetType = ref('')
 // Zone ID from current layout scope (PA-02c: zone-scoped sensor filtering)
 const layoutZoneId = computed(() => dashStore.activeLayout?.zoneId)
 
+// AUT-912: dashboard-level crosshair sync — group id = active layout id.
+const { isActive: isCrosshairSyncActive, toggle: toggleCrosshairSyncGroup } = useCrosshairSync()
+const crosshairSyncGroupId = computed(() => dashStore.activeLayoutId || undefined)
+const isCrosshairSyncOn = computed(() => isCrosshairSyncActive(crosshairSyncGroupId.value))
+function toggleCrosshairSync() {
+  if (crosshairSyncGroupId.value) toggleCrosshairSyncGroup(crosshairSyncGroupId.value)
+}
+
 // Shared widget rendering via composable
 const {
   WIDGET_TYPE_META: widgetTypes,
@@ -68,6 +77,7 @@ const {
 } = useDashboardWidgets({
   showConfigButton: true,
   zoneId: layoutZoneId,
+  syncGroupId: crosshairSyncGroupId,
   onConfigClick: (widgetId, widgetType) => {
     configWidgetId.value = widgetId
     configWidgetType.value = widgetType
@@ -87,7 +97,7 @@ const {
   },
 })
 
-/** Confirm and remove a widget from the grid via X-Button */
+/** Confirm and remove a widget from the grid via X-Button / Config-Panel */
 async function confirmRemoveWidget(widgetId: string) {
   const confirmed = await uiStore.confirm({
     title: 'Widget entfernen',
@@ -103,6 +113,14 @@ async function confirmRemoveWidget(widgetId: string) {
   }
 }
 
+/** Sensor-Kachel: Entfernen aus dem Config-Panel (kein Delete-Icon auf der Kachel) */
+async function handleConfigPanelRemove(): Promise<void> {
+  const widgetId = configWidgetId.value
+  if (!widgetId) return
+  configPanelOpen.value = false
+  await confirmRemoveWidget(widgetId)
+}
+
 // GridStack instance
 let grid: GridStack | null = null
 const gridContainer = ref<HTMLElement | null>(null)
@@ -112,15 +130,61 @@ const showCatalog = ref(true)
 const showLayoutDropdown = ref(false)
 const newLayoutName = ref('')
 const layoutSelectorRef = ref<HTMLElement | null>(null)
+// Tracks completion of the async zone load for dropdown loading feedback
+const zonesLoaded = ref(false)
 
 // Guard: prevents autoSave during loadWidgetsToGrid (race condition with grid.on('removed'))
 let isLoadingWidgets = false
+
+/** True when the stored title is the widget meta label or unset — eligible for auto-enrichment. */
+function isGenericWidgetTitle(title: string | undefined, defaultLabel: string): boolean {
+  if (!title) return true
+  return title === defaultLabel
+}
+
+/** Resolve ESP display name + human sensor label from a sensorId string. */
+function resolveSensorMeta(sensorId: string): { espName: string; sensorLabel: string } | null {
+  const { espId, gpio, sensorType } = parseSensorId(sensorId)
+  if (!espId || gpio == null) return null
+  const device = espStore.devices.find(d => espStore.getDeviceId(d) === espId)
+  const espName = device?.name?.trim() || espId
+  const sensor = device
+    ? ((device.sensors as { gpio: number; sensor_type?: string; name?: string | null }[]) || []).find(
+        s => s.gpio === gpio && (!sensorType || s.sensor_type === sensorType)
+      )
+    : null
+  const sensorLabel = sensor
+    ? getSensorDisplayName({ sensor_type: sensor.sensor_type || sensorType || '', name: sensor.name })
+    : (sensorType ? formatSensorType(sensorType) : '')
+  if (!sensorLabel) return { espName, sensorLabel: espName }
+  return { espName, sensorLabel }
+}
 
 /** Compute display title for widget header. For line-chart with sensorId, appends sensor name when title is default. */
 function getWidgetDisplayTitle(type: string, config: Record<string, any> | undefined): string {
   const widgetDef = widgetTypes.find(t => t.type === type)
   const defaultLabel = widgetDef?.label || type
   const base = config?.title || defaultLabel
+
+  if (type === 'sensor-tile' && config?.sensorId && isGenericWidgetTitle(config?.title, defaultLabel)) {
+    const meta = resolveSensorMeta(config.sensorId)
+    if (meta) return `${meta.espName} · ${meta.sensorLabel}`
+  }
+
+  if (type === 'multi-sensor' && isGenericWidgetTitle(config?.title, defaultLabel)) {
+    const sources = typeof config?.dataSources === 'string'
+      ? config.dataSources.split(',').map((s: string) => s.trim()).filter(Boolean)
+      : []
+    if (sources.length >= 2) {
+      const labels = sources
+        .slice(0, 2)
+        .map((id: string) => resolveSensorMeta(id)?.sensorLabel)
+        .filter((label): label is string => Boolean(label))
+      if (labels.length >= 2) return `${labels[0]} vs. ${labels[1]}`
+      if (labels.length === 1) return labels[0]
+      return `${sources.length} Sensoren vergleichen`
+    }
+  }
 
   if (type === 'line-chart' && config?.sensorId) {
     const { espId, gpio, sensorType } = parseSensorId(config.sensorId)
@@ -178,6 +242,7 @@ const zoneTilePreviewState = computed<'ready' | 'empty' | 'incompatible'>(() => 
 const groupedWidgets = computed(() => {
   const groups: Record<string, typeof widgetTypes> = {}
   for (const w of widgetTypes) {
+    if (!isB2CatalogWidgetType(w.type)) continue
     if (!groups[w.category]) groups[w.category] = []
     groups[w.category].push(w)
   }
@@ -281,7 +346,9 @@ onMounted(() => {
 
   // Ensure zone list is loaded for dropdown Zone-Tiles / Zone-Dashboards
   if (zoneStore.zoneEntities.length === 0) {
-    void zoneStore.fetchZoneEntities('active')
+    zoneStore.fetchZoneEntities('active').finally(() => { zonesLoaded.value = true })
+  } else {
+    zonesLoaded.value = true
   }
 
   // Deep-link target from URL
@@ -458,21 +525,31 @@ function addWidget(type: string) {
   const config = { title: widgetDef.label, ...WIDGET_DEFAULT_CONFIGS[type] }
   widgetConfigs.value.set(id, config)
 
+  // AUT-1107: When the widget has mode-specific sizes (currently sensor-tile only),
+  // use the dimensions for the initial displayMode so the cell fits the content.
+  // Falls back to the flat w/h/minW/minH when no matching entry exists.
+  const modeKey = (config as Record<string, unknown>).displayMode as string | undefined
+  const modeSize = widgetDef.modeSizes?.[modeKey ?? '']
+  const effectiveW = modeSize?.w ?? widgetDef.w
+  const effectiveH = modeSize?.h ?? widgetDef.h
+  const effectiveMinW = modeSize?.minW ?? widgetDef.minW
+  const effectiveMinH = modeSize?.minH ?? widgetDef.minH
+
   const currentWidgets = (dashStore.activeLayout?.widgets ?? []).map(w => ({
     x: w.x ?? 0,
     y: w.y ?? 0,
     w: w.w ?? 1,
     h: w.h ?? 1,
   }))
-  const pos = findFirstFreePosition(currentWidgets, widgetDef.w, widgetDef.h)
+  const pos = findFirstFreePosition(currentWidgets, effectiveW, effectiveH)
 
   const itemEl = grid.addWidget({
     x: pos.x,
     y: pos.y,
-    w: widgetDef.w,
-    h: widgetDef.h,
-    minW: widgetDef.minW,
-    minH: widgetDef.minH,
+    w: effectiveW,
+    h: effectiveH,
+    minW: effectiveMinW,
+    minH: effectiveMinH,
     id,
   })
 
@@ -657,6 +734,12 @@ function handleSelectZoneTileCategory(zoneId: string) {
   const zone = zoneStore.activeZones.find(z => z.zone_id === zoneId)
   const layout = dashStore.createLayout(`${zone?.name ?? zoneId} — Tile`)
   dashStore.setLayoutMetadata(layout.id, { scope: 'zone-tile', zoneId })
+  // Clear grid (guard against autoSave race)
+  if (grid) {
+    isLoadingWidgets = true
+    grid.removeAll(true)
+    isLoadingWidgets = false
+  }
   showLayoutDropdown.value = false
   showCatalog.value = true
   toast.success(`Zone-Tile für ${zone?.name ?? zoneId} erstellt`)
@@ -675,6 +758,12 @@ function handleSelectZoneDashboard(zoneId: string) {
     zoneId,
     target: { view: 'monitor', placement: 'bottom-panel' },
   })
+  // Clear grid (guard against autoSave race)
+  if (grid) {
+    isLoadingWidgets = true
+    grid.removeAll(true)
+    isLoadingWidgets = false
+  }
   showLayoutDropdown.value = false
   showCatalog.value = true
   toast.success(`Zone-Dashboard für ${zone?.name ?? zoneId} erstellt`)
@@ -703,7 +792,7 @@ function handleSelectZoneDashboard(zoneId: string) {
 
           <div v-if="showLayoutDropdown" class="dashboard-builder__layout-dropdown">
             <!-- Section A: Dashboards (standalone) -->
-            <div class="dashboard-builder__layout-group">
+            <div v-if="dashStore.dashboardsTabLayouts.length > 0" class="dashboard-builder__layout-group">
               <div class="dashboard-builder__layout-group-title">Dashboards</div>
               <div
                 v-for="layout in dashStore.dashboardsTabLayouts"
@@ -720,6 +809,11 @@ function handleSelectZoneDashboard(zoneId: string) {
                   <Trash2 class="w-3 h-3" />
                 </button>
               </div>
+            </div>
+
+            <!-- Zones loading feedback (while activeZones still empty) -->
+            <div v-if="zoneStore.activeZones.length === 0 && !zonesLoaded" class="dashboard-builder__layout-group">
+              <div class="dashboard-builder__layout-group-title">Zonen werden geladen...</div>
             </div>
 
             <!-- Section B: Zone-Tiles (all active zones, lazy-create on first select) -->
@@ -773,6 +867,18 @@ function handleSelectZoneDashboard(zoneId: string) {
       <div class="dashboard-builder__toolbar-right">
         <button
           v-if="dashStore.activeLayoutId"
+          :class="['dashboard-builder__tool-btn', { 'dashboard-builder__tool-btn--active': isCrosshairSyncOn }]"
+          :title="isCrosshairSyncOn
+            ? 'Crosshair-Sync aus — Fadenkreuz nicht mehr über Charts synchronisieren'
+            : 'Crosshair-Sync ein — Fadenkreuz/Tooltip über alle Multi-Sensor-Charts dieses Dashboards synchronisieren (gleiche Zeitspanne)'"
+          aria-label="Crosshair-Sync umschalten"
+          :aria-pressed="isCrosshairSyncOn"
+          @click="toggleCrosshairSync"
+        >
+          <Crosshair class="w-4 h-4" />
+        </button>
+        <button
+          v-if="dashStore.activeLayoutId"
           :class="['dashboard-builder__tool-btn', { 'dashboard-builder__tool-btn--active': showCatalog }]"
           title="Widget-Katalog ein- oder ausblenden"
           aria-label="Widget-Katalog ein- oder ausblenden"
@@ -796,9 +902,6 @@ function handleSelectZoneDashboard(zoneId: string) {
         </button>
       </div>
     </div>
-
-    <!-- Speichern-Chip (AUT-843) -->
-    <span v-if="dashStore.syncPending" class="dashboard-builder__sync-pending">Speichern...</span>
 
     <!-- Sync-Error-Banner -->
     <div
@@ -905,6 +1008,7 @@ function handleSelectZoneDashboard(zoneId: string) {
       :zone-id="layoutZoneId"
       @close="configPanelOpen = false"
       @update:config="handleConfigUpdate"
+      @remove="handleConfigPanelRemove"
     />
 
   </div>
@@ -1003,7 +1107,7 @@ function handleSelectZoneDashboard(zoneId: string) {
 
 .dashboard-builder__layout-item { display: flex; align-items: center; gap: var(--space-2); }
 .dashboard-builder__layout-item:hover { background: var(--glass-bg-light); color: var(--color-text-primary); }
-.dashboard-builder__layout-item--active { color: var(--color-accent-bright); background: rgba(59, 130, 246, 0.06); }
+.dashboard-builder__layout-item--active { color: var(--color-iridescent-1); background: var(--color-accent-bg); }
 
 .dashboard-builder__layout-divider {
   height: 1px;
@@ -1057,7 +1161,7 @@ function handleSelectZoneDashboard(zoneId: string) {
 }
 
 .dashboard-builder__tool-btn:hover { background: var(--glass-bg-light); color: var(--color-text-primary); }
-.dashboard-builder__tool-btn--active { color: var(--color-accent); background: rgba(59, 130, 246, 0.08); }
+.dashboard-builder__tool-btn--active { color: var(--color-iridescent-2); background: var(--color-accent-bg); }
 .dashboard-builder__tool-btn--danger:hover { color: var(--color-status-alarm); }
 
 .dashboard-builder__sync-error {
@@ -1087,128 +1191,6 @@ function handleSelectZoneDashboard(zoneId: string) {
 
 .dashboard-builder__sync-retry:hover {
   background: rgba(239, 68, 68, 0.12);
-}
-
-/* Target Configurator Dropdown */
-.dashboard-builder__target-wrapper {
-  position: relative;
-}
-
-.dashboard-builder__zone-tile-target-note {
-  font-size: var(--text-xs);
-  color: var(--color-text-muted);
-  padding: 0 var(--space-2);
-  white-space: nowrap;
-}
-
-.dashboard-builder__target-dropdown {
-  position: absolute;
-  top: calc(100% + 6px);
-  right: 0;
-  z-index: var(--z-dropdown, 50);
-  min-width: 260px;
-  background: var(--color-bg-secondary);
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-floating, 0 8px 32px rgba(0, 0, 0, 0.4));
-  padding: var(--space-2) 0;
-  animation: animate-fade-in 0.15s ease-out;
-}
-
-.dashboard-builder__target-title {
-  font-size: var(--text-xs);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--color-text-muted);
-  padding: var(--space-1) var(--space-3);
-}
-
-.dashboard-builder__target-hint {
-  font-size: var(--text-xs);
-  color: var(--color-text-muted);
-  padding: 0 var(--space-3) var(--space-2);
-  border-bottom: 1px solid var(--glass-border);
-  margin-bottom: var(--space-1);
-}
-
-.dashboard-builder__target-option {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  width: 100%;
-  padding: var(--space-2) var(--space-3);
-  background: transparent;
-  border: none;
-  text-align: left;
-  cursor: pointer;
-  transition: background var(--transition-fast);
-}
-
-.dashboard-builder__target-option:hover {
-  background: var(--glass-bg-light, rgba(255, 255, 255, 0.04));
-}
-
-.dashboard-builder__target-option--selected {
-  background: rgba(59, 130, 246, 0.08);
-}
-
-.dashboard-builder__target-option--selected .dashboard-builder__target-label {
-  color: var(--color-accent);
-}
-
-.dashboard-builder__target-label {
-  font-size: var(--text-sm);
-  font-weight: 500;
-  color: var(--color-text-primary);
-}
-
-.dashboard-builder__target-desc {
-  font-size: var(--text-xs);
-  color: var(--color-text-muted);
-}
-
-.dashboard-builder__target-option--clear {
-  border-top: 1px solid var(--glass-border);
-  margin-top: var(--space-1);
-  padding-top: var(--space-2);
-}
-
-.dashboard-builder__target-conflict {
-  font-size: var(--text-xs);
-  color: var(--color-warning);
-  font-style: italic;
-}
-
-.dashboard-builder__target-option--clear .dashboard-builder__target-label {
-  color: var(--color-text-secondary);
-}
-
-.dashboard-builder__target-option--clear:hover .dashboard-builder__target-label {
-  color: var(--color-status-alarm);
-}
-
-.dashboard-builder__zone-scope {
-  border-top: 1px solid var(--glass-border);
-  margin-top: var(--space-1);
-  padding: var(--space-2) var(--space-3);
-}
-
-.dashboard-builder__zone-select {
-  width: 100%;
-  margin-top: var(--space-1);
-  padding: var(--space-1) var(--space-2);
-  font-size: var(--text-xs);
-  color: var(--color-text-primary);
-  background: var(--color-bg-secondary);
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-}
-
-.dashboard-builder__zone-select:focus {
-  outline: 2px solid var(--color-iridescent-2);
-  outline-offset: -1px;
 }
 
 /* Content Area */
@@ -1402,6 +1384,7 @@ function handleSelectZoneDashboard(zoneId: string) {
 
 :deep(.grid-stack-item-content:hover) {
   border-color: var(--glass-border-hover);
+  box-shadow: var(--glass-shadow-l2), 0 0 12px var(--color-iridescent-glow);
 }
 
 :deep(.dashboard-widget) {
@@ -1417,6 +1400,9 @@ function handleSelectZoneDashboard(zoneId: string) {
   padding: var(--space-2) var(--space-3);
   border-bottom: 1px solid var(--glass-border);
   cursor: default;
+  flex-shrink: 0;
+  gap: var(--space-2);
+  min-height: 32px;
 }
 
 .grid-stack--editing :deep(.dashboard-widget__header) {
@@ -1427,6 +1413,10 @@ function handleSelectZoneDashboard(zoneId: string) {
   font-size: var(--text-sm);
   font-weight: 600;
   color: var(--color-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
 
 :deep(.dashboard-widget__type) {
@@ -1438,64 +1428,50 @@ function handleSelectZoneDashboard(zoneId: string) {
   border-radius: var(--radius-xs);
 }
 
-:deep(.dashboard-widget__gear-btn) {
+:deep(.dashboard-widget__actions) {
   display: none;
   align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.grid-stack--editing :deep(.dashboard-widget__actions) {
+  display: inline-flex;
+}
+
+:deep(.dashboard-widget__gear-btn),
+:deep(.dashboard-widget__remove-btn) {
+  display: inline-flex;
+  align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
+  width: 28px;
+  height: 28px;
   border: none;
   background: transparent;
   color: var(--color-text-muted);
   border-radius: var(--radius-sm);
   cursor: pointer;
   transition: all var(--transition-fast);
-  opacity: 0;
-  margin-left: auto;
+  opacity: 0.55;
 }
 
-/* Gear icon only visible in edit mode */
-.grid-stack--editing :deep(.dashboard-widget__gear-btn) {
-  display: flex;
-}
-
-.grid-stack--editing :deep(.dashboard-widget__header:hover .dashboard-widget__gear-btn) {
+.grid-stack--editing :deep(.dashboard-widget__header:hover .dashboard-widget__gear-btn),
+.grid-stack--editing :deep(.dashboard-widget__header:hover .dashboard-widget__remove-btn),
+.grid-stack--editing :deep(.dashboard-widget__header:focus-within .dashboard-widget__gear-btn),
+.grid-stack--editing :deep(.dashboard-widget__header:focus-within .dashboard-widget__remove-btn) {
   opacity: 1;
 }
 
 /* Edit mode: dashed outline around widgets */
 .grid-stack--editing :deep(.grid-stack-item-content) {
-  outline: 1px dashed rgba(96, 165, 250, 0.25);
+  outline: 1px dashed var(--color-iridescent-glow);
   outline-offset: -1px;
 }
 
 :deep(.dashboard-widget__gear-btn:hover) {
   background: var(--glass-bg-light);
   color: var(--color-text-primary);
-}
-
-/* Remove (X) button — same base styling as gear button */
-:deep(.dashboard-widget__remove-btn) {
-  display: none;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  border: none;
-  background: transparent;
-  color: var(--color-text-muted);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  transition: all var(--transition-fast);
-  opacity: 0;
-}
-
-.grid-stack--editing :deep(.dashboard-widget__remove-btn) {
-  display: flex;
-}
-
-.grid-stack--editing :deep(.dashboard-widget__header:hover .dashboard-widget__remove-btn) {
-  opacity: 1;
 }
 
 :deep(.dashboard-widget__remove-btn:hover) {
@@ -1509,9 +1485,6 @@ function handleSelectZoneDashboard(zoneId: string) {
   .grid-stack--editing :deep(.dashboard-widget__remove-btn) {
     min-width: 44px;
     min-height: 44px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
     opacity: 1;
   }
 }

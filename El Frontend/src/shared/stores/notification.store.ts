@@ -15,6 +15,7 @@
 import { defineStore } from 'pinia'
 import { useToast } from '@/composables/useToast'
 import { createLogger } from '@/utils/logger'
+import { getSystemEventLabel } from '@/utils/eventTypeLabels'
 import type { ESPDevice } from '@/api/esp'
 
 const logger = createLogger('NotificationStore')
@@ -105,14 +106,43 @@ export const useNotificationStore = defineStore('notification', () => {
 
   /**
    * Handle system_event WebSocket event.
-   * Shows info toast for system events.
+   *
+   * The server wraps system notices in a `system_event` envelope and carries
+   * the concrete sub-type in `data.event` (broadcast) bzw. `data.event_type`
+   * (contract). Ohne Aufloesung zeigte der Toast nur "System-Ereignis".
+   * Hier wird der Subtyp in eine gezielte Meldung uebersetzt.
    */
   function handleSystemEvent(message: { data: Record<string, unknown> }): void {
     const data = message.data
-    const msg = data.message as string || 'System-Ereignis'
-
+    const subEvent = String(data.event ?? data.event_type ?? '').trim()
+    const serverMessage = typeof data.message === 'string' ? data.message.trim() : ''
+    const label = getSystemEventLabel(subEvent)
     const toast = useToast()
-    toast.info(msg)
+
+    // Restore-Pipeline sendet viele Fortschritts-Events (preflight/quiesce/...);
+    // nur das terminale Ergebnis als Toast zeigen, Zwischenschritte bleiben im
+    // Event-Stream sichtbar. Sonst stuende der Operator vor ~9 Toasts pro Restore.
+    if (subEvent === 'database_restore_status') {
+      const phase = String(data.phase ?? '').trim()
+      const status = String(data.status ?? '').trim().toLowerCase()
+      if (phase && phase !== 'terminal') return
+      if (status === 'failed') {
+        toast.error(`${label}: fehlgeschlagen`, { dedupeKey: 'system:db-restore' })
+      } else {
+        toast.success(`${label}: abgeschlossen`, { dedupeKey: 'system:db-restore' })
+      }
+      return
+    }
+
+    const text = serverMessage || label
+    const dedupeKey = subEvent ? `system:${subEvent}` : undefined
+
+    // MQTT-Trennung ist eine echte Degradation → Warnung statt neutralem Info.
+    if (subEvent === 'mqtt_disconnected') {
+      toast.warning(text, { dedupeKey })
+    } else {
+      toast.info(text, { dedupeKey })
+    }
   }
 
   return {

@@ -33,7 +33,6 @@ const logger = createLogger('HardwareView')
 
 // Tab Bar + Config Modal
 import SlideOver from '@/shared/design/primitives/SlideOver.vue'
-import ESPConfigPanel from '@/components/esp/ESPConfigPanel.vue'
 import ConfigWizardModal from '@/components/esp/ConfigWizardModal.vue'
 import PendingConfigBanner from '@/components/esp/PendingConfigBanner.vue'
 import { useActuatorStore } from '@/shared/stores/actuator.store'
@@ -227,6 +226,18 @@ const settingsDevice = ref<ESPDevice | null>(null)
 const isSettingsOpen = ref(false)
 let settingsCloseTimer: ReturnType<typeof setTimeout> | null = null
 
+/**
+ * Live store binding for ESPSettingsSheet (DeviceMiniCard pattern).
+ * settingsDevice alone can go stale after espStore.updateDevice replaces the
+ * array entry — domain/tank would then look unset after reopen/save.
+ */
+const settingsDeviceLive = computed(() => {
+  const snapshot = settingsDevice.value
+  if (!snapshot) return null
+  const id = espStore.getDeviceId(snapshot)
+  return espStore.devices.find((d) => espStore.getDeviceId(d) === id) ?? snapshot
+})
+
 // Handle ?openSettings=espId query param (legacy links + cross-component navigation)
 watch(
   () => route.query.openSettings as string | undefined,
@@ -254,9 +265,6 @@ const wizardPayload = ref<{
   configId?: string
   actuatorType?: string
 } | null>(null)
-const showEspConfig = ref(false)
-const configEspDevice = ref<ESPDevice | null>(null)
-
 // =============================================================================
 // Lifecycle
 // =============================================================================
@@ -946,7 +954,10 @@ function handleActuatorClickFromDetail(payload: { espId: string; gpio: number })
   wizardPayload.value = {
     espId: payload.espId,
     gpio: payload.gpio,
-    actuatorType: actuator.actuator_type || 'relay',
+    // AUT-997/AUT-999: seed the edit panel from the semantic hardware_type ("pump"/"valve")
+    // so isPump/isValve classify correctly and the pump-only calibration/cooldown fields
+    // render. Fall back to the generic actuator_type for not-yet-migrated rows (hardware_type null).
+    actuatorType: actuator.hardware_type || actuator.actuator_type || 'relay',
   }
   isWizardOpen.value = true
 }
@@ -1219,7 +1230,7 @@ function handleActuatorClickFromDetail(payload: { espId: string; gpio: number })
           class="orbital-overlay"
           role="dialog"
           aria-modal="true"
-          @click.self="zoomOut"
+          @click.self="!isWizardOpen && zoomOut()"
         >
           <div ref="l2ContainerRef" class="orbital-overlay__panel zoom-level--l2">
             <div
@@ -1271,8 +1282,8 @@ function handleActuatorClickFromDetail(payload: { espId: string; gpio: number })
 
     <!-- ESP Settings Sheet -->
     <ESPSettingsSheet
-      v-if="settingsDevice"
-      :device="settingsDevice"
+      v-if="settingsDeviceLive"
+      :device="settingsDeviceLive"
       :is-open="isSettingsOpen"
       @update:is-open="isSettingsOpen = $event"
       @close="handleSettingsClose"
@@ -1325,18 +1336,6 @@ function handleActuatorClickFromDetail(payload: { espId: string; gpio: number })
       @open-esp-settings="handleOpenEspSettingsFromConfig"
     />
 
-    <!-- ESP Config SlideOver -->
-    <SlideOver
-      :open="showEspConfig"
-      :title="configEspDevice?.name || 'ESP'"
-      width="lg"
-      @close="showEspConfig = false"
-    >
-      <ESPConfigPanel
-        v-if="configEspDevice"
-        :device="configEspDevice"
-      />
-    </SlideOver>
   </div>
 </template>
 
@@ -1871,6 +1870,10 @@ function handleActuatorClickFromDetail(payload: { espId: string; gpio: number })
   justify-content: center;
   padding: var(--space-4);
   overflow-y: auto;
+  /* Touch: vertikales "anfassen & ziehen" im Geraete-Overlay */
+  touch-action: pan-y;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
 }
 
 .orbital-overlay__panel {

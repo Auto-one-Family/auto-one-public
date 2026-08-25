@@ -73,3 +73,20 @@ export function isActuatorOff(
     entry.value === 0
   )
 }
+
+/**
+ * AUT-1132 (A2): true for config-push ack entries (command_type
+ * "config_applied"/"config_failed", issued_by "config_response") mirrored
+ * into actuator_history by config_handler.py. These carry value=null but are
+ * NOT a switch event — isActuatorOff() would otherwise misread every one of
+ * them as an OFF, corrupting runtime/on-off-interval computations that
+ * consume raw history entries (ActuatorRuntimeWidget, MultiSensorWidget).
+ * ActuatorActionTimeline.vue intentionally displays these and does not filter
+ * them; every other consumer of getHistory() results should.
+ */
+export function isConfigAckEntry(
+  entry: Pick<ActuatorHistoryEntry, 'command_type'>
+): boolean {
+  const cmd = entry.command_type?.toLowerCase() ?? ''
+  return cmd === 'config_applied' || cmd === 'config_failed'
+}

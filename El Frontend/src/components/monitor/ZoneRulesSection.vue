@@ -9,17 +9,27 @@
  *
  * AUT-663: useZoneKPIs.filteredZoneKPIs enthält keine Rule-Daten (AUT-647 Blocker).
  *   aggregateMode nutzt daher logicStore.rules (kein neuer API-Call, bereits via fetchRules geladen).
+ *
+ * AUT-1149 (S4): Normal-mode-Grid rendert RuleGroupCard (nach rule_group gruppiert)
+ *   statt der bisherigen flachen RuleCardCompact-Liste; aggregateMode (L1) ist davon
+ *   NICHT betroffen (eigenes RouterLink-Markup, nutzte nie RuleCardCompact).
+ *
+ * Grid: grid-auto-lg-fit (nicht monitor-card-grid / grid-auto-sm). Sensor-Karten
+ *   nutzen 200px-auto-fill + 4–5 Spalten ab 1600px — das quetscht Gruppenkarten
+ *   (vertikale Titel, doppelter Hinweis, leere rechte Seite). Gleiche Utility
+ *   wie LogicView (Regeleditor).
  */
 import { computed, onMounted, watch } from 'vue'
 import { useRouter, RouterLink } from 'vue-router'
 import { Zap, ExternalLink } from 'lucide-vue-next'
 import { useLogicStore } from '@/shared/stores/logic.store'
 import { useEspStore } from '@/stores/esp'
-import RuleCardCompact from '@/components/logic/RuleCardCompact.vue'
+import RuleGroupCard from '@/components/logic/RuleGroupCard.vue'
+import RuleGroupQuickField from '@/components/logic/RuleGroupQuickField.vue'
 import { getRuleReadableText } from '@/composables/useRuleReadableText'
-import { extractEspIdsFromRule } from '@/types/logic'
+import { extractEspIdsFromRule, RULE_GROUP_CATALOG } from '@/types/logic'
 import { formatRelativeTime } from '@/utils/formatters'
-import type { LogicRule } from '@/types/logic'
+import type { LogicRule, RuleGroup } from '@/types/logic'
 
 const RULES_VISIBLE_THRESHOLD = 10
 const MAX_DISPLAYED_WHEN_OVER = 5
@@ -59,6 +69,20 @@ const hasMoreRules = computed(() => rulesForZone.value.length > RULES_VISIBLE_TH
 
 const hiddenRulesCount = computed(() =>
   hasMoreRules.value ? rulesForZone.value.length - MAX_DISPLAYED_WHEN_OVER : 0
+)
+
+/**
+ * AUT-1149 (S4): displayedRules bucketed by rule_group for the RuleGroupCard
+ * rollout on Monitor L2 (zone-detail). Same truncation semantics as
+ * displayedRules — groups reflect only the already-capped rule set.
+ */
+const displayedRulesByGroup = computed<{ group: RuleGroup; rules: LogicRule[] }[]>(() =>
+  RULE_GROUP_CATALOG
+    .map((group) => ({
+      group,
+      rules: displayedRules.value.filter((r) => (r.rule_group ?? 'sonstiges') === group),
+    }))
+    .filter((entry) => entry.rules.length > 0)
 )
 
 // ---------------------------------------------------------------------------
@@ -109,6 +133,11 @@ function goToLogicTab() {
 
 function isRuleActive(ruleId: string): boolean {
   return logicStore.isRuleActive(ruleId)
+}
+
+/** Opens a single rule in the full editor — same route/pattern the removed RuleCardCompact used (AUT-1149 S4). */
+function navigateToRule(ruleId: string): void {
+  router.push({ name: 'logic-rule', params: { ruleId } })
 }
 
 onMounted(() => {
@@ -210,20 +239,23 @@ watch(() => props.zoneId, (zoneId) => {
       <!-- Rules Grid -->
       <div v-else class="zone-rules-section__content">
         <ul
-          class="zone-rules-section__grid monitor-card-grid grid-auto-sm"
+          class="zone-rules-section__grid grid-auto-lg-fit"
           role="list"
         >
           <li
-            v-for="rule in displayedRules"
-            :key="rule.id"
+            v-for="{ group, rules } in displayedRulesByGroup"
+            :key="group"
             class="zone-rules-section__grid-item"
           >
-            <RuleCardCompact
-              :rule="rule"
-              :is-active="isRuleActive(rule.id)"
-              :lifecycle="logicStore.getLifecycleEntry(rule.id)"
-              :quick-actions="true"
-            />
+            <RuleGroupCard
+              :group-name="group"
+              :rules="rules"
+              @edit-rule="navigateToRule"
+            >
+              <template #quick-field="{ selectedIds }">
+                <RuleGroupQuickField :rules="rules" :selected-ids="selectedIds" />
+              </template>
+            </RuleGroupCard>
           </li>
         </ul>
         <div
@@ -300,20 +332,24 @@ watch(() => props.zoneId, (zoneId) => {
   list-style: none;
   margin: 0;
   padding: 0;
-}
-
-.zone-rules-section__grid.monitor-card-grid {
   gap: var(--space-3);
+  width: 100%;
 }
 
 .zone-rules-section__grid-item {
   min-width: 0;
 }
 
+.zone-rules-section__grid-item :deep(.card) {
+  width: 100%;
+  height: 100%;
+}
+
 .zone-rules-section__more {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: var(--space-2);
   padding: var(--space-2) var(--space-3);
   background: var(--color-bg-tertiary);

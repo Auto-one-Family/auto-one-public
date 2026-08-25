@@ -70,3 +70,39 @@ export const EVENT_TYPE_LABELS: Record<string, string> = {
 export function getEventTypeLabel(eventType: string): string {
   return EVENT_TYPE_LABELS[eventType] || eventType
 }
+
+/**
+ * Labels for system_event sub-types.
+ *
+ * The server wraps system notices in a top-level `system_event` envelope and
+ * carries the concrete discriminator in the nested payload. The live broadcast
+ * uses `data.event` (e.g. `{ event: 'mqtt_disconnected' }`); the documented
+ * contract field is `data.event_type`. SSOT for operator-facing sub-event
+ * labels — keep in sync with the server broadcasts (maintenance health check,
+ * backup restore pipeline).
+ */
+export const SYSTEM_EVENT_LABELS: Record<string, string> = {
+  mqtt_disconnected: 'MQTT-Verbindung getrennt',
+  database_restore_status: 'Datenbank-Wiederherstellung',
+}
+
+/**
+ * Wandelt einen rohen Sub-Event-Key in eine lesbare Form um
+ * (z.B. "some_unknown_event" → "Some Unknown Event").
+ */
+function humanizeSystemEvent(key: string): string {
+  return key
+    .replace(/[_.]+/g, ' ')
+    .replace(/\b\w/g, (c) => c.toUpperCase())
+    .trim()
+}
+
+/**
+ * Liefert ein menschenlesbares Label fuer einen system_event-Subtyp.
+ * Fallback-Kette: bekanntes Label → humanisierter Key → generisches "System".
+ */
+export function getSystemEventLabel(subEvent: string | null | undefined): string {
+  const key = (subEvent ?? '').trim()
+  if (!key) return EVENT_TYPE_LABELS.system_event
+  return SYSTEM_EVENT_LABELS[key] ?? humanizeSystemEvent(key)
+}

@@ -49,7 +49,6 @@ export interface DashboardWidget {
     showThresholds?: boolean
     title?: string
     color?: string
-    syncTimeAxis?: boolean
     /** Comma-separated sensor IDs for multi-sensor widget */
     dataSources?: string
     /** Explicit Y-axis min override */
@@ -62,12 +61,6 @@ export interface DashboardWidget {
     showStdDev?: boolean
     /** Show quality distribution in statistics widget (default: false) */
     showQuality?: boolean
-    /** Compare mode: auto-fill sensors by sensorType + zone (multi-sensor widget) */
-    compareMode?: boolean
-    /** Sensor type to compare across subzones (e.g. "sht31_temp") */
-    compareSensorType?: string
-    /** Zone filter for compare mode; empty = use dashboard zoneId */
-    compareZoneId?: string
     /** Warning low threshold (maps to alert_config.custom_thresholds.warning_min) */
     warnLow?: number
     /** Warning high threshold (maps to alert_config.custom_thresholds.warning_max) */
@@ -80,6 +73,9 @@ export interface DashboardWidget {
     displayMode?: 'numeric' | 'gauge' | 'sparkline' | 'historic'
     /** AUT-247: Live buffer size for sparkline mode */
     liveBufferSize?: number
+    /** AUT-1525: Fertigation pair — store config_id, not gpio-key */
+    inflowSensorId?: string
+    runoffSensorId?: string
   }
 }
 

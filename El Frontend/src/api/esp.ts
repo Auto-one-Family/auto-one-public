@@ -114,6 +114,18 @@ export interface ESPDevice {
    * SEPARAT vom runtime_health_view-Pfad (Eingeschränkt-Badge).
    */
   config_last_reject?: import('@/types').ConfigLastReject | null
+  /**
+   * Report domain — pure reporting metadata, never pushed to ESP via MQTT.
+   * Maps to device_domain_changes audit trail on the server side.
+   */
+  domain?: string | null
+  /**
+   * Assigned tank UUID (n:1, AUT-1223 / AUT-1358). null means unassigned.
+   * UI-SSOT: read/write via PATCH /esp/devices/{id} (ESPSettingsSheet).
+   * Server PUT/DELETE /tanks/{id}/devices/{esp} is an alias
+   * for the same esp_devices.tank_id column — not used by the FE.
+   */
+  tank_id?: string | null
 }
 
 /** Summary of a subzone assigned to an ESP device (from GET /esp/devices) */
@@ -140,6 +152,10 @@ export interface ESPDeviceListResponse {
 export interface ESPDeviceUpdate {
   /** Explicit `null` clears the device name in the DB (omit field = no change). */
   name?: string | null
+  /** Explicit `null` clears the report domain in the DB, omit field = no change. */
+  domain?: string | null
+  /** Explicit `null` clears the tank assignment in the DB, omit field = no change (AUT-1223). */
+  tank_id?: string | null
   zone_id?: string | null
   zone_name?: string | null
   is_zone_master?: boolean
@@ -227,7 +243,7 @@ function normalizeEspId(device: ESPDevice | string): string {
  * This bridges the gap between DB sensor configs and the in-memory
  * Mock ESP sensor format that the UI components expect.
  */
-function mapSensorConfigToMockSensor(config: SensorConfigResponse): MockSensor {
+export function mapSensorConfigToMockSensor(config: SensorConfigResponse): MockSensor {
   const metadata = config.metadata ?? null
   const metadataLatestValue =
     metadata && typeof metadata['latest_value'] === 'number'
@@ -265,6 +281,9 @@ function mapSensorConfigToMockSensor(config: SensorConfigResponse): MockSensor {
     subzone_id: config.subzone_id ?? null,
     device_scope: config.device_scope ?? null,
     assigned_zones: config.assigned_zones ?? null,
+    calibration: config.calibration ?? null,
+    calibration_interval_days: config.calibration_interval_days ?? null,
+    temp_sensor_config_id: config.temp_sensor_config_id ?? null,
   }
 }
 
@@ -320,6 +339,10 @@ function mapActuatorConfigToMockActuator(config: ActuatorConfigResponse): MockAc
   return {
     gpio: config.gpio,
     actuator_type: config.actuator_type,
+    // AUT-997/AUT-999: carry the semantic ESP32 hardware_type onto the MockActuator so
+    // the edit panel can classify an existing pump/valve correctly (HardwareView seeds
+    // the panel type from this). null when the DB row is not migrated yet.
+    hardware_type: config.hardware_type ?? null,
     name: config.name || null,
     state: config.is_active ?? false,
     pwm_value: config.current_value ?? 0,

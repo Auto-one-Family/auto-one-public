@@ -2,7 +2,13 @@
 /**
  * QuickWidgetPanel — Widget catalog sub-panel in the FAB.
  *
- * Shows all 9 widget types grouped by category (Sensoren, Aktoren, System).
+ * AUT-901: single source — items come from WIDGET_TYPE_META (via
+ * useWidgetDragFromFab), grouped by their declared category; icons resolve
+ * through the shared WIDGET_ICON_MAP. No second catalog panel and no shared
+ * presentation extract from AddWidgetDialog: the dialog uses a 3-column grid
+ * while this panel is a vertical list — different UX contexts that only share
+ * the icon map and the single type source.
+ *
  * Each item is draggable (HTML5 DnD) or activatable via keyboard (Space/Enter).
  * Drag closes the FAB menu so the user can see the GridStack editor.
  *
@@ -10,22 +16,18 @@
  * Monitor mode: click emits 'widget-selected' instead of drag (D3).
  */
 
-import { computed, type Component } from 'vue'
+import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   ArrowLeft,
   LayoutGrid,
   GripVertical,
   BarChart3,
-  Gauge,
-  Activity,
-  Zap,
-  Bell,
-  Cpu,
 } from 'lucide-vue-next'
 import { useQuickActionStore } from '@/shared/stores/quickAction.store'
 import { useWidgetDragFromFab } from '@/composables/useWidgetDragFromFab'
 import type { WidgetDragItem } from '@/composables/useWidgetDragFromFab'
+import { WIDGET_ICON_MAP } from '@/composables/useDashboardWidgets'
 
 interface Props {
   /** 'editor' = drag-to-grid (default), 'monitor' = click opens AddWidgetDialog */
@@ -40,15 +42,6 @@ const emit = defineEmits<{
   /** Emitted in monitor mode when a widget type is clicked */
   'widget-selected': [widgetType: string]
 }>()
-
-const ICON_MAP: Record<string, Component> = {
-  BarChart3,
-  Gauge,
-  Activity,
-  Zap,
-  Bell,
-  Cpu,
-}
 
 const route = useRoute()
 const router = useRouter()
@@ -151,7 +144,7 @@ function navigateToEditor(): void {
             @keydown="handleKeyAction($event, item)"
           >
             <component
-              :is="ICON_MAP[item.iconName] || BarChart3"
+              :is="WIDGET_ICON_MAP[item.iconName] || BarChart3"
               class="qa-widget-panel__item-icon"
             />
             <div class="qa-widget-panel__item-text">

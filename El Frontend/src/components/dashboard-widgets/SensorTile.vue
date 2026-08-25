@@ -23,7 +23,7 @@
  * Mock Indicator (AUT-31): a small "MOCK" badge is shown when the underlying
  * ESP device is a mock device (espStore.isMock).
  */
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { Activity, TrendingUp, TrendingDown, Minus, Hash, Gauge as GaugeIcon, Activity as SparkIcon, BarChart3 } from 'lucide-vue-next'
 import type { Component } from 'vue'
 
@@ -31,13 +31,15 @@ import { useEspStore } from '@/stores/esp'
 import { useSensorId } from '@/composables/useSensorId'
 import { useSensorOptions } from '@/composables/useSensorOptions'
 import { useSparklineCache } from '@/composables/useSparklineCache'
+import { useSensorThresholds } from '@/composables/useSensorThresholds'
 import { calculateTrend } from '@/utils/trendUtils'
 import type { TrendDirection } from '@/utils/trendUtils'
 import {
-  SENSOR_TYPE_CONFIG,
+  getSensorConfig,
   getSensorUnit,
   getMultiValueDeviceConfigBySensorType,
 } from '@/utils/sensorDefaults'
+import { formatNumber } from '@/utils/formatters'
 import { tokens } from '@/utils/cssTokens'
 import type { MockSensor } from '@/types'
 
@@ -92,9 +94,10 @@ interface SensorTileProps {
 
 const props = withDefaults(defineProps<SensorTileProps>(), {
   displayMode: 'numeric',
-  hideModeToggle: false,
+  // Mode + Qualität gehören in die Widget-Config / Status-UI — nicht als Chrome in der Kachel
+  hideModeToggle: true,
   showTrendIcon: true,
-  showQualityDot: true,
+  showQualityDot: false,
   liveBufferSize: 60,
   timeRange: '1h',
   showThresholds: false,
@@ -117,7 +120,7 @@ watch(() => props.displayMode, (v) => { currentMode.value = v })
 // ─── Stores / composables ───────────────────────────────────────────────────
 
 const espStore = useEspStore()
-const { sparklineCache, getSensorKey } = useSparklineCache(30)
+const { sparklineCache, getSensorKey, loadInitialData, initialLoadInFlight } = useSparklineCache(30)
 const { espId: parsedEspId, gpio: parsedGpio, sensorType: parsedSensorType, isValid: sensorIdValid } = useSensorId(localSensorId)
 const { flatSensorOptions: availableSensors } = useSensorOptions(localZoneId)
 
@@ -189,7 +192,7 @@ function selectSubValue(option: SubValueOption): void {
 
 const sensorType = computed(() => parsedSensorType.value || currentSensor.value?.sensor_type || null)
 
-const decimals = computed(() => SENSOR_TYPE_CONFIG[sensorType.value ?? '']?.decimals ?? 1)
+const decimals = computed(() => getSensorConfig(sensorType.value ?? '')?.decimals ?? 1)
 
 const displayUnit = computed(() => {
   if (props.unit) return props.unit
@@ -199,10 +202,21 @@ const displayUnit = computed(() => {
   return resolved !== 'raw' ? resolved : (currentSensor.value?.unit || '')
 })
 
-const sensorTypeDefaults = computed(() => sensorType.value ? (SENSOR_TYPE_CONFIG[sensorType.value] ?? null) : null)
+const sensorTypeDefaults = computed(() => sensorType.value ? getSensorConfig(sensorType.value) : null)
 
-const effectiveMin = computed(() => props.yMin ?? sensorTypeDefaults.value?.min ?? 0)
-const effectiveMax = computed(() => props.yMax ?? sensorTypeDefaults.value?.max ?? 100)
+// E2 priority chain: widget-override > configured sensor bounds > sensor-type fallback
+const configIdRef = computed(() => currentSensor.value?.config_id ?? null)
+const {
+  configuredMin,
+  configuredMax,
+  configuredWarnLow,
+  configuredWarnHigh,
+  configuredAlarmLow,
+  configuredAlarmHigh,
+} = useSensorThresholds(configIdRef)
+
+const effectiveMin = computed(() => props.yMin ?? configuredMin.value ?? sensorTypeDefaults.value?.min ?? 0)
+const effectiveMax = computed(() => props.yMax ?? configuredMax.value ?? sensorTypeDefaults.value?.max ?? 100)
 
 // Snapshot sensor (Wave 1, MultispeQ) — suppress live indicators, scatter mode for historic.
 const isSnapshot = computed(() => currentSensor.value?.sensor_kind === 'snapshot')
@@ -243,6 +257,59 @@ const TREND_TITLES: Record<TrendDirection, string> = {
 // ─── Sparkline live buffer (sparkline mode) ─────────────────────────────────
 
 const liveBuffer = ref<ChartDataPoint[]>([])
+const sparklinePreloadAttempted = ref(false)
+
+function syncLiveBufferFromCache(): void {
+  if (!sensorIdValid.value || !parsedEspId.value || parsedGpio.value == null) return
+  const key = getSensorKey(parsedEspId.value, parsedGpio.value, sensorType.value ?? undefined)
+  const cached = sparklineCache.value.get(key)
+  if (cached?.length) {
+    liveBuffer.value = [...cached]
+  }
+}
+
+async function preloadSparklineHistory(): Promise<void> {
+  if (currentMode.value !== 'sparkline') return
+  if (!sensorIdValid.value || !parsedEspId.value || parsedGpio.value == null) return
+  sparklinePreloadAttempted.value = true
+  try {
+    await loadInitialData([{
+      esp_id: parsedEspId.value,
+      gpio: parsedGpio.value,
+      sensor_type: sensorType.value ?? undefined,
+    }])
+    syncLiveBufferFromCache()
+  } catch {
+    // Preload failure leaves empty buffer; empty-state text explains absence of data
+  }
+}
+
+watch(currentMode, (mode) => {
+  if (mode === 'sparkline') {
+    sparklinePreloadAttempted.value = false
+    void preloadSparklineHistory()
+  }
+})
+
+watch(localSensorId, () => {
+  if (currentMode.value !== 'sparkline') return
+  liveBuffer.value = []
+  sparklinePreloadAttempted.value = false
+  void preloadSparklineHistory()
+})
+
+onMounted(() => {
+  if (currentMode.value === 'sparkline') {
+    void preloadSparklineHistory()
+  }
+})
+
+const showSparklineEmpty = computed(() =>
+  currentMode.value === 'sparkline'
+  && sparklinePreloadAttempted.value
+  && !initialLoadInFlight.value
+  && liveBuffer.value.length === 0,
+)
 
 watch(
   () => currentSensor.value?.last_read,
@@ -273,25 +340,30 @@ const sparkThresholds = computed<ThresholdConfig | undefined>(() => {
 /**
  * Build GaugeThreshold[] from props in the same way GaugeWidget did.
  * Pattern: alarmLow < warnLow < warnHigh < alarmHigh.
+ * AUT-1104: widget-override props > configured zone boundaries (useSensorThresholds,
+ * custom_thresholds > base warning/threshold) > flat/no-zone.
  */
 const gaugeThresholds = computed<GaugeThreshold[]>(() => {
-  const hasAny = props.warnLow != null || props.warnHigh != null
-    || props.alarmLow != null || props.alarmHigh != null
+  const wLowSrc = props.warnLow ?? configuredWarnLow.value
+  const wHighSrc = props.warnHigh ?? configuredWarnHigh.value
+  const aLowSrc = props.alarmLow ?? configuredAlarmLow.value
+  const aHighSrc = props.alarmHigh ?? configuredAlarmHigh.value
+  const hasAny = wLowSrc != null || wHighSrc != null || aLowSrc != null || aHighSrc != null
 
   if (!hasAny) {
-    return [{ value: effectiveMin.value, color: tokens.statusGood }]
+    return [{ value: effectiveMin.value, color: tokens.zoneNormalRing }]
   }
 
   const thresholds: GaugeThreshold[] = []
   const min = effectiveMin.value
-  const aLow = props.alarmLow ?? min
-  const wLow = props.warnLow ?? aLow
-  const wHigh = props.warnHigh ?? effectiveMax.value
-  const aHigh = props.alarmHigh ?? effectiveMax.value
+  const aLow = aLowSrc ?? min
+  const wLow = wLowSrc ?? aLow
+  const wHigh = wHighSrc ?? effectiveMax.value
+  const aHigh = aHighSrc ?? effectiveMax.value
 
   if (aLow > min) thresholds.push({ value: min, color: tokens.statusAlarm })
   if (wLow > aLow) thresholds.push({ value: aLow, color: tokens.statusWarning })
-  thresholds.push({ value: wLow, color: tokens.statusGood })
+  thresholds.push({ value: wLow, color: tokens.zoneNormalRing })
   if (aHigh > wHigh) {
     thresholds.push({ value: wHigh, color: tokens.statusWarning })
   } else {
@@ -325,11 +397,6 @@ function setMode(mode: SensorTileDisplayMode): void {
   emit('update:config', { displayMode: mode })
 }
 
-function setTimeRange(range: SensorTileProps['timeRange']): void {
-  if (!range) return
-  emit('update:config', { timeRange: range })
-}
-
 // ─── Sensor selection (empty state) ─────────────────────────────────────────
 
 function selectSensor(sensorId: string): void {
@@ -347,7 +414,6 @@ const displayName = computed(() => {
   return sensor.name || sensor.sensor_type || ''
 })
 
-const HISTORIC_RANGES: Array<NonNullable<SensorTileProps['timeRange']>> = ['1h', '6h', '24h', '7d', '30d']
 </script>
 
 <template>
@@ -432,7 +498,7 @@ const HISTORIC_RANGES: Array<NonNullable<SensorTileProps['timeRange']>> = ['1h',
       <div class="sensor-tile__body" :data-mode="currentMode">
         <!-- numeric -->
         <div v-if="currentMode === 'numeric'" class="sensor-tile__numeric">
-          <span class="sensor-tile__number">{{ (currentSensor.raw_value ?? 0).toFixed(decimals) }}</span>
+          <span class="sensor-tile__number">{{ formatNumber(currentSensor.raw_value ?? 0, decimals) }}</span>
           <span class="sensor-tile__unit">{{ displayUnit }}</span>
         </div>
 
@@ -441,6 +507,7 @@ const HISTORIC_RANGES: Array<NonNullable<SensorTileProps['timeRange']>> = ['1h',
           <GaugeChart
             :value="currentSensor.raw_value ?? 0"
             :unit="displayUnit"
+            :decimals="decimals"
             :min="effectiveMin"
             :max="effectiveMax"
             :thresholds="gaugeThresholds"
@@ -450,7 +517,11 @@ const HISTORIC_RANGES: Array<NonNullable<SensorTileProps['timeRange']>> = ['1h',
 
         <!-- sparkline (live) -->
         <div v-else-if="currentMode === 'sparkline'" class="sensor-tile__sparkline">
+          <p v-if="showSparklineEmpty" class="sensor-tile__sparkline-empty">
+            Noch keine Messwerte vorhanden
+          </p>
           <LiveLineChart
+            v-else
             :data="liveBuffer"
             height="100%"
             :unit="displayUnit"
@@ -464,17 +535,8 @@ const HISTORIC_RANGES: Array<NonNullable<SensorTileProps['timeRange']>> = ['1h',
           />
         </div>
 
-        <!-- historic -->
+        <!-- historic: Zeitraum nur via Widget-Config / Zoom — keine Inline-Chips -->
         <div v-else-if="currentMode === 'historic'" class="sensor-tile__historic">
-          <div class="sensor-tile__historic-ranges">
-            <button
-              v-for="r in HISTORIC_RANGES"
-              :key="r"
-              type="button"
-              :class="['sensor-tile__range', { 'sensor-tile__range--active': props.timeRange === r }]"
-              @click="setTimeRange(r)"
-            >{{ r }}</button>
-          </div>
           <div class="sensor-tile__historic-chart">
             <HistoricalChart
               :esp-id="parsedEspId!"
@@ -483,7 +545,9 @@ const HISTORIC_RANGES: Array<NonNullable<SensorTileProps['timeRange']>> = ['1h',
               :time-range="props.timeRange ?? '1h'"
               :unit="displayUnit"
               :show-thresholds="props.showThresholds"
+              :thresholds="sparkThresholds"
               :scatter-mode="isSnapshot"
+              :show-range-selector="false"
               height="100%"
             />
           </div>
@@ -501,6 +565,7 @@ const HISTORIC_RANGES: Array<NonNullable<SensorTileProps['timeRange']>> = ['1h',
   gap: var(--space-1);
   padding: var(--space-2);
   min-height: 0;
+  container-type: size;
 }
 
 /* ── Header ──────────────────────────────────────────────────────────────── */
@@ -637,6 +702,13 @@ const HISTORIC_RANGES: Array<NonNullable<SensorTileProps['timeRange']>> = ['1h',
   font-weight: 600;
 }
 
+/* AUT-1100: Touch targets — enlarge mode-toggle buttons to 44px (WCAG 2.5.5) */
+@media (pointer: coarse), (hover: none) {
+  .sensor-tile__mode {
+    min-height: 44px;
+  }
+}
+
 .sensor-tile__mode-label {
   display: none;
 }
@@ -645,6 +717,23 @@ const HISTORIC_RANGES: Array<NonNullable<SensorTileProps['timeRange']>> = ['1h',
 @container (min-width: 220px) {
   .sensor-tile__mode-label {
     display: inline;
+  }
+}
+
+/* AUT-1052: compact mode bar in short GridStack cells — avoids overlap with outer edit chrome */
+@container (max-height: 220px) {
+  .sensor-tile {
+    padding: var(--space-1);
+    gap: 2px;
+  }
+
+  .sensor-tile__mode {
+    min-height: 20px;
+    padding: 1px 2px;
+  }
+
+  .sensor-tile__mode-label {
+    display: none;
   }
 }
 
@@ -660,13 +749,13 @@ const HISTORIC_RANGES: Array<NonNullable<SensorTileProps['timeRange']>> = ['1h',
   flex: 1;
   display: flex;
   align-items: center;
-  justify-content: flex-start;
+  justify-content: center;
   gap: var(--space-1);
 }
 
 .sensor-tile__number {
   font-family: var(--font-mono);
-  font-size: var(--text-2xl);
+  font-size: clamp(1rem, 14cqmin, 3rem); /* AUT-1100: scales with tile via container-type:size on .sensor-tile — same cqmin technique as GaugeChart.vue:200 */
   font-weight: 700;
   color: var(--color-text-primary);
   line-height: 1;
@@ -686,41 +775,33 @@ const HISTORIC_RANGES: Array<NonNullable<SensorTileProps['timeRange']>> = ['1h',
   justify-content: center;
 }
 
+.sensor-tile__sparkline-empty {
+  margin: 0;
+  padding: 0 var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  text-align: center;
+  font-style: italic;
+}
+
 .sensor-tile__historic {
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
-}
-
-.sensor-tile__historic-ranges {
-  display: flex;
-  gap: 2px;
-  flex-shrink: 0;
-}
-
-.sensor-tile__range {
-  padding: 2px var(--space-1);
-  background: transparent;
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-sm);
-  color: var(--color-text-muted);
-  font-size: var(--text-xs);
-  cursor: pointer;
-  min-height: 22px;
-}
-
-.sensor-tile__range--active {
-  background: rgba(59, 130, 246, 0.15);
-  border-color: var(--color-accent);
-  color: var(--color-accent-bright);
-  font-weight: 600;
 }
 
 .sensor-tile__historic-chart {
   flex: 1;
   min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.sensor-tile__historic-chart :deep(.historical-chart) {
+  flex: 1;
+  min-height: 0;
+  height: 100%;
 }
 
 /* ── Empty state ─────────────────────────────────────────────────────────── */

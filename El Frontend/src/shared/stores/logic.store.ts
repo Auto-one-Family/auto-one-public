@@ -11,7 +11,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { logicApi } from '@/api/logic'
 import { formatUiApiError, toUiApiError } from '@/api/uiApiError'
-import type { LogicRuleCreate, LogicRuleUpdate } from '@/api/logic'
+import type { LogicRuleCreate, LogicRuleUpdate, RuleBulkQuickUpdateRequest, RuleBulkQuickUpdateResponse } from '@/api/logic'
 import { extractConnections, extractEspIdsFromRule } from '@/types/logic'
 import { createLogger } from '@/utils/logger'
 import type {
@@ -457,6 +457,45 @@ export const useLogicStore = defineStore('logic', () => {
     } catch (err) {
       error.value = formatUiApiError(toUiApiError(err, 'Fehler beim Aktualisieren der Regel'))
       logger.error('updateRule error', err)
+      throw err
+    }
+  }
+
+  /**
+   * AUT-1148 (S3): Bulk quick-field update for marked rules (Gruppenkarten-Schnellfeld).
+   *
+   * Thin wrapper around the single S0 bulk endpoint — the ONLY save path for the
+   * group-card quick-field (Fix-Philosophie: kein zweiter, paralleler Save-Aufruf).
+   *
+   * Unlike updateRule(), the bulk response returns only per-rule {success, error} —
+   * no full rule bodies — so only the trivially-safe `active` field can be patched
+   * optimistically here. Threshold/hysteresis/time fields are NOT reconstructed
+   * client-side (that would duplicate LogicService._patch_quick_field_conditions);
+   * syncing the full rule cache after a bulk edit is a page-wiring concern (S4).
+   */
+  async function bulkQuickUpdateRules(
+    request: RuleBulkQuickUpdateRequest,
+  ): Promise<RuleBulkQuickUpdateResponse> {
+    error.value = null
+
+    try {
+      const response = await logicApi.bulkQuickUpdateRules(request)
+      if (request.active !== undefined) {
+        const successfulIds = new Set(
+          response.results.filter((r) => r.success).map((r) => r.rule_id)
+        )
+        rules.value = rules.value.map((r) =>
+          successfulIds.has(r.id) ? { ...r, enabled: request.active! } : r
+        )
+      }
+      logger.info('Bulk quick-update applied', {
+        ids: request.ids,
+        successCount: response.results.filter((r) => r.success).length,
+      })
+      return response
+    } catch (err) {
+      error.value = formatUiApiError(toUiApiError(err, 'Fehler beim Bulk-Update der Regeln'))
+      logger.error('bulkQuickUpdateRules error', err)
       throw err
     }
   }
@@ -1020,6 +1059,7 @@ export const useLogicStore = defineStore('logic', () => {
     metadata?: {
       priority?: number
       cooldown_seconds?: number
+      max_dose_ml_per_day?: number
     }
     timestamp: number
   }
@@ -1041,7 +1081,7 @@ export const useLogicStore = defineStore('logic', () => {
   function pushToHistory(
     nodes: any[],
     edges: any[],
-    metadata?: { priority?: number; cooldown_seconds?: number }
+    metadata?: { priority?: number; cooldown_seconds?: number; max_dose_ml_per_day?: number }
   ) {
     // Discard any "future" entries if we undid something and then changed
     history.value = history.value.slice(0, historyIndex.value + 1)
@@ -1106,7 +1146,7 @@ export const useLogicStore = defineStore('logic', () => {
    */
   function isValidConnection(
     sourceNodeType: string | undefined,
-    targetNodeType: string | undefined,
+    _targetNodeType: string | undefined,
     sourceId: string,
     targetId: string
   ): { valid: boolean; reason?: string } {
@@ -1115,15 +1155,16 @@ export const useLogicStore = defineStore('logic', () => {
       return { valid: false, reason: 'Selbst-Schleifen sind nicht erlaubt' }
     }
 
-    // Action nodes cannot be sources (actuator, notification, delay have no outgoing connections)
+    // Action nodes cannot be sources (actuator, notification have no outgoing connections)
     if (sourceNodeType === 'actuator' || sourceNodeType === 'notification') {
       return { valid: false, reason: 'Aktions-Knoten können keine Verbindung starten' }
     }
 
-    // Sensor/Time → Actuator/Notification direct: NOT allowed (must go through logic node)
-    if ((sourceNodeType === 'sensor' || sourceNodeType === 'time') && (targetNodeType === 'actuator' || targetNodeType === 'notification')) {
-      return { valid: false, reason: 'Bedingung kann nicht direkt mit Aktion verbunden werden. Verwende einen Logik-Knoten (UND/ODER) dazwischen.' }
-    }
+    // AUT-1318 (R-S4): Condition → Action direct is ALLOWED (= routing edge → condition_refs).
+    // Logic-node path remains valid for flat/grouped semantics (D4 when refs absent).
+    // AUT-1399: sensor_diff (Mess-Bindung) may connect visually, but RuleFlowEditor
+    // excludes it from CONDITION_NODE_TYPES — edges never become condition_refs.
+    // _targetNodeType kept for API symmetry with getConnectionValidationMessage.
 
     // Everything else is allowed
     return { valid: true }
@@ -1170,6 +1211,7 @@ export const useLogicStore = defineStore('logic', () => {
     fetchRule,
     createRule,
     updateRule,
+    bulkQuickUpdateRules,
     deleteRule,
     toggleRule,
     testRule,

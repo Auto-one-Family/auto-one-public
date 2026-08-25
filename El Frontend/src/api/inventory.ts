@@ -30,6 +30,9 @@ export interface ZoneContextData {
   updated_at: string
   plant_age_days: number | null
   days_to_harvest: number | null
+  resolved_growth_phase?: string | null
+  growth_phase_source?: 'plant' | 'zone_context' | null
+  active_plant_id?: string | null
 }
 
 export interface CycleEntry {

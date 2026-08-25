@@ -75,6 +75,14 @@ function resolveTrigger(entry: ActuatorHistoryEntry): TriggerLabel {
     return { label: 'ESP-Bestätigung' }
   }
 
+  // AUT-1132 (A2): config-push ack (e.g. Geräte-Sicherheitslimit/Mindest-Pause
+  // applied on the ESP) mirrored from config_handler._mark_config_applied()/
+  // _process_config_failures()
+  if (issuedByLower.startsWith('config_')) {
+    const isFailed = (entry.command_type ?? '').toLowerCase() === 'config_failed'
+    return { label: isFailed ? 'Konfig fehlgeschlagen' : 'Konfig angewandt' }
+  }
+
   // state_sync and other system sources
   if (issuedByLower === 'state_sync') return { label: 'Statusabgleich' }
   if (SYSTEM_SOURCES.has(issuedByLower)) return { label: 'System' }
@@ -87,7 +95,7 @@ function resolveTrigger(entry: ActuatorHistoryEntry): TriggerLabel {
   return { label: '—' }
 }
 
-function formatStateBadge(entry: ActuatorHistoryEntry): { text: string; on: boolean } {
+function formatStateBadge(entry: ActuatorHistoryEntry): { text: string; on: boolean; warn?: boolean } {
   const on = isActuatorOn(entry)
   const cmd = (entry.command_type ?? '').toLowerCase()
   if (cmd === 'pwm' || cmd === 'set') {
@@ -95,6 +103,12 @@ function formatStateBadge(entry: ActuatorHistoryEntry): { text: string; on: bool
     return { text: 'AUS', on: false }
   }
   if (cmd === 'emergency_stop') return { text: 'STOPP', on: false }
+  // AUT-1132 (A2): config ack has no ON/OFF state (value is null) — showing
+  // "AUS" would misleadingly read as a switch event. A failed config push
+  // (Sicherheitslimit/Mindest-Pause NICHT angewandt) gets a warn badge so it
+  // doesn't silently blend in as a normal "off" entry.
+  if (cmd === 'config_applied') return { text: 'KONFIG', on: false }
+  if (cmd === 'config_failed') return { text: 'KONFIG', on: false, warn: true }
   return { text: on ? 'AN' : 'AUS', on }
 }
 
@@ -172,9 +186,11 @@ onUnmounted(() => {
         <span
           :class="[
             'action-timeline__state',
-            formatStateBadge(entry).on
-              ? 'action-timeline__state--on'
-              : 'action-timeline__state--off',
+            formatStateBadge(entry).warn
+              ? 'action-timeline__state--warn'
+              : formatStateBadge(entry).on
+                ? 'action-timeline__state--on'
+                : 'action-timeline__state--off',
           ]"
         >
           {{ formatStateBadge(entry).text }}
@@ -275,6 +291,11 @@ onUnmounted(() => {
 .action-timeline__state--off {
   color: var(--color-text-muted);
   background: var(--color-bg-quaternary, rgba(255, 255, 255, 0.04));
+}
+
+.action-timeline__state--warn {
+  color: var(--color-warning);
+  background: color-mix(in srgb, var(--color-warning) 12%, transparent);
 }
 
 .action-timeline__source {

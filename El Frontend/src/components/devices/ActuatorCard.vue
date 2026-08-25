@@ -8,7 +8,7 @@
  */
 import { computed, ref, watch, onUnmounted } from 'vue'
 import {
-  Power, ChevronRight, WifiOff, Loader2,
+  Power, ChevronRight, WifiOff, Loader2, CheckCircle,
   ToggleRight, Waves, GitBranch, Fan, Flame, Lightbulb, Cog, Activity,
 } from 'lucide-vue-next'
 import { isMockEspId } from '@/composables/useZoneGrouping'
@@ -21,6 +21,8 @@ import { getActuatorTypeInfo } from '@/utils/labels'
 import { getSensorLabel, getSensorUnit } from '@/utils/sensorDefaults'
 import { useActuatorStore } from '@/shared/stores/actuator.store'
 import { useToast } from '@/composables/useToast'
+import { actuatorsApi } from '@/api/actuators'
+import { actuatorDutyToDisplayPercent } from '@/utils/eventTransformer'
 
 const ACTUATOR_COMMAND_TIMEOUT_MS = 15_000
 
@@ -41,6 +43,8 @@ const props = withDefaults(defineProps<Props>(), {
 const emit = defineEmits<{
   configure: [actuator: ActuatorWithContext]
   toggle: [espId: string, gpio: number, currentState: boolean]
+  // AUT-995 Feld 6: one-shot dose — parent sends ON with the given auto-off duration (seconds).
+  'dose-now': [espId: string, gpio: number, durationSeconds: number]
 }>()
 
 const displayName = computed(() =>
@@ -140,7 +144,7 @@ const displayedRules = computed(() => (props.linkedRules ?? []).slice(0, 2))
 const pwmPercent = computed(() => {
   if (props.actuator.actuator_type !== 'pwm' && props.actuator.actuator_type !== 'fan') return null
   const val = props.actuator.pwm_value
-  if (val != null && val > 0) return `${Math.round(val * 100)}%`
+  if (val != null && val > 0) return `${actuatorDutyToDisplayPercent(val)}%`
   return null
 })
 
@@ -223,17 +227,13 @@ const acknowledgementLabel = computed(() => {
 })
 
 const actuatorStore = useActuatorStore()
-const { warning: toastWarning } = useToast()
+const { warning: toastWarning, error: toastError } = useToast()
 
 const commandIsPending = computed(() =>
   actuatorStore.isActuatorCommandPending(props.actuator.esp_id, props.actuator.gpio)
 )
 
-const commandInCooldown = computed(() =>
-  actuatorStore.isActuatorCommandInCooldown(props.actuator.esp_id, props.actuator.gpio)
-)
-
-const commandToggleBlocked = computed(() => commandIsPending.value || commandInCooldown.value)
+const commandToggleBlocked = computed(() => commandIsPending.value)
 
 const commandIntent = computed(() =>
   actuatorStore.getActuatorIntent(props.actuator.esp_id, props.actuator.gpio)
@@ -274,6 +274,50 @@ function handleClick() {
 function handleToggle(event: Event) {
   event.stopPropagation()
   emit('toggle', props.actuator.esp_id, props.actuator.gpio, props.actuator.state)
+}
+
+// =============================================================================
+// AUT-995 Feld 6: "Jetzt dosieren" (pumps only)
+// =============================================================================
+const isPump = computed(() => {
+  const t = (props.actuator.actuator_type || '').toLowerCase()
+  const h = (props.actuator.hardware_type || '').toLowerCase()
+  return t === 'pump' || h === 'pump'
+})
+
+const doseFormOpen = ref(false)
+const doseMl = ref(10)
+const doseBusy = ref(false)
+
+function toggleDoseForm(event: Event) {
+  event.stopPropagation()
+  doseFormOpen.value = !doseFormOpen.value
+}
+
+async function confirmDose(event: Event) {
+  event.stopPropagation()
+  const ml = Number(doseMl.value)
+  if (!ml || ml <= 0) {
+    toastError('Bitte eine Dosis groesser als 0 ml eingeben.')
+    return
+  }
+  doseBusy.value = true
+  try {
+    // H-2: flow_rate_ml_s is NOT on the live store actuator object — fetch the config for the ml → duration conversion.
+    const cfg = await actuatorsApi.get(props.actuator.esp_id, props.actuator.gpio)
+    const flowRate = cfg?.flow_rate_ml_s ?? null
+    if (!flowRate || flowRate <= 0) {
+      toastError('Pumpe nicht kalibriert (flow_rate_ml_s fehlt) — Dosierung nicht moeglich.')
+      return
+    }
+    const durationSeconds = Math.max(1, Math.ceil(ml / flowRate))
+    emit('dose-now', props.actuator.esp_id, props.actuator.gpio, durationSeconds)
+    doseFormOpen.value = false
+  } catch {
+    toastError('Kalibrierung konnte nicht geladen werden.')
+  } finally {
+    doseBusy.value = false
+  }
 }
 </script>
 
@@ -328,9 +372,6 @@ function handleToggle(event: Event) {
         <span v-if="sourceBadge.text !== 'Real'" :class="['actuator-card__source-badge', sourceBadge.cls]">
           {{ sourceBadge.text }}
         </span>
-        <span v-if="dataMode !== 'Live'" :class="['actuator-card__mode-badge', `actuator-card__mode-badge--${dataMode.toLowerCase()}`]">
-          {{ dataMode }}
-        </span>
         <span v-if="mode === 'monitor' && pwmPercent" class="actuator-card__pwm-badge">
           {{ pwmPercent }}
         </span>
@@ -355,8 +396,11 @@ function handleToggle(event: Event) {
           v-if="!commandIsPending && !showWarnBadge"
           class="actuator-card__badge"
           :class="isEspOffline || isStale || isActuatorStale ? 'actuator-card__badge--stale' : 'actuator-card__badge--confirmed'"
+          :title="acknowledgementLabel"
+          :aria-label="acknowledgementLabel"
         >
-          {{ acknowledgementLabel }}
+          <CheckCircle v-if="!(isEspOffline || isStale || isActuatorStale)" class="w-3 h-3" />
+          <template v-else>{{ acknowledgementLabel }}</template>
         </span>
       </div>
       <span v-if="mode === 'monitor' && actuator.actuator_type === 'pwm' && !pwmPercent" class="actuator-card__pwm">
@@ -366,11 +410,41 @@ function handleToggle(event: Event) {
         v-if="mode !== 'monitor'"
         class="btn-secondary btn-sm flex-shrink-0 touch-target"
         :disabled="actuator.emergency_stopped || isEspOffline || isStale || commandToggleBlocked"
-        :title="commandIsPending ? 'Befehl wird ausgeführt...' : commandInCooldown ? 'Bitte kurz warten (min. 2s zwischen Befehlen)' : isEspOffline ? 'ESP ist offline' : isStale ? 'Status veraltet' : ''"
+        :title="commandIsPending ? 'Befehl wird ausgeführt...' : isEspOffline ? 'ESP ist offline' : isStale ? 'Status veraltet' : ''"
         @click="handleToggle"
       >
-        {{ commandIsPending ? 'Wird ausgeführt...' : commandInCooldown ? 'Kurz warten...' : (actuator.state ? 'Ausschalten' : 'Einschalten') }}
+        {{ commandIsPending ? 'Wird ausgeführt...' : (actuator.state ? 'Ausschalten' : 'Einschalten') }}
       </button>
+
+      <!-- Feld 6 (AUT-995): Jetzt dosieren — nur Pumpen, nur Monitor-Kontext (Live-Steuerung). ON mit auto-off duration (dose_ml / flow_rate_ml_s). -->
+      <template v-if="mode === 'monitor' && isPump && !actuator.emergency_stopped && !isEspOffline && !isStale">
+        <button
+          class="btn-secondary btn-sm flex-shrink-0 touch-target"
+          :disabled="commandToggleBlocked || doseBusy"
+          title="Einmalige Dosis mit automatischer Abschaltung"
+          @click="toggleDoseForm"
+        >
+          Jetzt dosieren
+        </button>
+        <div v-if="doseFormOpen" class="flex items-center gap-2 mt-2" @click.stop>
+          <input
+            v-model.number="doseMl"
+            type="number"
+            min="0"
+            step="0.1"
+            class="w-20 px-2 py-1 rounded bg-dark-800 border border-dark-600 text-dark-50 text-sm touch-target"
+            aria-label="Dosis in Milliliter"
+          />
+          <span class="text-sm text-dark-400">ml</span>
+          <button
+            class="btn-primary btn-sm touch-target"
+            :disabled="doseBusy || !doseMl || doseMl <= 0"
+            @click="confirmDose"
+          >
+            {{ doseBusy ? '…' : 'Dosieren' }}
+          </button>
+        </div>
+      </template>
     </div>
     <div
       v-if="mode === 'monitor' && showSnapshotWarning"

@@ -20,7 +20,6 @@
  *   @validation-change="onValidationChange"
  * />
  *
- * @author KI-Agent (Claude)
  * @since Phase 5 (GPIO-Picker & Add-Sensor/Actuator-Flow)
  */
 
@@ -216,8 +215,14 @@ const validation = computed(() => {
     return { valid: false, message: 'Bitte GPIO auswählen' }
   }
 
-  // If using static fallback, always valid (no server-side validation)
+  // If using static fallback, validate against board-specific reserved pins
   if (!hasDynamicStatus.value) {
+    const reserved: number[] = boardLayout.value
+      ? [...boardLayout.value.reservedGpios]
+      : getGpioConfig('ESP32_WROOM').filter(p => p.category === 'avoid').map(p => p.gpio)
+    if (reserved.includes(props.modelValue)) {
+      return { valid: false, message: `GPIO ${props.modelValue} ist ein System-Pin` }
+    }
     return { valid: true, message: null }
   }
 

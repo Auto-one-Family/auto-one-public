@@ -14,8 +14,9 @@ import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useEspStore } from '@/stores/esp'
 import GaugeChart from '@/components/charts/GaugeChart.vue'
 import SensorTile from './SensorTile.vue'
+import ZoneTileGaugeCluster from './ZoneTileGaugeCluster.vue'
 import {
-  SENSOR_TYPE_CONFIG,
+  getSensorConfig,
   getSensorUnit,
   aggregateZoneSensors,
   getAggCategoryGaugeRange,
@@ -119,7 +120,7 @@ const useZoneAvgChannel = computed(
 
 const sensorTypeDefaults = computed(() => {
   if (!parsedSensorType.value) return null
-  return SENSOR_TYPE_CONFIG[parsedSensorType.value] ?? null
+  return getSensorConfig(parsedSensorType.value)
 })
 
 const aggGaugeRange = computed(() => {
@@ -161,7 +162,7 @@ const gaugeThresholds = computed<GaugeThreshold[]>(() => {
     || props.alarmLow != null || props.alarmHigh != null
 
   if (!hasThresholds) {
-    return [{ value: effectiveMin.value, color: tokens.statusGood }]
+    return [{ value: effectiveMin.value, color: tokens.zoneNormalRing }]
   }
 
   const thresholds: GaugeThreshold[] = []
@@ -173,7 +174,7 @@ const gaugeThresholds = computed<GaugeThreshold[]>(() => {
 
   if (aLow > min) thresholds.push({ value: min, color: tokens.statusAlarm })
   if (wLow > aLow) thresholds.push({ value: aLow, color: tokens.statusWarning })
-  thresholds.push({ value: wLow, color: tokens.statusGood })
+  thresholds.push({ value: wLow, color: tokens.zoneNormalRing })
   if (aHigh > wHigh) {
     thresholds.push({ value: wHigh, color: tokens.statusWarning })
   } else {
@@ -226,12 +227,6 @@ function onTileUpdate(cfg: { sensorId?: string }) {
     :aria-label="props.tileSpotSemantics ? GAUGE_TILE_SPOT_ARIA : (props.tileZoneAvgSemantics ? GAUGE_TILE_ZONE_AVG_ARIA : undefined)"
   >
     <span
-      v-if="props.tileSpotSemantics"
-      class="gauge-widget__spot-label"
-      :title="GAUGE_TILE_SPOT_TOOLTIP"
-      aria-hidden="true"
-    >Repräsentativ</span>
-    <span
       v-if="props.tileZoneAvgSemantics"
       class="gauge-widget__zone-avg-label"
       :title="GAUGE_TILE_ZONE_AVG_TOOLTIP"
@@ -241,6 +236,7 @@ function onTileUpdate(cfg: { sensorId?: string }) {
       <GaugeChart
         :value="gaugeChartValue"
         :unit="displayUnit"
+        :decimals="sensorTypeDefaults?.decimals ?? 1"
         :min="effectiveMin"
         :max="effectiveMax"
         :thresholds="gaugeThresholds"
@@ -253,14 +249,12 @@ function onTileUpdate(cfg: { sensorId?: string }) {
     >
       <p>Keine Sensordaten</p>
     </div>
-    <!-- Tile-spot fallback: delegate to SensorTile -->
-    <SensorTile
+    <!-- Tile-spot: representative spot values as equal-size gauges side by side -->
+    <ZoneTileGaugeCluster
       v-else
       :sensor-id="props.sensorId"
       :zone-id="props.zoneId"
       :title="props.title"
-      display-mode="gauge"
-      hide-mode-toggle
       :y-min="props.yMin"
       :y-max="props.yMax"
       :warn-low="props.warnLow"
@@ -268,7 +262,6 @@ function onTileUpdate(cfg: { sensorId?: string }) {
       :alarm-low="props.alarmLow"
       :alarm-high="props.alarmHigh"
       :show-thresholds="props.showThresholds"
-      @update:config="onTileUpdate"
     />
   </div>
 
@@ -307,7 +300,6 @@ function onTileUpdate(cfg: { sensorId?: string }) {
   min-height: 0;
 }
 
-.gauge-widget__spot-label,
 .gauge-widget__zone-avg-label {
   flex-shrink: 0;
   font-size: var(--text-xs);

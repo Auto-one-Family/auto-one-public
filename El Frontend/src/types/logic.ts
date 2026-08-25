@@ -5,7 +5,74 @@
  * @see El Servador/god_kaiser_server/src/schemas/logic.py
  */
 
+import { formatDeadbandEdge } from '@/utils/planDeadbandDisplay'
 import { getSensorLabel, getSensorUnit } from '@/utils/sensorDefaults'
+
+// =============================================================================
+// Rule Group Catalog (AUT-1145 / AUT-1147 / AUT-1173)
+// =============================================================================
+
+/**
+ * Fixed group catalog — single source of truth shared with the server.
+ * Server-side: El Servador/god_kaiser_server/src/db/models/logic.py:33-40
+ * Frontend NEVER derives the group itself; it reads what the server sends.
+ *
+ * AUT-1173 (TAX-5, Variante C): Messgröße als Primärachse (9 Werte, 1:1 gespiegelt
+ * von AggCategory in utils/sensorDefaults.ts) + "sicherheit" als feste Ausnahme +
+ * "zeitplan"/"sonstiges". "klima"/"alarm"/"dosierung" entfallen als eigene Gruppen.
+ */
+export const RULE_GROUP_CATALOG = [
+  'ph',
+  'ec',
+  'bodenfeuchte',
+  'luftfeuchte',
+  'temperatur',
+  'co2',
+  'luftdruck',
+  'licht',
+  'durchfluss',
+  'zeitplan',
+  'sicherheit',
+  'sonstiges',
+] as const
+
+export type RuleGroup = typeof RULE_GROUP_CATALOG[number]
+
+// =============================================================================
+// Plan Subscription Catalogs (AUT-1243, mirrors AUT-1232 server model)
+// =============================================================================
+
+/**
+ * Plan-domain catalog mirrored from the server (PLAN_DOMAINS in
+ * db/models/plan_segment.py). nutrient_solution + climate (AUT-1239/1240).
+ */
+export const PLAN_DOMAIN_CATALOG = ['nutrient_solution', 'climate'] as const
+
+export type PlanDomain = typeof PLAN_DOMAIN_CATALOG[number]
+
+/**
+ * Plan-measure catalog — nutrient (AUT-1232) + climate targets (AUT-1239).
+ * VPD is never a stored measure (derived overlay only).
+ */
+export const PLAN_MEASURE_CATALOG = [
+  'target_ec',
+  'target_ph',
+  'target_temperature',
+  'target_humidity',
+] as const
+
+export type PlanMeasure = typeof PLAN_MEASURE_CATALOG[number]
+
+/** Measures editable per plan domain (UI filter for segment editor). */
+export const PLAN_MEASURES_BY_DOMAIN: Record<PlanDomain, readonly PlanMeasure[]> = {
+  nutrient_solution: ['target_ec', 'target_ph'],
+  climate: ['target_temperature', 'target_humidity'],
+}
+
+export function defaultMeasureForDomain(domain: PlanDomain | string): PlanMeasure {
+  if (domain === 'climate') return 'target_temperature'
+  return 'target_ec'
+}
 
 // =============================================================================
 // Logic Rule Types
@@ -28,7 +95,15 @@ export interface LogicRule {
   actions: LogicAction[]
   priority: number
   cooldown_seconds?: number
+  /** AUT-1115: Wait for settle_seconds after the last execution of this other rule before evaluating. */
+  settle_after_rule_id?: string | null
+  /** AUT-1115: Settle window in seconds, evaluated against settle_after_rule_id's last execution. */
+  settle_seconds?: number | null
+  /** AO-4 (AUT-993): Max total dose ml per rolling 24h across all executions (undefined = unlimited). */
+  max_dose_ml_per_day?: number
   max_executions_per_hour?: number
+  /** AUT-993 (B8): Max executions per rolling 24h window (undefined or 0 = unlimited). */
+  max_executions_per_day?: number
   last_triggered?: string
   execution_count?: number
   last_execution_success?: boolean | null
@@ -36,10 +111,35 @@ export interface LogicRule {
   is_critical?: boolean
   /** AUT-111: Escalation behaviour when rule is degraded */
   escalation_policy?: EscalationPolicy | null
+  /** AUT-1113: Free-form rule metadata (e.g. AUT-1112 chemistry dose_config, AUT-1116 paired_rule_id). */
+  rule_metadata?: Record<string, unknown>
+  /** AUT-1116: Non-blocking hints (e.g. paired-rule deadband overlap). HTTP 2xx regardless — never a reject. */
+  warnings?: string[]
   /** AUT-111: ISO timestamp since when the rule is in degraded state */
   degraded_since?: string | null
   /** AUT-111: Human-readable reason for degradation */
   degraded_reason?: string | null
+  /**
+   * AUT-1145: Effective display group (server-derived or user override).
+   * Always one of RULE_GROUP_CATALOG. Server guarantees a non-null value in
+   * LogicRuleResponse; optional here for backward-compat with existing mocks.
+   */
+  rule_group?: RuleGroup
+  /**
+   * AUT-1232/AUT-1243: Opt-in plan subscription — when true, the rule may
+   * read its setpoint from plan_segment@now instead of a static value
+   * (engine wiring is AUT-1233/T3). Default false — existing rules stay
+   * on their static setpoints.
+   */
+  follows_plan?: boolean
+  /** AUT-1232: Zone for the plan subscription (mandatory when follows_plan is true). */
+  plan_zone_id?: string | null
+  /** AUT-1232: Optional subzone_config scope for the plan subscription. */
+  plan_subzone_config_id?: string | null
+  /** AUT-1232: Plan domain (see PLAN_DOMAIN_CATALOG). */
+  plan_domain?: PlanDomain | null
+  /** AUT-1232: Plan measure (see PLAN_MEASURE_CATALOG). */
+  plan_measure?: PlanMeasure | null
   created_at: string
   updated_at: string
 }
@@ -48,7 +148,7 @@ export interface LogicRule {
 // Condition Types
 // =============================================================================
 
-export type LogicCondition = SensorCondition | TimeCondition | HysteresisCondition | CompoundCondition | DiagnosticsCondition | SensorDiffCondition
+export type LogicCondition = SensorCondition | TimeCondition | HysteresisCondition | CompoundCondition | DiagnosticsCondition | SensorDiffCondition | NotRunningCondition
 
 export interface SensorCondition {
   type: 'sensor' | 'sensor_threshold'
@@ -60,6 +160,8 @@ export interface SensorCondition {
   min?: number // For 'between' operator
   max?: number // For 'between' operator
   subzone_id?: string | null // Phase 2.4: optional subzone filter
+  /** AO-3 (AUT-994): When true, condition evaluates false if the sensor value is stale (on_demand/scheduled sensors; age > measurement_freshness_hours). */
+  require_fresh_data?: boolean
 }
 
 export interface TimeCondition {
@@ -105,13 +207,34 @@ export interface SensorDiffCondition {
   consecutive_count?: number
 }
 
+/** AUT-1245 / AUT-1333: Idle-Interlock — True wenn Sequenz/Aktor nicht läuft. */
+export interface NotRunningCondition {
+  type: 'not_running'
+  target: 'sequence' | 'actuator'
+  /** Logic-Rule-UUID wenn target=sequence */
+  rule_id?: string
+  /** Device-UUID (nicht ESP_XXXX) wenn target=actuator */
+  esp_id?: string
+  gpio?: number
+}
+
 // =============================================================================
 // Action Types
 // =============================================================================
 
 export type LogicAction = ActuatorAction | NotificationAction | DelayAction | PluginAction | DiagnosticsAction | SequenceAction
 
-export interface ActuatorAction {
+/**
+ * AUT-1317 (R-S2): optional per-action condition binding.
+ * Absent/null/[] → legacy global rule gate. Non-empty → per-action gate.
+ * condition_op default at evaluate-time = rule.logic_operator (not LX-02 group).
+ */
+export interface ActionConditionRouting {
+  condition_refs?: number[] | null
+  condition_op?: 'AND' | 'OR' | null
+}
+
+export interface ActuatorAction extends ActionConditionRouting {
   type: 'actuator' | 'actuator_command'
   esp_id: string
   gpio: number
@@ -119,27 +242,31 @@ export interface ActuatorAction {
   value?: number // For PWM (0.0-1.0)
   duration?: number // Max runtime per execution in seconds (0 = unlimited, device safety limit as fallback)
   duration_seconds?: number // Backend field name (alias for duration)
+  /** AO-2 (AUT-991): Target dose volume in ml. Server resolves to duration_seconds via ceil(dose_ml / flow_rate_ml_s). */
+  dose_ml?: number
+  /** AUT-1317: routed OFF + this flag → action-level cooldown bypass (not rule-wide hysteresis OFF). */
+  is_safety_critical?: boolean
 }
 
-export interface NotificationAction {
+export interface NotificationAction extends ActionConditionRouting {
   type: 'notification'
   channel: 'email' | 'webhook' | 'websocket'
   target: string
   message_template: string
 }
 
-export interface DelayAction {
+export interface DelayAction extends ActionConditionRouting {
   type: 'delay'
   seconds: number
 }
 
-export interface PluginAction {
+export interface PluginAction extends ActionConditionRouting {
   type: 'plugin' | 'autoops_trigger'
   plugin_id: string
   config?: Record<string, unknown>
 }
 
-export interface DiagnosticsAction {
+export interface DiagnosticsAction extends ActionConditionRouting {
   type: 'run_diagnostic'
   check_name?: string // Optional — omit for full diagnostic
 }
@@ -152,9 +279,11 @@ export interface SequenceStepServer {
   delay_after_seconds?: number
   timeout_seconds?: number
   on_failure?: 'abort' | 'continue'
+  /** AUT-1390: FE-Intent Modus — am Step persistiert (List[Any] server-seitig). */
+  dose_mode?: 'duration' | 'ml' | 'target_optimal'
 }
 
-export interface SequenceAction {
+export interface SequenceAction extends ActionConditionRouting {
   type: 'sequence'
   steps: SequenceStepServer[]
   abort_on_failure?: boolean
@@ -171,6 +300,17 @@ export interface SequenceStepDraft {
   gpio?: number
   command?: string
   duration?: number
+  /** AUT-1281: Ziel-Dosis in ml fuer diesen Schritt (Pumpen-Aktor). Server-Roundtrip via
+   * SequenceStepServer.action.dose_ml (ActuatorAction) — Server rechnet ceil(ml/flow_rate). */
+  dose_ml?: number
+  /**
+   * AUT-1390: FE-Intent Dosier-Modus am Sequenz-Schritt (duration | ml | target_optimal).
+   * Roundtrip am Step (neben action) — kein Server-Dosier-Pfad, nur Anzeige/Intent.
+   */
+  dose_mode?: 'duration' | 'ml' | 'target_optimal'
+  /** AUT-1306: Server-Felder nur Roundtrip-Preserve (kein UI; Pure-Pause bleibt delay_seconds). */
+  delay_before_seconds?: number
+  delay_after_seconds?: number
   // delay
   seconds?: number
   onFailure?: 'abort' | 'continue'
@@ -299,11 +439,12 @@ export function formatConditionShort(rule: LogicRule): string {
     if (cond.type === 'hysteresis') {
       const hc = cond as HysteresisCondition
       const label = hc.sensor_type ? getSensorLabel(hc.sensor_type) : 'Hysterese'
+      const st = hc.sensor_type
       if (hc.activate_above != null && hc.deactivate_below != null) {
-        return `${label} Ein >${hc.activate_above}, Aus <${hc.deactivate_below}`
+        return `${label} Ein >${formatDeadbandEdge(hc.activate_above, st)}, Aus <${formatDeadbandEdge(hc.deactivate_below, st)}`
       }
       if (hc.activate_below != null && hc.deactivate_above != null) {
-        return `${label} Ein <${hc.activate_below}, Aus >${hc.deactivate_above}`
+        return `${label} Ein <${formatDeadbandEdge(hc.activate_below, st)}, Aus >${formatDeadbandEdge(hc.deactivate_above, st)}`
       }
       return `${label} (Hysterese)`
     }
@@ -416,6 +557,83 @@ export function extractSensorConditions(conditions: LogicCondition[]): SensorCon
   }
 
   return result
+}
+
+/**
+ * Recursively find the first condition of one of the given types, descending
+ * into compound conditions. Returns null if no matching condition exists.
+ */
+function findCondition(conditions: LogicCondition[], types: string[]): LogicCondition | null {
+  for (const cond of conditions) {
+    if (types.includes(cond.type)) return cond
+    if (cond.type === 'compound') {
+      const nested = findCondition((cond as CompoundCondition).conditions, types)
+      if (nested) return nested
+    }
+  }
+  return null
+}
+
+// =============================================================================
+// Quick-Field Condition Inspection (AUT-1148, S3 — Gruppenkarten-Schnellfeld)
+// =============================================================================
+//
+// Used to compute the Schnittmengen-Logik (which quick-fields apply to ALL
+// currently marked rules) and to read each rule's current value for the
+// "gemischt" comparison. Server is the sole write-side authority for how a
+// bulk quick-field edit is applied (LogicService._patch_quick_field_conditions);
+// these helpers only READ existing condition values for display purposes.
+
+/** True if the rule has a time-window condition (Zeiten quick-field applies). */
+export function hasTimeWindowCondition(rule: LogicRule): boolean {
+  return findCondition(rule.conditions, ['time_window', 'time']) !== null
+}
+
+/** True if the rule has a plain sensor-threshold condition (single-value Schwellwert). */
+export function hasSimpleThresholdCondition(rule: LogicRule): boolean {
+  return findCondition(rule.conditions, ['sensor', 'sensor_threshold']) !== null
+}
+
+/** True if the rule has a hysteresis condition (on/off-value-pair Schwellwert). */
+export function hasHysteresisCondition(rule: LogicRule): boolean {
+  return findCondition(rule.conditions, ['hysteresis']) !== null
+}
+
+/** Current value of the rule's plain sensor-threshold condition, or null if none. */
+export function getSimpleThresholdValue(rule: LogicRule): number | null {
+  const found = findCondition(rule.conditions, ['sensor', 'sensor_threshold']) as SensorCondition | null
+  return found ? found.value : null
+}
+
+/** Current on/off values of the rule's hysteresis condition, or nulls if none. */
+export function getHysteresisValues(rule: LogicRule): { on: number | null; off: number | null } {
+  const found = findCondition(rule.conditions, ['hysteresis']) as HysteresisCondition | null
+  if (!found) return { on: null, off: null }
+  return {
+    on: found.activate_above ?? found.activate_below ?? null,
+    off: found.deactivate_below ?? found.deactivate_above ?? null,
+  }
+}
+
+export interface TimeWindowValues {
+  startHour: number
+  startMinute: number
+  endHour: number
+  endMinute: number
+  daysOfWeek: number[]
+}
+
+/** Current values of the rule's time-window condition, or null if none. */
+export function getTimeWindowValues(rule: LogicRule): TimeWindowValues | null {
+  const found = findCondition(rule.conditions, ['time_window', 'time']) as TimeCondition | null
+  if (!found) return null
+  return {
+    startHour: found.start_hour,
+    startMinute: found.start_minute ?? 0,
+    endHour: found.end_hour,
+    endMinute: found.end_minute ?? 0,
+    daysOfWeek: found.days_of_week ?? [],
+  }
 }
 
 /**

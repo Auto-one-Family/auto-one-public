@@ -9,6 +9,11 @@ export * from './gpio'
 export * from './websocket-events'
 
 // =============================================================================
+// Plan Segments (AUT-1232 / AUT-1234 T4)
+// =============================================================================
+export * from './planSegment'
+
+// =============================================================================
 // Device Metadata Types
 // =============================================================================
 export type { DeviceMetadata } from './device-metadata'
@@ -218,7 +223,7 @@ export type MockSystemState =
   | 'SAFE_MODE'
   | 'ERROR'
 
-export type QualityLevel = 'excellent' | 'good' | 'fair' | 'poor' | 'bad' | 'stale' | 'error'
+export type QualityLevel = 'excellent' | 'good' | 'fair' | 'poor' | 'bad' | 'stale' | 'error' | 'warming_up'
 
 /**
  * Sensor kind: distinguishes continuous measurement sensors from snapshot-style
@@ -284,6 +289,8 @@ export interface MockSensor {
   measurement_freshness_hours?: number | null
   calibration_interval_days?: number | null
   freshness_hours?: number | null
+  /** Sensor config calibration blob (derived.calibrated_at is SSOT after session apply). */
+  calibration?: Record<string, unknown> | null
   // Config verification status from ESP32
   config_status?: 'pending' | 'applied' | 'failed' | null
   config_error?: string | null
@@ -416,10 +423,19 @@ export interface MockSensorConfig {
   // =========================================================================
   /** OneWire ROM address for DS18B20 sensors (16 hex chars) */
   onewire_address?: string
-  /** I2C address for I2C sensors (e.g., SHT31: 0x44=68 or 0x45=69) */
+  /** I2C address for I2C sensors (e.g., SHT31: 0x44=68 or 0x45=69) or ADS1115 (0x48-0x4B) */
   i2c_address?: number | null
   /** Interface type for sensor (I2C, ONEWIRE, ANALOG, DIGITAL, UART, VIRTUAL) */
   interface_type?: 'I2C' | 'ONEWIRE' | 'ANALOG' | 'DIGITAL' | 'UART' | 'VIRTUAL'
+  // =========================================================================
+  // ADS1115 External ADC Support
+  // =========================================================================
+  /** ADC acquisition source: 'internal' (default) or 'ads1115' (external I2C ADC) */
+  adc_source?: 'internal' | 'ads1115'
+  /** ADS1115 single-ended channel 0-3 (only for adc_source='ads1115') */
+  adc_channel?: number | null
+  /** ADS1115 PGA full-scale range in volts (only for adc_source='ads1115') */
+  pga_gain?: '6.144' | '4.096' | '2.048' | '1.024' | '0.512' | '0.256' | null
 }
 
 export interface MockActuatorConfig {
@@ -769,6 +785,8 @@ export interface SensorConfigCreate {
   adc_channel?: number | null
   /** ADS1115 PGA full-scale range in volts (only for adc_source='ads1115'; default '4.096') */
   pga_gain?: '6.144' | '4.096' | '2.048' | '1.024' | '0.512' | '0.256' | null
+  /** Sensor signal polarity: 'active_high' (PNP) or 'active_low' (NPN). Only for liquid_level. */
+  polarity?: 'active_high' | 'active_low' | null
   // =========================================================================
   // OPERATING MODE FIELDS (Phase 2B)
   // =========================================================================
@@ -798,6 +816,14 @@ export interface SensorConfigCreate {
   temp_sensor_config_id?: string | null
 }
 
+/** Custom alert threshold overrides for a sensor (Phase 4A.7 alert_config.custom_thresholds). */
+export interface CustomThresholds {
+  warning_min?: number | null
+  warning_max?: number | null
+  critical_min?: number | null
+  critical_max?: number | null
+}
+
 export interface SensorConfigResponse {
   id: string
   esp_id: string
@@ -813,6 +839,9 @@ export interface SensorConfigResponse {
   threshold_max: number | null
   warning_min: number | null
   warning_max: number | null
+  /** Operator-configured alert thresholds (alert_config.custom_thresholds), if set (AUT-1104).
+   *  Takes priority over threshold_min/max for scale/zone derivation. */
+  custom_thresholds?: CustomThresholds | null
   /** I2C address (0-127) - backend returns as int */
   i2c_address?: number | null
   /** ADC acquisition source: 'internal' (default) or 'ads1115' (external 16-bit I2C ADC) */
@@ -821,6 +850,8 @@ export interface SensorConfigResponse {
   adc_channel?: number | null
   /** ADS1115 PGA full-scale range in volts (only for adc_source='ads1115') */
   pga_gain?: string | null
+  /** Sensor signal polarity: 'active_high' (PNP) or 'active_low' (NPN). Only for liquid_level. */
+  polarity?: 'active_high' | 'active_low' | null
   metadata: Record<string, unknown> | null
   // Config status from ESP32 verification (Phase 2: write-after-verification)
   config_status?: 'pending' | 'applied' | 'failed' | null
@@ -1014,6 +1045,16 @@ export interface ActuatorConfigCreate {
   pwm_frequency?: number | null
   servo_min_pulse?: number | null
   servo_max_pulse?: number | null
+  /** AO-1 (AUT-990): Pump flow rate calibration in ml/s (top-level column, NOT metadata). NULL = uncalibrated. */
+  flow_rate_ml_s?: number | null
+  /** AUT-1355: Empiric µS/cm rise per ml per L (pump SSOT). NULL = unset. */
+  concentration?: number | null
+  /** AUT-1355: Recipe role part_a | part_b | ph_down | generic. NULL = unset. */
+  dose_role?: DoseRole | null
+  /** AUT-1410: Soft ref to stock_mix_recipes.id currently attached. Display only. */
+  stock_recipe_ref?: string | null
+  /** AUT-1410: ISO timestamp when stock was last confirmed newly prepared. Display only. */
+  stock_prepared_at?: string | null
   metadata?: Record<string, unknown> | null
   /** Subzone ID to assign this actuator to. Null/empty = remove from all subzones */
   subzone_id?: string | null
@@ -1024,6 +1065,9 @@ export interface ActuatorConfigCreate {
   /** Subzones this actuator is assigned to (T13-R2) */
   assigned_subzones?: string[] | null
 }
+
+/** AUT-1355: Structured recipe role on pump actuator_configs. */
+export type DoseRole = 'part_a' | 'part_b' | 'ph_down' | 'generic'
 
 export interface ActuatorConfigResponse {
   id: string
@@ -1040,6 +1084,16 @@ export interface ActuatorConfigResponse {
   pwm_frequency: number | null
   servo_min_pulse: number | null
   servo_max_pulse: number | null
+  /** AO-1 (AUT-990): Pump flow rate calibration in ml/s (top-level column, NOT metadata). NULL = uncalibrated. */
+  flow_rate_ml_s?: number | null
+  /** AUT-1355: Empiric µS/cm rise per ml per L (pump SSOT). NULL = unset. */
+  concentration?: number | null
+  /** AUT-1355: Recipe role part_a | part_b | ph_down | generic. NULL = unset. */
+  dose_role?: DoseRole | null
+  /** AUT-1410: Soft ref to stock_mix_recipes.id currently attached. Display only. */
+  stock_recipe_ref?: string | null
+  /** AUT-1410: ISO timestamp when stock was last confirmed newly prepared. Display only. */
+  stock_prepared_at?: string | null
   metadata: Record<string, unknown> | null
   subzone_id?: string | null
   // Config status from ESP32 verification (Phase 2: write-after-verification)
@@ -1247,6 +1301,8 @@ export interface ZoneUpdate {
 export interface SubzoneInfo {
   subzone_id: string
   subzone_name: string | null
+  /** AUT-1241: optional free-text spatial position (not display-sort). */
+  position_label?: string | null
   parent_zone_id: string
   assigned_gpios: number[]
   safe_mode_active: boolean
@@ -1262,6 +1318,8 @@ export interface SubzoneInfo {
 export interface SubzoneAssignRequest {
   subzone_id: string
   subzone_name?: string
+  /** AUT-1241: optional free-text spatial position. */
+  position_label?: string | null
   parent_zone_id?: string
   assigned_gpios: number[]
   safe_mode_active?: boolean
@@ -1305,6 +1363,66 @@ export interface SubzoneListResponse {
 }
 
 /**
+ * AUT-1155: Request body for n:m sensor→subzone junction assignment.
+ */
+export interface SensorSubzoneAssignRequest {
+  sensor_config_id: string
+}
+
+/**
+ * AUT-1155: Single sensor→subzone junction record.
+ */
+export interface SensorSubzoneAssignmentInfo {
+  id: string
+  sensor_config_id: string
+  subzone_config_id: string
+  assigned_at: string
+  assigned_by?: number | null
+}
+
+/**
+ * AUT-1155: List response for GET .../subzones/{id}/sensors.
+ */
+export interface SensorSubzoneAssignmentsResponse {
+  success: boolean
+  message: string
+  esp_id: string
+  subzone_id: string
+  assignments: SensorSubzoneAssignmentInfo[]
+  total_count: number
+}
+
+/**
+ * Request body for n:m actuator→subzone junction assignment (Verortung).
+ */
+export interface ActuatorSubzoneAssignRequest {
+  actuator_config_id: string
+}
+
+/**
+ * Single actuator→subzone junction record (Verortung).
+ */
+export interface ActuatorSubzoneAssignmentInfo {
+  id: string
+  actuator_config_id: string
+  subzone_config_id: string
+  assigned_at: string
+  assigned_by?: number | null
+}
+
+/**
+ * List response for GET .../subzones/{id}/actuators (n:m Verortung).
+ */
+export interface ActuatorSubzoneAssignmentsResponse {
+  success: boolean
+  message: string
+  esp_id: string
+  subzone_id: string
+  assignments: ActuatorSubzoneAssignmentInfo[]
+  total_count: number
+}
+
+/**
  * Subzone update from WebSocket (ESP ACK confirmation).
  */
 export interface SubzoneUpdate {
@@ -1341,7 +1459,7 @@ export interface SafeModeResponse {
 
 /**
  * Plant lifecycle phase (15 + archived states).
- * Mirrors the backend `plants.phase` enum.
+ * Mirrors the backend `plants.phase` enum (nursery and growth stages).
  */
 export type PlantPhase =
   | 'invitro_donor'
@@ -1352,6 +1470,7 @@ export type PlantPhase =
   | 'clone'
   | 'veg-frueh'
   | 'veg-spaet'
+  | 'uebergang-vorbluete'
   | 'bluete-stretch'
   | 'bluete-bulk'
   | 'bluete-ende'
@@ -1361,7 +1480,14 @@ export type PlantPhase =
   | 'harvested'
   | 'archived'
 
-/** Available phases as a runtime list (for select dropdowns / filter chips). */
+/**
+ * Light/growth axis values (for `phase` select dropdowns / filter chips).
+ *
+ * Includes 'uebergang-vorbluete' for photoperiod flip / pre-stretch
+ * (after 12/12 induction, before visible bluete-stretch).
+ * Use {@link NUTRIENT_PHASES} for `nutrient_phase` selects (same transition
+ * value, fertigation meaning 8-6-12).
+ */
 export const PLANT_PHASES: readonly PlantPhase[] = [
   'invitro_donor',
   'invitro_initiation',
@@ -1371,6 +1497,28 @@ export const PLANT_PHASES: readonly PlantPhase[] = [
   'clone',
   'veg-frueh',
   'veg-spaet',
+  'uebergang-vorbluete',
+  'bluete-stretch',
+  'bluete-bulk',
+  'bluete-ende',
+  'mutter',
+  'steckling_wurzelung',
+  'steckling_vor_versand',
+  'harvested',
+  'archived',
+] as const
+
+/** Nutrient/fertilizer axis values — includes 'uebergang-vorbluete' (8-6-12). */
+export const NUTRIENT_PHASES: readonly PlantPhase[] = [
+  'invitro_donor',
+  'invitro_initiation',
+  'invitro_multiplication',
+  'invitro_rooting',
+  'invitro_acclimatization',
+  'clone',
+  'veg-frueh',
+  'veg-spaet',
+  'uebergang-vorbluete',
   'bluete-stretch',
   'bluete-bulk',
   'bluete-ende',
@@ -1385,30 +1533,49 @@ export const PLANT_PHASES: readonly PlantPhase[] = [
  * Plant entity returned from `GET /v1/plants` and `GET /v1/plants/{id}`.
  *
  * Server endpoint: AUT-221 / AUT-222.
+ * AUT-1178: plant_id is the canonical server PK. genotype_label / batch_label
+ * are the server field names. Legacy id/genotype/batch kept optional for
+ * uncommitted components not yet in scope.
  */
 export interface Plant {
-  /** UUID */
-  id: string
+  /** UUID — server PK (AUT-1178) */
+  plant_id: string
+  /** UUID — deprecated alias for plant_id; kept for backward-compat */
+  id?: string
   /** QR-Code label (e.g. "P-2026-0001") */
   qr_code: string
   /** Optional external/legacy identifier */
   external_plant_id?: string | null
-  /** Genotype/strain name */
-  genotype: string
-  /** Optional charge/batch identifier */
+  /** Genotype/strain name — server field name (AUT-1178) */
+  genotype_label: string
+  /** Deprecated alias for genotype_label; kept for backward-compat */
+  genotype?: string
+  /** Optional cultivar or variety */
+  cultivar_or_variety?: string | null
+  /** Charge/batch identifier — server field name (AUT-1178) */
+  batch_label?: string | null
+  /** Deprecated alias for batch_label; kept for backward-compat */
   batch?: string | null
-  /** Lifecycle phase */
+  /** Lifecycle phase (light/growth axis) */
   phase: PlantPhase
+  /** Nutrient/fertilizer phase axis (AUT-1183) */
+  nutrient_phase?: PlantPhase | null
   /** ISO date string (YYYY-MM-DD) */
   planting_date?: string | null
-  /** Zone assignment */
-  zone_id?: string | null
   /** Subzone assignment */
   subzone_id?: string | null
+  /** Human-readable name of the assigned subzone */
+  subzone_name?: string | null
+  /** Canonical parent-zone assignment */
+  parent_zone_id?: string | null
+  /** Human-readable name of the parent zone */
+  zone_name?: string | null
   /** Soft-delete timestamp */
   deleted_at?: string | null
   /** ISO timestamp */
   created_at: string
+  /** ISO timestamp */
+  updated_at?: string
   /** Optional list returned by GET /v1/plants/{id} */
   lifecycle_events?: PlantLifecycleEvent[]
   /** Optional list returned by GET /v1/plants/{id} */
@@ -1417,21 +1584,345 @@ export interface Plant {
 
 /**
  * Lifecycle event (phase change, note, harvest, etc.) attached to a plant.
+ *
+ * Server fields (GET /v1/plants/{id}/lifecycle-events):
+ *   event_id, plant_id, event_type, event_timestamp, notes,
+ *   previous_phase, new_phase, created_at
+ *
+ * AUT-1181: event_id (not id), notes (not note), event_timestamp added.
  */
 export interface PlantLifecycleEvent {
-  /** UUID */
-  id: string
+  /** UUID — server field name is event_id */
+  event_id: string
   /** Owning plant UUID */
   plant_id: string
-  /** Event type, e.g. "phase_change", "note", "harvest" */
+  /** Event type, e.g. "phase_changed", "note_added", "harvest" */
   event_type: string
-  /** Free-text note from the operator */
-  note?: string | null
-  /** ISO timestamp */
+  /** Free-text note from the operator (server field: notes) */
+  notes?: string | null
+  /**
+   * Actual event timestamp (backfill-aware).
+   * Use this field for display and sorting — it may differ from created_at
+   * when the event was backdated.
+   */
+  event_timestamp: string
+  /** Database insert timestamp */
   created_at: string
-  /** Optional metadata (phase transitions: { from: PlantPhase, to: PlantPhase }) */
+  /** Phase before change (only for phase_changed events) */
+  previous_phase?: string | null
+  /** Phase after change (only for phase_changed events) */
+  new_phase?: string | null
+  /** Optional metadata blob */
   metadata?: Record<string, unknown>
+  /**
+   * Truth status of this event (AUT-1207): 'occurred' (default) | 'planned'
+   * | 'reverted' | 'test_data'. A planned/reverted/test_data event stays in
+   * the log but never sets the plant's current phase/nutrient_phase.
+   */
+  event_status: PlantEventStatus
+  /** Short justification for a non-default event_status. */
+  status_reason?: string | null
+  /** When this event was last changed via the status/correction endpoint (AUT-1207/1208). */
+  status_changed_at?: string | null
+  /** Marked action range start (UTC) — executed measures on a phase section. */
+  linked_sensor_window_start?: string | null
+  /** Marked action range end (UTC). */
+  linked_sensor_window_end?: string | null
+  /** Zone snapshot at write time (WHERE). */
+  zone_id?: string | null
+  /** Subzone snapshot at write time (WHERE). */
+  subzone_id?: string | null
 }
+
+/**
+ * Tank-level system-incident entry relevant to a plant (AUT-1211 follow-up).
+ *
+ * Server fields (GET /v1/plants/{id}/lifecycle-events, `tank_incidents[]`):
+ *   id, tank_id, occurred_at, recipe_label, volume_l, ph_measured_after,
+ *   ec_measured_after, qualifier.
+ *
+ * Sourced from the shared nutrient-balance ledger
+ * (`nutrient_solution_batches`, `entry_type == 'system_incident'`) via the
+ * plant's subzone -> tank assignment. Deliberately distinct from
+ * {@link PlantLifecycleEvent} — a tank-wide incident affects every plant fed
+ * by that tank and is never stored a second time in plant_lifecycle_events.
+ */
+export interface PlantTankIncidentEvent {
+  /** nutrient_solution_batches.id */
+  id: string
+  /** Tank this incident occurred on */
+  tank_id: string
+  /** When the incident occurred (UTC) */
+  occurred_at: string
+  /** Optional free-text recipe/profile name */
+  recipe_label?: string | null
+  /** Reservoir volume in liters for this entry */
+  volume_l: number
+  /** Measured pH after the incident, if any */
+  ph_measured_after?: number | null
+  /** Measured EC after the incident, if any */
+  ec_measured_after?: number | null
+  /** Confidence qualifier (precise/approximate/estimated) */
+  qualifier: string
+}
+
+// =============================================================================
+// Tank / Nutrient Ledger (AUT-1215 / AUT-1217)
+// Values mirrored from El Servador nutrient_solution_batch.py / tank.py
+// =============================================================================
+
+/** Tank operation modes — server `TANK_OPERATION_MODES`. */
+export const TANK_OPERATION_MODES = ['drain_to_waste', 'recirculating'] as const
+export type TankOperationMode = (typeof TANK_OPERATION_MODES)[number]
+
+/** Ledger entry types — server `NUTRIENT_BATCH_ENTRY_TYPES`. */
+export const NUTRIENT_BATCH_ENTRY_TYPES = [
+  'full_reset',
+  'top_up_dose',
+  'fresh_water_refill',
+  'withdrawal',
+  'remeasurement_only',
+  'system_incident',
+] as const
+export type NutrientBatchEntryType = (typeof NUTRIENT_BATCH_ENTRY_TYPES)[number]
+
+/** How volume_l was determined — server `NUTRIENT_BATCH_ACQUISITION_METHODS`. */
+export const NUTRIENT_BATCH_ACQUISITION_METHODS = [
+  'measured_flow',
+  'measured_level',
+  'computed_runtime_x_rate',
+  'manual_entry',
+] as const
+export type NutrientBatchAcquisitionMethod =
+  (typeof NUTRIENT_BATCH_ACQUISITION_METHODS)[number]
+
+/** Confidence qualifier — server `NUTRIENT_BATCH_QUALIFIERS`. */
+export const NUTRIENT_BATCH_QUALIFIERS = [
+  'precise',
+  'approximate',
+  'estimated',
+] as const
+export type NutrientBatchQualifier = (typeof NUTRIENT_BATCH_QUALIFIERS)[number]
+
+/** Create-payload for `POST /v1/tanks`. */
+export interface TankCreate {
+  zone_id: string
+  name: string
+  operation_mode: TankOperationMode
+  nominal_volume_l?: number | null
+  /** AUT-1381: Frischwasser-EC am Tank; omit = nicht konfiguriert */
+  fresh_water_ec_us_cm?: number | null
+  fresh_water_ph?: number | null
+}
+
+/** Partial update `PATCH /v1/tanks/{id}` (AUT-1381). */
+export interface TankUpdate {
+  name?: string
+  nominal_volume_l?: number | null
+  operation_mode?: TankOperationMode
+  fresh_water_ec_us_cm?: number | null
+  fresh_water_ph?: number | null
+}
+
+/** Response from `POST /v1/tanks`. */
+export interface Tank {
+  id: string
+  zone_id: string
+  name: string
+  nominal_volume_l?: number | null
+  fresh_water_ec_us_cm?: number | null
+  fresh_water_ph?: number | null
+  operation_mode: TankOperationMode
+  created_at: string
+  updated_at: string
+}
+
+/** `POST /v1/tanks/{id}/subzones` body. */
+export interface TankSubzoneAssignRequest {
+  subzone_config_id: string
+}
+
+/** Assignment record returned by assign endpoint. */
+export interface TankSubzoneAssignmentInfo {
+  id: string
+  tank_id: string
+  subzone_config_id: string
+  assigned_at: string
+  assigned_by?: number | null
+}
+
+/**
+ * Server measure keys resolved by `GET /v1/tanks/{id}/targets` (AUT-1225 Q4).
+ * Always exactly `target_ec` | `target_ph` — do not invent extras.
+ */
+export type TankTargetMeasure = 'target_ec' | 'target_ph'
+
+/** How the covering plan_segment was resolved for a measure. */
+export type TankTargetResolvedVia = 'zone' | 'subzone' | 'none'
+
+/**
+ * Resolved (or unresolved) Soll target for a single measure at evaluation
+ * time. `value`/`unit`/`segment_id`/`from_ts`/`to_ts` are `null` when there
+ * is no covering plan_segment — never fall back to `0`.
+ */
+export interface TankMeasureTarget {
+  measure: TankTargetMeasure
+  value: number | null
+  unit: string | null
+  segment_id: string | null
+  from_ts: string | null
+  to_ts: string | null
+  resolved_via: TankTargetResolvedVia
+}
+
+/** Response from `GET /v1/tanks/{id}/targets` (AUT-1225 Q4). */
+export interface TankTargetsResponse {
+  tank_id: string
+  zone_id: string
+  subzone_config_id?: string | null
+  at: string
+  domain: string
+  targets: TankMeasureTarget[]
+  /** ESP device_ids currently assigned to this tank (empty-state helper). */
+  assigned_device_ids: string[]
+}
+
+/**
+ * Running volume from Anker („20 Liter“) ± Flow-Delta (AUT-1377 A3).
+ * `nominal_volume_l` is capacity — never treat as Ist.
+ */
+export interface TankVolumeResponse {
+  tank_id: string
+  volume_l: number | null
+  source: string | null
+  anchor_liters: number | null
+  flow_delta_l: number | null
+  anchor_at: string | null
+  level_gpio: number | null
+  level_device_id: string | null
+  nominal_volume_l: number | null
+  /** e.g. drain_not_in_flow — DtW/outflow not in GPIO14 path */
+  limitations: string[]
+}
+
+/** Fertilizer-product component form (dose_ml_per_l XOR dose_g_per_l). */
+export interface NutrientBatchProductComponent {
+  kind: 'product'
+  name: string
+  dose_ml_per_l?: number
+  dose_g_per_l?: number
+  ec_contribution_ms_cm?: number
+}
+
+/** Salt-recipe component form. */
+export interface NutrientBatchSaltComponent {
+  kind: 'salt'
+  name: string
+  conc_g_per_l: number
+  elements?: Record<string, number>
+  ec_contribution_ms_cm?: number
+}
+
+export type NutrientBatchComponent =
+  | NutrientBatchProductComponent
+  | NutrientBatchSaltComponent
+
+/** Create-payload for `POST /v1/tanks/{id}/batches`. */
+export interface NutrientBatchCreate {
+  entry_type: NutrientBatchEntryType
+  volume_l: number
+  components?: NutrientBatchComponent[]
+  acquisition_method: NutrientBatchAcquisitionMethod
+  qualifier: NutrientBatchQualifier
+  occurred_at?: string | null
+  recipe_label?: string | null
+  ec_measured_after?: number | null
+  ec_was_measured?: boolean
+  ph_measured_after?: number | null
+  ph_was_measured?: boolean
+}
+
+/**
+ * Read-only salt calculator assist request (AUT-1343 / AUT-1344 / AUT-1355).
+ * Units: µS/cm for EC. Concentration preferably from pump SSOT (dose_role);
+ * request fields are optional runtime fallback only.
+ */
+export interface SaltCalculatorAssistRequest {
+  current_ec_us_cm: number
+  target_ec_us_cm: number
+  /** Shared fallback when pump A/B concentration unset. */
+  concentration?: number | null
+  concentration_a?: number | null
+  concentration_b?: number | null
+  volume_alt_l?: number | null
+  volume_zugabe_l?: number
+  ec_wasser_us_cm?: number
+  safety_factor?: number | null
+  max_delta_per_dose?: number | null
+  /** AUT-1404: Frischbatch — dose-up from Frischwasser-EC (explicit). */
+  fresh_batch?: boolean
+}
+
+/** AUT-1404: Assist direction outcome. */
+export type SaltCalculatorSuggestionKind =
+  | 'dose_up'
+  | 'dilute'
+  | 'within_tolerance'
+  | 'unavailable'
+
+/** Assistenz-Erwartung — keine Betriebswahrheit, keine Dosierung (AUT-1343). */
+export interface SaltCalculatorAssistResponse {
+  volume_alt_l: number
+  volume_alt_source: string
+  volume_zugabe_l: number
+  /** AUT-1385 / AUT-1397: manual | measured | none */
+  volume_zugabe_source?: string
+  /** AUT-1398: ledger occurred_at when source=measured */
+  volume_zugabe_occurred_at?: string | null
+  /** AUT-1398: human origin label (e.g. recipe_label / Nachfüllung) */
+  volume_zugabe_label?: string | null
+  volume_neu_l: number
+  ec_wasser_us_cm: number | null
+  /** request_override | tank_config | none */
+  ec_wasser_source?: string | null
+  ec_after_dilution_us_cm: number
+  dose_a_ml: number
+  dose_b_ml: number
+  expected_ec_us_cm: number
+  /** Legacy Spiegel (A). Prefer concentration_a / concentration_b. */
+  concentration: number
+  concentration_a?: number | null
+  concentration_b?: number | null
+  /** AUT-1404: dose_up | dilute | within_tolerance | unavailable */
+  suggestion_kind: SaltCalculatorSuggestionKind
+  /** AUT-1404 Fall 2: suggested Frischwasser liters */
+  fresh_water_suggest_l?: number | null
+  /** AUT-1404: Klartext for the operator */
+  operator_message: string
+  notes: string[]
+}
+
+/** Response from ledger create (may include transient warnings). */
+export interface NutrientBatch {
+  id: string
+  tank_id: string
+  entry_type: NutrientBatchEntryType
+  occurred_at: string
+  created_at: string
+  recipe_label?: string | null
+  volume_l: number
+  components: NutrientBatchComponent[]
+  ec_measured_after?: number | null
+  ec_was_measured: boolean
+  ph_measured_after?: number | null
+  ph_was_measured: boolean
+  acquisition_method: NutrientBatchAcquisitionMethod
+  qualifier: NutrientBatchQualifier
+  warnings?: string[]
+}
+
+/** AUT-1207: valid values for {@link PlantLifecycleEvent.event_status}. */
+export type PlantEventStatus = 'occurred' | 'planned' | 'reverted' | 'test_data'
 
 /**
  * Audit-log entry for a plant (who changed what, when).
@@ -1464,28 +1955,106 @@ export interface PlantMeasurement {
 
 /**
  * Create-payload for `POST /v1/plants`.
+ *
+ * AUT-1178: genotype_label is the canonical server field.
+ * Legacy genotype/batch kept optional for uncommitted components not in scope.
  */
 export interface PlantCreate {
-  genotype: string
+  /** Canonical server field name (AUT-1178) */
+  genotype_label?: string
+  /** Deprecated alias; kept for backward-compat */
+  genotype?: string
+  /** Canonical server field name (AUT-1178) */
+  batch_label?: string | null
+  /** Deprecated alias; kept for backward-compat */
   batch?: string | null
+  /** Cultivar or variety */
+  cultivar_or_variety?: string | null
+  /** Deprecated — server has no zone_id on Plant (AUT-1178) */
   zone_id?: string | null
   subzone_id?: string | null
   /** ISO date "YYYY-MM-DD" */
   planting_date?: string | null
   phase?: PlantPhase
   external_plant_id?: string | null
+  notes?: string | null
 }
 
 /**
  * Update-payload for `PATCH /v1/plants/{id}`.
+ *
+ * AUT-1182: explicit interface aligned to the server PlantUpdate schema.
+ * Not derived from PlantCreate. AUT-1266 adds subzone_id (server truth changed);
+ * zone_id remains intentionally absent (derived / read-only).
+ * Verified against El Servador/god_kaiser_server/src/schemas/plant.py PlantUpdate.
  */
-export type PlantUpdate = Partial<PlantCreate>
+export interface PlantUpdate {
+  genotype_label?: string | null
+  cultivar_or_variety?: string | null
+  external_plant_id?: string | null
+  /** Light/growth phase axis */
+  phase?: PlantPhase
+  /** Nutrient/fertilizer phase axis (AUT-1183) */
+  nutrient_phase?: PlantPhase | null
+  notes?: string | null
+  current_position_label?: string | null
+  visibility?: string | null
+  /** Ortseinheit FK (subzone_configs.id) — AUT-1266 */
+  subzone_id?: string | null
+}
 
 /**
  * Create-payload for `POST /v1/plants/{id}/lifecycle-event`.
+ *
+ * Note: the POST body field is `note` (singular) — the server stores it
+ * in the `notes` column.  The GET response uses `notes` (see PlantLifecycleEvent).
  */
 export interface PlantLifecycleEventCreate {
   event_type: string
   note?: string | null
+  /**
+   * New phase value — required when event_type is 'phase_changed' or
+   * 'nutrient_phase_changed'. Must be sent as a top-level field (not inside
+   * metadata). The server atomically updates plants.phase or
+   * plants.nutrient_phase depending on event_type (AUT-1180/AUT-1183).
+   */
+  new_phase?: PlantPhase | null
+  /**
+   * Optional backdated event timestamp (ISO 8601 UTC, must not be in the
+   * future). When omitted the server uses the current time.
+   *
+   * AUT-1181: Rückdatierbarkeit Frontend-Unterstützung.
+   */
+  event_timestamp?: string | null
   metadata?: Record<string, unknown>
+  /**
+   * Truth status at creation (AUT-1207). Defaults to 'occurred' server-side
+   * when omitted. Set to 'planned' to record a foreseen-but-not-yet-occurred
+   * event. 'reverted' is set via the status-update endpoint, not at creation.
+   */
+  event_status?: PlantEventStatus
+  linked_sensor_window_start?: string | null
+  linked_sensor_window_end?: string | null
+}
+
+/**
+ * Request payload for `PATCH .../lifecycle-event/{event_id}/status`
+ * (AUT-1207 status change + AUT-1208 field-level corrections).
+ *
+ * `reason` is required whenever event_status is 'reverted', and required
+ * whenever any correction field below is set (server-enforced, AUT-1208).
+ * Only send the fields that actually change — omitted fields are left
+ * untouched server-side.
+ */
+export interface PlantLifecycleEventStatusUpdate {
+  event_status?: PlantEventStatus
+  reason?: string | null
+  /** AUT-1208: corrected event timestamp (ISO 8601 UTC). */
+  event_timestamp?: string | null
+  /** AUT-1208: corrected note text. */
+  notes?: string | null
+  /** AUT-1208: corrected event type (e.g. to fix a wrong-axis event). */
+  event_type?: string | null
+  /** AUT-1208: corrected phase value (for phase_changed/nutrient_phase_changed). */
+  new_phase?: PlantPhase | null
 }

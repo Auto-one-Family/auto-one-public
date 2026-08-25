@@ -1,18 +1,16 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
-import { Activity, BookOpen, LineChart } from 'lucide-vue-next'
 import BaseModal from '@/shared/design/primitives/BaseModal.vue'
+import { BaseTabs, type TabItem } from '@/shared/design/primitives'
 import SensorConfigPanel from '@/components/esp/SensorConfigPanel.vue'
 import ActuatorConfigPanel from '@/components/esp/ActuatorConfigPanel.vue'
-import { useLogicStore } from '@/shared/stores/logic.store'
+import DeviceStatusPanel from '@/components/devices/DeviceStatusPanel.vue'
 import { useEspStore } from '@/stores/esp'
-import { sensorsApi } from '@/api/sensors'
-import { extractSensorConditions } from '@/types/logic'
-import type { SensorCondition } from '@/types/logic'
-import type { SensorReading, SensorStats, SensorDataResolution } from '@/types'
+import { getSensorDisplayName } from '@/utils/sensorDefaults'
+import { getActuatorLabel } from '@/utils/actuatorDefaults'
+import type { MockSensor } from '@/types'
 
 type WizardMode = 'sensor' | 'actuator'
-type WizardTab = 'settings' | 'rules' | 'history'
 
 const props = defineProps<{
   open: boolean
@@ -32,119 +30,92 @@ const emit = defineEmits<{
   (e: 'open-esp-settings', payload: { espId: string }): void
 }>()
 
-const logicStore = useLogicStore()
+const mode = computed<WizardMode>(() => props.actuatorType ? 'actuator' : 'sensor')
+/** AUT-1128 (S3): bumped on `saved` so DeviceStatusPanel re-pulls the persisted mirror. */
+const statusRefreshToken = ref(0)
+
+// AUT-911/912: Active sub-value for multi-value sensors (SHT31, BME280, ...).
+// Seeded from props, then mutated locally when the operator switches sub-value
+// inside SensorConfigPanel. Drives the modal title, the DeviceStatusPanel live
+// preview and the :key that re-mounts the panel so each sub-value reloads its
+// own config_id.
+const activeSensorType = ref(props.sensorType)
+const activeConfigId = ref(props.configId)
+const activeUnit = ref(props.unit)
+
+function seedActiveSubValue() {
+  activeSensorType.value = props.sensorType
+  activeConfigId.value = props.configId
+  activeUnit.value = props.unit
+  activeConfigTab.value = 'grundlagen'
+}
+
+watch(
+  () => [props.sensorType, props.configId, props.unit],
+  () => { if (props.open) seedActiveSubValue() },
+)
+
+function onSwitchSubValue(payload: { configId: string | undefined; sensorType: string; unit: string }) {
+  activeSensorType.value = payload.sensorType
+  activeConfigId.value = payload.configId
+  activeUnit.value = payload.unit || activeUnit.value
+  activeConfigTab.value = 'grundlagen'
+}
+
+// =============================================================================
+// AUT-1130 (Verify P10): Tab-Leiste selbst lebt jetzt hier (volle Modal-Breite,
+// vormals in der schmalen Config-Spalte gequetscht -> Zeilenumbruch/Truncation).
+// SensorConfigPanel/ActuatorConfigPanel bleiben Eigner der Tab-LISTE (per
+// defineExpose) — nur die Auswahl (`activeConfigTab`) und das Rendern der
+// Buttons wandern hierher, damit die Leiste ueber cwm-config-col UND
+// cwm-status-col spannen kann.
+// =============================================================================
+const activeConfigTab = ref('grundlagen')
+const configPanelRef = ref<{
+  tabs: TabItem[]
+  handleSave: () => Promise<void>
+  confirmAndDelete: () => Promise<void>
+  saving: boolean
+  deleting: boolean
+  loading: boolean
+} | null>(null)
+const currentTabs = computed<TabItem[]>(() => configPanelRef.value?.tabs ?? [])
+
+watch(currentTabs, (tabs) => {
+  if (tabs.length && !tabs.some(t => t.key === activeConfigTab.value)) {
+    activeConfigTab.value = tabs[0].key
+  }
+})
+
 const espStore = useEspStore()
 
-const mode = computed<WizardMode>(() => props.actuatorType ? 'actuator' : 'sensor')
-const activeTab = ref<WizardTab>('settings')
-
-const actuatorName = computed<string | null>(() => {
-  if (mode.value !== 'actuator') return null
+const titledSensor = computed<MockSensor | null>(() => {
+  if (mode.value !== 'sensor') return null
   const device = espStore.devices.find(d => espStore.getDeviceId(d) === props.espId)
-  const actuators = (device?.actuators as { gpio: number; name?: string | null }[]) || []
-  const act = actuators.find(a => a.gpio === props.gpio)
-  const name = typeof act?.name === 'string' ? act.name.trim() : ''
-  return name || null
+  const sensors = (device?.sensors as MockSensor[] | undefined) ?? []
+  if (activeConfigId.value) {
+    const hit = sensors.find(s => s.config_id === activeConfigId.value)
+    if (hit) return hit
+  }
+  return sensors.find(s =>
+    s.sensor_type === activeSensorType.value && s.gpio === props.gpio,
+  ) ?? null
 })
 
 const modalTitle = computed(() => {
-  if (mode.value === 'sensor') return `GPIO ${props.gpio} · ${props.sensorType ?? 'Sensor'}`
-  return actuatorName.value ?? `GPIO ${props.gpio} · ${props.actuatorType ?? 'Aktor'}`
+  if (mode.value === 'sensor') {
+    return getSensorDisplayName({
+      sensor_type: activeSensorType.value ?? titledSensor.value?.sensor_type ?? '',
+      name: titledSensor.value?.name,
+    }) || 'Sensor'
+  }
+  // AUT-1523: Name einmal = Input im Panel. Titel = Typ-Label, kein GPIO-Fallback.
+  return getActuatorLabel(props.actuatorType ?? 'relay')
 })
 
 watch(() => props.open, (open) => {
-  if (open) {
-    activeTab.value = 'settings'
-    if (mode.value === 'sensor') loadHistory()
-  } else {
-    historyReadings.value = []
-    historyStats.value = null
-    historyError.value = null
-  }
+  if (open) seedActiveSubValue()
 })
-
-// =============================================================================
-// Tab 2 — Logic Rules
-// =============================================================================
-
-const relevantRules = computed(() =>
-  logicStore.rules.filter(rule =>
-    extractSensorConditions(rule.conditions).some(
-      (c: SensorCondition) => c.esp_id === props.espId && c.gpio === props.gpio
-    )
-  )
-)
-
-// =============================================================================
-// Tab 3 — Sensor History
-// =============================================================================
-
-const RESOLUTIONS: { value: SensorDataResolution; label: string }[] = [
-  { value: 'raw', label: 'Raw' },
-  { value: '5m', label: '5m' },
-  { value: '1h', label: '1h' },
-  { value: '1d', label: '1d' },
-]
-
-const historyResolution = ref<SensorDataResolution>('1h')
-const historyReadings = ref<SensorReading[]>([])
-const historyStats = ref<SensorStats | null>(null)
-const historyLoading = ref(false)
-const historyError = ref<string | null>(null)
-
-async function loadHistory() {
-  if (mode.value !== 'sensor') return
-  historyLoading.value = true
-  historyError.value = null
-  try {
-    const [dataRes, statsRes] = await Promise.all([
-      sensorsApi.queryData({
-        esp_id: props.espId,
-        gpio: props.gpio,
-        sensor_type: props.sensorType,
-        resolution: historyResolution.value,
-        limit: 200,
-      }),
-      sensorsApi.getStats(props.espId, props.gpio, {
-        sensor_type: props.sensorType,
-      }),
-    ])
-    historyReadings.value = dataRes.readings
-    historyStats.value = statsRes.stats
-  } catch (e) {
-    historyError.value = e instanceof Error ? e.message : 'Fehler beim Laden'
-  } finally {
-    historyLoading.value = false
-  }
-}
-
-watch(historyResolution, () => {
-  if (props.open && mode.value === 'sensor') loadHistory()
-})
-
-// SVG Sparkline
-const SPARK_W = 360
-const SPARK_H = 64
-
-const sparklinePoints = computed<string>(() => {
-  const readings = historyReadings.value
-  if (readings.length < 2) return ''
-  const values = readings.map(r => r.processed_value ?? r.raw_value)
-  const minVal = Math.min(...values)
-  const maxVal = Math.max(...values)
-  const range = maxVal - minVal || 1
-  return readings.map((r, i) => {
-    const x = (i / (readings.length - 1)) * SPARK_W
-    const val = r.processed_value ?? r.raw_value
-    const y = SPARK_H - ((val - minVal) / range) * (SPARK_H - 4) - 2
-    return `${x.toFixed(1)},${y.toFixed(1)}`
-  }).join(' ')
-})
-
-function fmt(v: number | null | undefined): string {
-  if (v == null) return '—'
-  return v.toFixed(2)
-}
 
 function handleClose() {
   emit('update:open', false)
@@ -157,6 +128,7 @@ function handleDeleted() {
 }
 
 function handleSaved() {
+  statusRefreshToken.value++
   emit('saved')
   handleClose()
 }
@@ -166,423 +138,206 @@ function handleSaved() {
   <BaseModal
     :open="open"
     :title="modalTitle"
-    max-width="max-w-3xl"
+    max-width="cwm-modal-max"
     show-close
-    close-on-overlay
+    :close-on-overlay="false"
     close-on-escape
+    allow-background-interaction
     @update:open="emit('update:open', $event)"
     @close="handleClose"
   >
-    <!-- Actuator subtitle: ESP · GPIO (secondary context below name title) -->
-    <p v-if="mode === 'actuator' && actuatorName" class="cwm-subtitle">
-      {{ espId }} · GPIO {{ gpio }}
-    </p>
+    <!-- AUT-1523: Aktor-Titel = Typ-Label (Pumpe/…), Name nur noch im Panel-Input.
+         AUT-1130: ESP/GPIO-Subtitle bleibt entfernt. -->
 
-    <!-- Tab Bar -->
-    <div class="cwm-tabs">
-      <button
-        class="cwm-tab"
-        :class="{ 'cwm-tab--active': activeTab === 'settings' }"
-        @click="activeTab = 'settings'"
-      >
-        <Activity class="cwm-tab__icon" :size="14" />
-        Einstellungen
-      </button>
-      <button
-        class="cwm-tab"
-        :class="{ 'cwm-tab--active': activeTab === 'rules' }"
-        @click="activeTab = 'rules'"
-      >
-        <BookOpen class="cwm-tab__icon" :size="14" />
-        Regeln
-        <span v-if="relevantRules.length > 0" class="cwm-tab__badge">{{ relevantRules.length }}</span>
-      </button>
-      <button
-        v-if="mode === 'sensor'"
-        class="cwm-tab"
-        :class="{ 'cwm-tab--active': activeTab === 'history' }"
-        @click="activeTab = 'history'"
-      >
-        <LineChart class="cwm-tab__icon" :size="14" />
-        Verlauf
-      </button>
-    </div>
+    <!-- AUT-1127 (S2): Regeln-Tab entfernt (war reiner Platzhalter-Text ohne Link, ohne
+         Funktionsverlust). AUT-1128 (S3): Sensor-Messwert-Verlauf-Tab entfernt — Zielort
+         ist eine offene TM/Robin-Entscheidung (siehe AUT-1125 Luecken), bewusst NICHT
+         stillschweigend geloescht/umgezogen, bis die Entscheidung vorliegt. -->
 
-    <!-- Tab 1: Settings -->
-    <div v-show="activeTab === 'settings'" class="cwm-panel">
-      <SensorConfigPanel
-        v-if="mode === 'sensor' && espId && gpio !== undefined"
-        :esp-id="espId"
-        :gpio="gpio"
-        :sensor-type="sensorType ?? ''"
-        :unit="unit"
-        :config-id="configId"
-        :show-metadata="false"
-        @deleted="handleDeleted"
-        @saved="handleSaved"
-        @open-esp-settings="emit('open-esp-settings', $event)"
-      />
-      <ActuatorConfigPanel
-        v-else-if="mode === 'actuator' && espId && gpio !== undefined"
-        :esp-id="espId"
-        :gpio="gpio"
-        :actuator-type="actuatorType ?? 'relay'"
-        :show-metadata="false"
-        @deleted="handleDeleted"
-        @saved="handleSaved"
-        @open-esp-settings="emit('open-esp-settings', $event)"
-      />
-    </div>
+    <!-- AUT-1130 (Verify P10): Tab-Leiste in voller Modal-Breite — genau die Flaeche,
+         in der zuvor der doppelte ESP-ID-Subtitle stand. Tab-LISTE kommt weiterhin
+         vom jeweils aktiven Config-Panel (defineExpose), nur Auswahl+Rendering
+         sitzen hier, damit sie nicht in der schmalen Config-Spalte umbrechen. -->
+    <BaseTabs
+      v-if="currentTabs.length"
+      v-model="activeConfigTab"
+      :tabs="currentTabs"
+      class="cwm-tabs-row"
+    />
 
-    <!-- Tab 2: Logic Rules -->
-    <div v-show="activeTab === 'rules'" class="cwm-panel cwm-panel--rules">
-      <div v-if="relevantRules.length === 0" class="cwm-empty">
-        <p>Keine Automatisierungsregeln für {{ mode === 'actuator' ? 'diesen Aktor' : 'diesen Sensor' }} gefunden.</p>
-        <p class="cwm-empty-hint">Regeln können unter <strong>Regeln</strong> im Hauptmenü angelegt werden.</p>
+    <!-- AUT-1128 (S3): Zwei-Panel-Layout — Config-Felder links, read-only
+         Status-Panel rechts angedockt. Kein gemeinsamer Wrapper zwischen Sensor- und
+         Aktor-Panel; beide binden DeviceStatusPanel eigenstaendig ein. -->
+    <div class="cwm-layout">
+      <div class="cwm-config-col">
+        <SensorConfigPanel
+          v-if="mode === 'sensor' && espId && gpio !== undefined"
+          ref="configPanelRef"
+          :key="activeConfigId ?? activeSensorType ?? ''"
+          :esp-id="espId"
+          :gpio="gpio"
+          :sensor-type="activeSensorType ?? ''"
+          :unit="activeUnit"
+          :config-id="activeConfigId"
+          :show-metadata="false"
+          :hide-actions="true"
+          :active-tab="activeConfigTab"
+          @deleted="handleDeleted"
+          @saved="handleSaved"
+          @switch-sub-value="onSwitchSubValue"
+          @open-esp-settings="emit('open-esp-settings', $event)"
+        />
+        <ActuatorConfigPanel
+          v-else-if="mode === 'actuator' && espId && gpio !== undefined"
+          ref="configPanelRef"
+          :esp-id="espId"
+          :gpio="gpio"
+          :actuator-type="actuatorType ?? 'relay'"
+          :show-metadata="false"
+          :active-tab="activeConfigTab"
+          @deleted="handleDeleted"
+          @saved="handleSaved"
+          @open-esp-settings="emit('open-esp-settings', $event)"
+        />
       </div>
-      <ul v-else class="cwm-rule-list">
-        <li
-          v-for="rule in relevantRules"
-          :key="rule.id"
-          class="cwm-rule-item"
-          :class="{ 'cwm-rule-item--disabled': !rule.enabled }"
-        >
-          <div class="cwm-rule-item__header">
-            <span
-              class="cwm-rule-status"
-              :class="rule.enabled ? 'cwm-rule-status--enabled' : 'cwm-rule-status--disabled'"
-            />
-            <span class="cwm-rule-item__name">{{ rule.name }}</span>
-            <span v-if="rule.is_critical" class="cwm-rule-critical">kritisch</span>
-          </div>
-          <p v-if="rule.description" class="cwm-rule-item__desc">{{ rule.description }}</p>
-        </li>
-      </ul>
+      <div class="cwm-status-col">
+        <DeviceStatusPanel
+          v-if="espId && gpio !== undefined"
+          :esp-id="espId"
+          :gpio="gpio"
+          :mode="mode"
+          :actuator-type="actuatorType"
+          :sensor-type="activeSensorType"
+          :unit="activeUnit"
+          :refresh-token="statusRefreshToken"
+        />
+      </div>
     </div>
-
-    <!-- Tab 3: History (sensors only) -->
-    <div v-if="mode === 'sensor'" v-show="activeTab === 'history'" class="cwm-panel cwm-panel--history">
-      <!-- Resolution Selector -->
-      <div class="cwm-resolution">
+    <template v-if="mode === 'sensor'" #footer>
+      <div class="cwm-footer-actions">
         <button
-          v-for="r in RESOLUTIONS"
-          :key="r.value"
-          class="cwm-resolution__btn"
-          :class="{ 'cwm-resolution__btn--active': historyResolution === r.value }"
-          @click="historyResolution = r.value"
+          type="button"
+          class="cwm-footer-save"
+          :disabled="configPanelRef?.saving || configPanelRef?.loading"
+          aria-label="Sensor-Konfiguration speichern"
+          @click="configPanelRef?.handleSave()"
         >
-          {{ r.label }}
+          {{ configPanelRef?.saving ? 'Speichert...' : 'Speichern' }}
+        </button>
+        <button
+          type="button"
+          class="cwm-footer-delete"
+          :disabled="configPanelRef?.deleting || configPanelRef?.loading"
+          aria-label="Sensor entfernen"
+          @click="configPanelRef?.confirmAndDelete()"
+        >
+          Sensor entfernen
         </button>
       </div>
-
-      <!-- Loading / Error -->
-      <div v-if="historyLoading" class="cwm-history-loading">Lade Verlauf…</div>
-      <div v-else-if="historyError" class="cwm-history-error">{{ historyError }}</div>
-      <div v-else-if="historyReadings.length === 0" class="cwm-empty">Keine Daten vorhanden.</div>
-      <template v-else>
-        <!-- Sparkline -->
-        <div class="cwm-sparkline-wrap">
-          <svg
-            class="cwm-sparkline"
-            :viewBox="`0 0 ${SPARK_W} ${SPARK_H}`"
-            preserveAspectRatio="none"
-            aria-hidden="true"
-          >
-            <polyline
-              class="cwm-sparkline__line"
-              :points="sparklinePoints"
-              fill="none"
-            />
-          </svg>
-        </div>
-
-        <!-- Stats Row -->
-        <div v-if="historyStats" class="cwm-stats">
-          <div class="cwm-stat">
-            <span class="cwm-stat__label">Min</span>
-            <span class="cwm-stat__value">{{ fmt(historyStats.min_value) }} {{ unit }}</span>
-          </div>
-          <div class="cwm-stat">
-            <span class="cwm-stat__label">Avg</span>
-            <span class="cwm-stat__value">{{ fmt(historyStats.avg_value) }} {{ unit }}</span>
-          </div>
-          <div class="cwm-stat">
-            <span class="cwm-stat__label">Max</span>
-            <span class="cwm-stat__value">{{ fmt(historyStats.max_value) }} {{ unit }}</span>
-          </div>
-          <div class="cwm-stat">
-            <span class="cwm-stat__label">Messungen</span>
-            <span class="cwm-stat__value">{{ historyStats.reading_count }}</span>
-          </div>
-        </div>
-      </template>
-    </div>
+    </template>
   </BaseModal>
 </template>
 
 <style scoped>
-/* ── Actuator subtitle (GPIO context line below name title) ─────────────── */
-.cwm-subtitle {
-  padding: 0 1rem var(--space-2);
-  margin: 0;
-  font-size: var(--text-xs);
-  color: var(--color-text-secondary);
-  font-family: var(--font-mono);
+/* Layout bug fix: `:deep()` cannot reach this class. BaseModal teleports its
+   content to <body>, and Vue's scoped-CSS parent->child root inheritance does
+   not cross a <Teleport> boundary, so `:deep(.cwm-modal-max)` never matched —
+   the modal silently fell back to the unrelated global `.modal-content {
+   max-width: 28rem }` in styles/forms.css (a legacy rule for non-BaseModal
+   dialogs that happens to share the class name). Result: modal stuck at
+   448px, `.cwm-layout`'s `minmax(0, 1fr)` config column collapsed toward 0 to
+   satisfy the status column's 300px floor.
+   Fix: `:global()` emits plain unscoped CSS (bypasses the Teleport issue
+   entirely), and the compound selector's specificity (0,2,0) reliably beats
+   forms.css's `.modal-content` (0,1,0) regardless of stylesheet import
+   order. */
+:global(.modal-content.cwm-modal-max) {
+  max-width: min(94vw, 1520px);
 }
 
-/* ── Tab Bar ─────────────────────────────────────────────────────────────── */
-.cwm-tabs {
-  display: flex;
-  gap: 0;
-  padding: 0 1rem;
-  border-bottom: 1px solid var(--glass-border);
+/* ── AUT-1130 (Verify P10): volle-Breite Tab-Leiste ueber beiden Spalten (statt
+   in der schmalen cwm-config-col gequetscht) — sitzt als Geschwister VOR
+   .cwm-layout und erbt dadurch die volle modal-body-Breite. ────────────────── */
+.cwm-tabs-row {
+  margin-bottom: var(--space-3);
+}
+
+/* ── AUT-1128 (S3) / AUT-1130: Zwei-Panel-Layout als Grid statt Flex-Prozente —
+   `minmax(0, 1fr)` gibt der Config-Spalte immer den verbleibenden Platz. Die
+   Status-Spalte bleibt bewusst kompakt (kurze Label:Wert-Paare + Buttons
+   brauchen keine Breite proportional zum jetzt viel breiteren Modal) statt
+   linear mitzuwachsen. ────────────────────────────────────────────────────── */
+.cwm-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 380px);
+  gap: 1.25rem;
+  align-items: start;
+}
+
+.cwm-config-col {
+  min-width: 0;
+  overflow-y: auto;
+  max-height: calc(90vh - 190px);
+  padding: 1rem 1rem 1rem 0;
+}
+
+.cwm-status-col {
+  overflow-y: auto;
+  max-height: calc(90vh - 190px);
+  padding: 1rem;
   background: var(--glass-bg-l1);
-  flex-shrink: 0;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+  position: sticky;
+  top: 0;
 }
 
-.cwm-tab {
+@media (max-width: 900px) {
+  .cwm-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .cwm-config-col,
+  .cwm-status-col {
+    max-height: none;
+    position: static;
+  }
+}
+
+.cwm-footer-actions {
   display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  padding: 0.625rem 1rem;
-  font-size: var(--text-sm);
-  font-weight: 500;
-  color: var(--color-text-muted);
-  background: none;
-  border: none;
-  border-bottom: 2px solid transparent;
-  cursor: pointer;
-  transition: color var(--transition-fast), border-color var(--transition-fast), background var(--transition-fast);
-  white-space: nowrap;
-  position: relative;
-  min-height: 44px;
+  flex-direction: column;
+  gap: var(--space-2);
 }
 
-.cwm-tab:hover {
-  color: var(--color-text-secondary);
-  background: rgba(255, 255, 255, 0.03);
-}
-
-.cwm-tab--active {
-  color: var(--color-iridescent-1);
-  border-bottom-color: var(--color-iridescent-1);
-  background: rgba(96, 165, 250, 0.04);
-}
-
-.cwm-tab__icon {
-  flex-shrink: 0;
-  opacity: 0.7;
-}
-
-.cwm-tab--active .cwm-tab__icon {
-  opacity: 1;
-}
-
-.cwm-tab__badge {
-  display: inline-flex;
+.cwm-footer-save,
+.cwm-footer-delete {
+  display: flex;
   align-items: center;
   justify-content: center;
-  min-width: 18px;
-  height: 18px;
-  padding: 0 0.3rem;
-  font-size: 0.65rem;
-  font-weight: 700;
-  color: var(--color-bg-primary);
-  background: var(--color-iridescent-1);
-  border-radius: var(--radius-full);
-}
-
-/* ── Panel ─────────────────────────────────────────────────────────────── */
-.cwm-panel {
-  overflow-y: auto;
-  max-height: calc(90vh - 160px);
-}
-
-.cwm-panel--rules,
-.cwm-panel--history {
-  padding: 1rem;
-}
-
-/* ── Empty / Loading / Error ───────────────────────────────────────────── */
-.cwm-empty {
-  padding: 2rem;
-  text-align: center;
-  font-size: var(--text-sm);
-  color: var(--color-text-muted);
-}
-
-.cwm-empty p {
-  margin: 0;
-}
-
-.cwm-empty-hint {
-  margin-top: var(--space-2) !important;
-  font-size: var(--text-xs);
-  color: var(--color-text-muted);
-}
-
-.cwm-history-loading,
-.cwm-history-error {
-  padding: 1.5rem;
-  text-align: center;
-  font-size: var(--text-sm);
-  color: var(--color-text-muted);
-}
-
-.cwm-history-error {
-  color: var(--color-danger);
-}
-
-/* ── Rules List ──────────────────────────────────────────────────────── */
-.cwm-rule-list {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  list-style: none;
-  padding: 0;
-  margin: 0;
-}
-
-.cwm-rule-item {
-  padding: 0.625rem 0.75rem;
-  background: var(--glass-bg);
-  border: 1px solid var(--glass-border);
+  width: 100%;
+  padding: var(--space-3) var(--space-4);
   border-radius: var(--radius-sm);
-}
-
-.cwm-rule-item--disabled {
-  opacity: 0.5;
-}
-
-.cwm-rule-item__header {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.cwm-rule-item__name {
-  font-size: var(--text-sm);
+  font-size: var(--text-base);
   font-weight: 600;
-  color: var(--color-text-primary);
-  flex: 1;
-  min-width: 0;
-}
-
-.cwm-rule-item__desc {
-  margin: 0.25rem 0 0 1.125rem;
-  font-size: var(--text-xs);
-  color: var(--color-text-muted);
-  line-height: 1.4;
-}
-
-.cwm-rule-status {
-  width: 8px;
-  height: 8px;
-  border-radius: var(--radius-full);
-  flex-shrink: 0;
-}
-
-.cwm-rule-status--enabled {
-  background: var(--color-success);
-  box-shadow: 0 0 4px var(--color-success);
-}
-
-.cwm-rule-status--disabled {
-  background: var(--color-text-muted);
-}
-
-.cwm-rule-critical {
-  font-size: 0.6rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--color-danger);
-  padding: 0.1rem 0.375rem;
-  border: 1px solid var(--color-danger);
-  border-radius: var(--radius-sm);
-  flex-shrink: 0;
-}
-
-/* ── History ─────────────────────────────────────────────────────────── */
-.cwm-resolution {
-  display: flex;
-  gap: 0.25rem;
-  margin-bottom: 0.75rem;
-}
-
-.cwm-resolution__btn {
-  padding: 0.25rem 0.625rem;
-  font-size: var(--text-xs);
-  font-weight: 500;
-  color: var(--color-text-muted);
-  background: var(--glass-bg);
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-sm);
   cursor: pointer;
-  transition: all var(--transition-fast);
 }
 
-.cwm-resolution__btn:hover {
-  color: var(--color-text-primary);
+.cwm-footer-save {
+  background: var(--color-accent);
+  border: none;
+  color: white;
 }
 
-.cwm-resolution__btn--active {
-  color: var(--color-iridescent-1);
-  border-color: var(--color-iridescent-1);
-  background: rgba(167, 139, 250, 0.1);
+.cwm-footer-save:disabled,
+.cwm-footer-delete:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
-.cwm-sparkline-wrap {
-  width: 100%;
-  height: 96px;
-  background: var(--glass-bg-l1);
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-md);
-  overflow: hidden;
-  margin-bottom: 1rem;
-}
-
-.cwm-sparkline {
-  width: 100%;
-  height: 100%;
-}
-
-.cwm-sparkline__line {
-  stroke: var(--color-iridescent-2);
-  stroke-width: 1.5;
-  vector-effect: non-scaling-stroke;
-}
-
-/* ── Stats Row ──────────────────────────────────────────────────────── */
-.cwm-stats {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 0.625rem;
-}
-
-.cwm-stat {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  padding: 0.75rem 0.5rem;
-  background: var(--glass-bg-l1);
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-md);
-  gap: 0.25rem;
-}
-
-.cwm-stat__label {
-  font-size: 0.6rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--color-text-muted);
-}
-
-.cwm-stat__value {
-  font-size: var(--text-sm);
-  font-weight: 600;
-  color: var(--color-text-primary);
-  margin-top: 0.125rem;
+.cwm-footer-delete {
+  background: transparent;
+  border: 1px solid var(--color-danger);
+  color: var(--color-danger);
 }
 </style>

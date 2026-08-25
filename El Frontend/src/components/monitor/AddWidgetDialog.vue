@@ -11,16 +11,14 @@ import { useDashboardStore, type WidgetType } from '@/shared/stores/dashboard.st
 import { useZoneStore } from '@/shared/stores/zone.store'
 import { useEspStore } from '@/stores/esp'
 import { useSensorOptions } from '@/composables/useSensorOptions'
-import { useDashboardWidgets } from '@/composables/useDashboardWidgets'
+import { B2_CATALOG_WIDGET_TYPE_META, useDashboardWidgets, WIDGET_ICON_MAP } from '@/composables/useDashboardWidgets'
 import { useToast } from '@/composables/useToast'
 import BaseModal from '@/shared/design/primitives/BaseModal.vue'
 import {
   getZoneTileRenderableWidgets,
   ZONE_TILE_MAX_WIDGETS,
 } from '@/utils/zoneTileWidgets'
-import {
-  BarChart3, Gauge, Activity, Zap, Bell, Cpu, Info,
-} from 'lucide-vue-next'
+import { BarChart3, Info } from 'lucide-vue-next'
 
 interface Props {
   open: boolean
@@ -42,22 +40,14 @@ const dashStore = useDashboardStore()
 const zoneStore = useZoneStore()
 const espStore = useEspStore()
 const toast = useToast()
-const { WIDGET_TYPE_META, WIDGET_DEFAULT_CONFIGS } = useDashboardWidgets({
+const { WIDGET_DEFAULT_CONFIGS } = useDashboardWidgets({
   showConfigButton: false,
   showWidgetHeader: false,
 })
+const WIDGET_TYPE_META = B2_CATALOG_WIDGET_TYPE_META
 
-const ICON_MAP: Record<string, Component> = {
-  BarChart3,
-  Gauge,
-  Activity,
-  Zap,
-  Bell,
-  Cpu,
-}
-
-/** Widget types that appear in L1 zone tiles */
-const TILE_ALLOWED_WIDGET_TYPES = new Set(['gauge', 'sensor-card'])
+/** AUT-1528: tile picker uses the same B2 list; AppShell keeps tile-context=false */
+const TILE_ALLOWED_WIDGET_TYPES = new Set(B2_CATALOG_WIDGET_TYPE_META.map((m) => m.type))
 
 /**
  * Widget types that require additional configuration after placement
@@ -101,7 +91,7 @@ const availableZones = computed(() => {
 // Check if selected widget type needs a sensor
 const needsSensor = computed(() => {
   const sensorTypes = new Set([
-    'line-chart', 'gauge', 'sensor-card', 'historical', 'multi-sensor',
+    'sensor-tile', 'gauge', 'historical', 'multi-sensor', 'statistics',
   ])
   return sensorTypes.has(selectedWidgetType.value)
 })
@@ -170,9 +160,9 @@ watch(selectedZoneId, () => {
 // ── Icon resolver ────────────────────────────────────────────────────────
 
 function getWidgetIcon(meta: typeof WIDGET_TYPE_META[number]): Component {
-  // Map widget icon component names to actual components
-  const iconName = (meta.icon as any)?.name || ''
-  return ICON_MAP[iconName] || BarChart3
+  // AUT-901: resolve via shared WIDGET_ICON_MAP using the serializable iconName
+  // (replaces the fragile meta.icon.name reverse-lookup that broke for 5 types).
+  return WIDGET_ICON_MAP[meta.iconName] || BarChart3
 }
 
 // ── Submit ────────────────────────────────────────────────────────────────
@@ -206,7 +196,8 @@ function handleAdd() {
 
   if (needsSensor.value && selectedSensorId.value) {
     if (widgetType === 'multi-sensor') {
-      // multi-sensor widget reads from config.dataSources (comma-separated sensor IDs)
+      // multi-sensor widget reads from config.dataSources (comma-separated sensor IDs);
+      // further measurement points are added via the widget's chip picker.
       widgetConfig.dataSources = selectedSensorId.value
     } else {
       widgetConfig.sensorId = selectedSensorId.value

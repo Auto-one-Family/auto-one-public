@@ -15,14 +15,18 @@
  */
 import { onMounted, onUnmounted, onActivated, onDeactivated, computed, nextTick, watch, toRef, ref, getCurrentInstance } from 'vue'
 import { RouterLink } from 'vue-router'
-import { Pencil, Settings, Trash2 } from 'lucide-vue-next'
+import { Pencil, Settings } from 'lucide-vue-next'
 import { useDashboardStore, type DashboardWidget } from '@/shared/stores/dashboard.store'
 import { useAuthStore } from '@/shared/stores/auth.store'
 import { useUiStore } from '@/shared/stores/ui.store'
+import { useEspStore } from '@/stores/esp'
 import { useDashboardWidgets } from '@/composables/useDashboardWidgets'
 import WidgetConfigPanel from '@/components/dashboard-widgets/WidgetConfigPanel.vue'
 import { createLogger } from '@/utils/logger'
 import { getZoneTileRenderableWidgets } from '@/utils/zoneTileWidgets'
+import { parseSensorId } from '@/composables/useSensorId'
+import { getMultiValueDeviceConfigBySensorType } from '@/utils/sensorDefaults'
+import type { MockSensor } from '@/types'
 
 const logger = createLogger('InlineDashboardPanel')
 
@@ -44,11 +48,12 @@ const componentUid = getCurrentInstance()?.uid ?? Math.floor(Math.random() * 1_0
 const dashStore = useDashboardStore()
 const authStore = useAuthStore()
 const uiStore = useUiStore()
+const espStore = useEspStore()
 
 const zoneIdRef = toRef(props, 'zoneId')
 const compactTileGaugeSemantics = toRef(props, 'compact')
 
-const { createWidgetElement, mountWidgetToElement, cleanupAllWidgets, widgetComponentMap } = useDashboardWidgets({
+const { createWidgetElement, mountWidgetToElement, unmountWidgetFromElement, cleanupAllWidgets, widgetComponentMap } = useDashboardWidgets({
   showConfigButton: false,
   showWidgetHeader: false,
   readOnly: true,
@@ -63,6 +68,8 @@ const ROW_HEIGHT_SIDE = 120
 const isSidePanel = computed(() => props.mode === 'side-panel')
 const isManageMode = computed(() => props.mode === 'manage' && authStore.isAuthenticated)
 const ROW_HEIGHT_COMPACT = 70
+/** Uniform cell height for the compact zone-tile flex row (gauge + small label). */
+const COMPACT_CELL_HEIGHT = 112
 const rowHeightPx = computed(() => {
   if (props.compact) return `${ROW_HEIGHT_COMPACT}px`
   if (isSidePanel.value) return `${ROW_HEIGHT_SIDE}px`
@@ -98,99 +105,76 @@ function closeConfig(): void {
   configWidget.value = null
 }
 
-type WidgetDataDensity = 'none' | 'low' | 'medium' | 'high'
-
-function splitConfigIds(value: unknown): string[] {
-  if (typeof value !== 'string') return []
-  return value.split(',').map(part => part.trim()).filter(Boolean)
-}
-
 /**
- * Compact mode row-span should reflect how much content a widget can actually render.
- * This avoids oversized empty cards while still giving dense charts enough space.
+ * Compact zone-tile: number of gauges a widget renders. Multi-value gauges
+ * (SHT31 → Temperatur + Luftfeuchte) render one gauge per existing sub-value,
+ * so the flex cell is weighted to give every gauge the same width — and size.
  */
-function getWidgetDataDensity(w: DashboardWidget): WidgetDataDensity {
+function getCompactGaugeCount(w: DashboardWidget): number {
+  if (w.type !== 'gauge') return 1
   const cfg = (w.config ?? {}) as Record<string, unknown>
+  if (cfg['valueSource'] === 'zone_avg') return 1
 
-  if (w.type === 'line-chart' || w.type === 'historical' || w.type === 'statistics') {
-    return typeof cfg['sensorId'] === 'string' && cfg['sensorId'].trim() !== '' ? 'medium' : 'none'
-  }
+  const sensorId = typeof cfg['sensorId'] === 'string' ? cfg['sensorId'] : ''
+  const { espId, gpio, sensorType } = parseSensorId(sensorId)
+  if (!sensorType) return 1
 
-  if (w.type === 'fertigation-pair') {
-    const hasInflow = typeof cfg['inflowSensorId'] === 'string' && cfg['inflowSensorId'].trim() !== ''
-    const hasRunoff = typeof cfg['runoffSensorId'] === 'string' && cfg['runoffSensorId'].trim() !== ''
-    if (!hasInflow && !hasRunoff) return 'none'
-    return hasInflow && hasRunoff ? 'high' : 'low'
-  }
+  const mvDevice = getMultiValueDeviceConfigBySensorType(sensorType)
+  if (!mvDevice) return 1
 
-  if (w.type === 'multi-sensor') {
-    const sensors = splitConfigIds(cfg['dataSources'])
-    const actuators = splitConfigIds(cfg['actuatorIds'])
-    const signalCount = sensors.length + actuators.length
-    if (signalCount === 0) return 'none'
-    if (signalCount <= 2) return 'low'
-    if (signalCount <= 4) return 'medium'
-    return 'high'
-  }
+  const device = espStore.devices.find(d => espStore.getDeviceId(d) === espId)
+  if (!device) return mvDevice.values.length
 
-  return 'low'
+  const sensors = (device.sensors as MockSensor[]) || []
+  const count = mvDevice.values.filter(v =>
+    sensors.some(s => s.gpio === gpio && s.sensor_type === v.sensorType)
+  ).length
+  return Math.max(1, count)
 }
 
 function handleConfigUpdate(newConfig: Record<string, any>): void {
   if (!configWidget.value) return
-  dashStore.updateWidgetConfig(props.layoutId, configWidget.value.id, newConfig)
+  const widget = configWidget.value
+  dashStore.updateWidgetConfig(props.layoutId, widget.id, newConfig)
+
+  // Re-mount so the already-rendered widget instance picks up the new config
+  // immediately — mirrors CustomDashboardView.handleConfigUpdate (Editor path).
+  // Without this, config changes only take effect after the next mountWidgets()
+  // call (tab switch via onActivated, or reload).
+  unmountWidgetFromElement(widget.id)
+  mountWidgetToElement(widget.id, `vm-${getContainerId(widget.id)}`, widget.type, newConfig)
 }
 
-async function confirmRemove(w: DashboardWidget): Promise<void> {
+async function handleConfigPanelRemove(): Promise<void> {
+  const w = configWidget.value
+  if (!w) return
   const confirmed = await uiStore.confirm({
     title: 'Widget entfernen',
     message: 'Dieses Widget wird aus dem Dashboard entfernt.',
     confirmText: 'Entfernen',
     variant: 'danger',
   })
-  if (confirmed) {
-    dashStore.removeWidget(props.layoutId, w.id)
-  }
+  if (!confirmed) return
+  closeConfig()
+  dashStore.removeWidget(props.layoutId, w.id)
 }
 
 // ── Widget Style & Mounting ──
 
 /**
  * Calculate grid cell style from widget position.
+ * Compact mode: horizontal flex row (zone-tile gauges side by side).
  * Side-panel mode: single column, widgets stacked vertically (ignore x/w).
  * View / manage mode: full 12-column grid with original positions.
  */
-function compactRowSpan(w: DashboardWidget): number {
-  if (w.type === 'gauge' || w.type === 'sensor-card') return 1
-  if (w.type === 'actuator-card') return 1
-
-  if (
-    w.type === 'line-chart' ||
-    w.type === 'historical' ||
-    w.type === 'statistics' ||
-    w.type === 'fertigation-pair' ||
-    w.type === 'multi-sensor'
-  ) {
-    const density = getWidgetDataDensity(w)
-    if (density === 'none') return 1
-
-    const isSingleWidgetPanel = widgets.value.length === 1
-    const baseSpan = (() => {
-      if (density === 'low') return 2
-      if (density === 'high') return 3
-      return 2
-    })()
-
-    return isSingleWidgetPanel ? Math.min(baseSpan + 1, 4) : baseSpan
-  }
-  return 1
-}
-
 function widgetStyle(w: DashboardWidget): Record<string, string> {
   if (props.compact) {
+    // Horizontal flex row: cell width ∝ gauge count → uniform gauge size.
+    const weight = getCompactGaugeCount(w)
     return {
-      'grid-column': '1 / -1',
-      'grid-row': `span ${compactRowSpan(w)}`,
+      flex: `${weight} 1 0`,
+      'min-width': `${weight * 76}px`,
+      height: `${COMPACT_CELL_HEIGHT}px`,
     }
   }
 
@@ -295,24 +279,19 @@ onUnmounted(() => {
         @mouseenter="hoveredWidgetId = w.id"
         @mouseleave="hoveredWidgetId = null"
       >
-        <!-- Manage toolbar: hover on desktop, always visible on touch (D4) -->
+        <!-- Manage toolbar: nur Settings — Entfernen im Editor; kein Overlap mit Kachel-Inhalt -->
         <div
           v-if="isManageMode"
           :class="['widget-toolbar', { 'widget-toolbar--visible': hoveredWidgetId === w.id }]"
         >
           <button
+            type="button"
             class="widget-toolbar__btn"
             title="Konfigurieren"
+            aria-label="Widget konfigurieren"
             @click.stop="openConfig(w)"
           >
             <Settings :size="14" />
-          </button>
-          <button
-            class="widget-toolbar__btn widget-toolbar__btn--danger"
-            title="Entfernen"
-            @click.stop="confirmRemove(w)"
-          >
-            <Trash2 :size="14" />
           </button>
         </div>
 
@@ -333,6 +312,7 @@ onUnmounted(() => {
       :zone-id="zoneId"
       @close="closeConfig"
       @update:config="handleConfigUpdate"
+      @remove="handleConfigPanelRemove"
     />
   </div>
 </template>
@@ -438,8 +418,13 @@ onUnmounted(() => {
   background: transparent;
 }
 
+/* Compact zone-tile: gauges sit side by side (equal size via cell weighting),
+   wrapping to a new row when the tile gets too narrow. */
 .inline-dashboard--compact .inline-dashboard__grid {
-  grid-template-columns: 1fr;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  justify-content: center;
   padding: 0;
   gap: var(--space-2);
 }
@@ -450,15 +435,22 @@ onUnmounted(() => {
 
 /* ── Manage Mode: Widget Hover Toolbar (D4) ── */
 
+/* Manage: Platz für Toolbar reservieren — kein Overlap mit Mode-/Chart-Chrome */
+.inline-dashboard--manage .inline-dashboard__cell {
+  padding-top: 36px;
+}
+
 .widget-toolbar {
   position: absolute;
   top: var(--space-1, 4px);
   right: var(--space-1, 4px);
   z-index: var(--z-dropdown);
   display: flex;
-  gap: 8px;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
   padding: 2px;
-  background: rgba(30, 30, 45, 0.75);
+  background: var(--color-bg-tertiary);
   -webkit-backdrop-filter: blur(8px);
   backdrop-filter: blur(8px);
   border-radius: var(--radius-sm, 6px);

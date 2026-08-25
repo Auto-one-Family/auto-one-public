@@ -2,8 +2,10 @@
 /**
  * Monitor L1 — Zoneinsight (read-only): VPD aus Zonen-Ø T+RH, 24h-Temperaturspanne (Repräsentativsensor).
  * Kein zweites Klima-Tacho; ergänzt die Ø-KPI-Zeile um fachliche Kennzahlen.
+ *
+ * 24h-Stats: nur bei Lead-Sensor-Wechsel oder TTL-Refresh (nicht bei jedem WS-Sensor-Tick).
  */
-import { computed, ref, watch, onUnmounted } from 'vue'
+import { computed, ref, watch, onMounted, onUnmounted } from 'vue'
 import { useEspStore } from '@/stores/esp'
 import { sensorsApi } from '@/api/sensors'
 import { computeZoneVpdKpaFromKpiSensorTypes, isValidSensorValue } from '@/utils/sensorDefaults'
@@ -20,6 +22,9 @@ const props = defineProps<Props>()
 
 const espStore = useEspStore()
 
+/** 24h-Min/Max aendert sich langsam — kein Per-Sensor-Tick-Fetch (verhindert Layout-Spruenge). */
+const TEMP_SPAN_REFRESH_MS = 5 * 60 * 1000
+
 const vpdKpa = computed(() => computeZoneVpdKpaFromKpiSensorTypes(props.zone.aggregation.sensorTypes))
 
 const leadTemp = computed(() =>
@@ -32,49 +37,92 @@ const tempMin = ref<number | null>(null)
 const tempMax = ref<number | null>(null)
 
 let statsRequestSeq = 0
+let refreshTimer: ReturnType<typeof setInterval> | null = null
 
-watch(
-  () => [props.zone.zoneId, leadTemp.value?.espId, leadTemp.value?.gpio, leadTemp.value?.sensorType] as const,
-  async () => {
-    const lead = leadTemp.value
-    if (!lead) {
-      tempMin.value = null
-      tempMax.value = null
-      spanError.value = null
-      spanLoading.value = false
-      return
-    }
+function hasCachedSpan(): boolean {
+  return tempMin.value != null && tempMax.value != null
+}
 
-    const mySeq = ++statsRequestSeq
-    spanLoading.value = true
+async function fetchTempSpan(options: { showLoading: boolean }): Promise<void> {
+  const lead = leadTemp.value
+  if (!lead) {
+    tempMin.value = null
+    tempMax.value = null
     spanError.value = null
+    spanLoading.value = false
+    return
+  }
 
-    try {
-      const now = new Date()
-      const startTime = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString()
-      const endTime = now.toISOString()
-      const response = await sensorsApi.getStats(lead.espId, lead.gpio, {
-        start_time: startTime,
-        end_time: endTime,
-        sensor_type: lead.sensorType,
-      })
-      if (mySeq !== statsRequestSeq) return
-      tempMin.value = response.stats.min_value
-      tempMax.value = response.stats.max_value
-    } catch {
-      if (mySeq !== statsRequestSeq) return
+  const mySeq = ++statsRequestSeq
+  const keepPreviousOnError = hasCachedSpan()
+  if (options.showLoading && !keepPreviousOnError) {
+    spanLoading.value = true
+  }
+  if (!keepPreviousOnError) {
+    spanError.value = null
+  }
+
+  try {
+    const now = new Date()
+    const startTime = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString()
+    const endTime = now.toISOString()
+    const response = await sensorsApi.getStats(lead.espId, lead.gpio, {
+      start_time: startTime,
+      end_time: endTime,
+      sensor_type: lead.sensorType,
+    })
+    if (mySeq !== statsRequestSeq) return
+    tempMin.value = response.stats.min_value
+    tempMax.value = response.stats.max_value
+    spanError.value = null
+  } catch {
+    if (mySeq !== statsRequestSeq) return
+    // Hintergrund-Refresh: bestehende Werte behalten (kein Flicker)
+    if (!keepPreviousOnError) {
       spanError.value = '24h-Spanne nicht verfügbar'
       tempMin.value = null
       tempMax.value = null
-    } finally {
-      if (mySeq === statsRequestSeq) spanLoading.value = false
     }
+  } finally {
+    if (mySeq === statsRequestSeq) spanLoading.value = false
+  }
+}
+
+/**
+ * Wichtig: einzelne Getter als Source-Array — NICHT `() => [a, b, c]`.
+ * Ein neues Array pro Getter-Lauf gilt bei Vue als Change (Object.is),
+ * obwohl die Primitiven gleich bleiben → Fetch bei jedem WS-Sensor-Tick.
+ */
+watch(
+  [
+    () => props.zone.zoneId,
+    () => leadTemp.value?.espId,
+    () => leadTemp.value?.gpio,
+    () => leadTemp.value?.sensorType,
+  ],
+  (_next, prev) => {
+    // Lead-Identitaet gewechselt → alte Min/Max verwerfen
+    if (prev != null) {
+      tempMin.value = null
+      tempMax.value = null
+    }
+    void fetchTempSpan({ showLoading: true })
   },
   { immediate: true },
 )
 
+onMounted(() => {
+  refreshTimer = setInterval(() => {
+    void fetchTempSpan({ showLoading: false })
+  }, TEMP_SPAN_REFRESH_MS)
+})
+
 onUnmounted(() => {
   statsRequestSeq++
+  if (refreshTimer != null) {
+    clearInterval(refreshTimer)
+    refreshTimer = null
+  }
 })
 
 // AUT-613: unified label schema <Name> (<Zeitraum>) for both ZONEINSIGHT rows
@@ -90,8 +138,13 @@ const vpdLine = computed(() => {
 // AUT-605: useGrouping:false prevents thousands separator; per-value validation skips outliers
 // gracefully (e.g. 26895 °C from a bad reading is excluded while valid min is still shown).
 const spanLine = computed(() => {
-  if (spanLoading.value) return { primary: '…', hint: 'Temperatur 24h' }
-  if (spanError.value) return { primary: '—', hint: 'Temperatur 24h' }
+  // Nur initial ohne Cache „…“ — sonst bleiben sichtbare Werte stabil waehrend Refresh
+  if (spanLoading.value && !hasCachedSpan()) {
+    return { primary: '…', hint: 'Temperatur 24h' }
+  }
+  if (spanError.value && !hasCachedSpan()) {
+    return { primary: '—', hint: 'Temperatur 24h' }
+  }
   const lo = tempMin.value
   const hi = tempMax.value
   if (lo == null || hi == null) return { primary: '—', hint: 'Temperatur 24h' }
@@ -113,6 +166,8 @@ const spanLine = computed(() => {
     hint: 'Temperatur 24h',
   }
 })
+
+const showSpanSpinner = computed(() => spanLoading.value && !hasCachedSpan())
 
 // AUT-624 Fix B: VPD color indicator using established agronomic thresholds
 const VPD_OPTIMAL_MAX = 1.2
@@ -153,7 +208,7 @@ const vpdDotClass = computed(() => {
         <span class="zone-tile-insight__hint">{{ spanLine.hint }}</span>
         <span class="zone-tile-insight__row-value">
           <Loader2
-            v-if="spanLoading"
+            v-if="showSpanSpinner"
             class="zone-tile-insight__spinner"
             aria-hidden="true"
           />
@@ -208,12 +263,15 @@ const vpdDotClass = computed(() => {
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
+  flex-shrink: 0;
+  min-height: 1.25em;
 }
 
 .zone-tile-insight__value-with-dot {
   display: inline-flex;
   align-items: baseline;
   gap: var(--space-1);
+  flex-shrink: 0;
 }
 
 .zone-tile-insight__value {
@@ -222,6 +280,7 @@ const vpdDotClass = computed(() => {
   font-weight: 600;
   color: var(--color-text-primary);
   white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 .zone-tile-insight__spinner {

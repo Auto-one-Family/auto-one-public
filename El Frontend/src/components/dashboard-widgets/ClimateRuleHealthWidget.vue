@@ -17,7 +17,7 @@
 import { computed } from 'vue'
 import { AlertTriangle, Clock, Wifi, WifiOff, ThermometerSun } from 'lucide-vue-next'
 import { useRuleHealthStore, type RuleHealthPayload } from '@/shared/stores/ruleHealth.store'
-import { formatRelativeTime } from '@/utils/formatters'
+import { formatNumber as formatNumberDe, formatRelativeTime } from '@/utils/formatters'
 
 // =============================================================================
 // Props
@@ -99,13 +99,13 @@ const degradedSince = computed<string | null>(
 
 function formatNumber(value: number | null | undefined, decimals = 1): string {
   if (value == null || Number.isNaN(value)) return '–'
-  return value.toFixed(decimals)
+  return formatNumberDe(value, decimals)
 }
 
 function formatDeviation(value: number | null | undefined): string {
   if (value == null || Number.isNaN(value)) return '–'
   const sign = value > 0 ? '+' : ''
-  return `${sign}${value.toFixed(1)}`
+  return `${sign}${formatNumberDe(value, 1)}`
 }
 </script>
 

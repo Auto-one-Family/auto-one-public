@@ -15,7 +15,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import {
   Search, Filter, X, Columns,
-  Package, Upload, ClipboardList, Sprout, Plus, Printer,
+  Package, Upload, ClipboardList,
 } from 'lucide-vue-next'
 import { useEspStore } from '@/stores/esp'
 import { useInventoryStore, INVENTORY_COLUMNS } from '@/shared/stores/inventory.store'
@@ -24,13 +24,7 @@ import { useZoneStore } from '@/shared/stores/zone.store'
 import { usePlantsStore } from '@/shared/stores/plants.store'
 import InventoryTable from '@/components/inventory/InventoryTable.vue'
 import DeviceDetailPanel from '@/components/inventory/DeviceDetailPanel.vue'
-import PlantDetailPanel from '@/components/plants/PlantDetailPanel.vue'
-import PlantCreateModal from '@/components/plants/PlantCreateModal.vue'
-import { PLANT_PHASES, type Plant } from '@/types'
-import { PLANT_PHASE_LABELS } from '@/components/plants/plantLabels'
-import { plantsApi } from '@/api/plants'
 import SlideOver from '@/shared/design/primitives/SlideOver.vue'
-import EmergencyStopButton from '@/components/safety/EmergencyStopButton.vue'
 import { useToast } from '@/composables/useToast'
 import { multispeqApi } from '@/api/multispeq'
 import type {
@@ -49,26 +43,24 @@ const toast = useToast()
 // =============================================================================
 // Tab Navigation
 // =============================================================================
-type TabKey = 'inventory' | 'plants' | 'audits'
+type TabKey = 'inventory' | 'audits'
 const activeTab = ref<TabKey>(
   ((): TabKey => {
     const q = route.query.tab as string | undefined
     if (q === 'audits') return 'audits'
-    if (q === 'plants') return 'plants'
     return 'inventory'
   })(),
 )
 
 const tabs: Array<{ key: TabKey; label: string; icon: typeof Package }> = [
   { key: 'inventory', label: 'Inventar', icon: Package },
-  { key: 'plants', label: 'Pflanzen', icon: Sprout },
   { key: 'audits', label: 'Audits', icon: ClipboardList },
 ]
 
 function selectTab(key: TabKey): void {
   activeTab.value = key
-  if (key === 'audits' || key === 'plants') {
-    // Lazy-load plants for the assignment dropdown / inventory
+  if (key === 'audits') {
+    // Lazy-load plants for the assignment dropdown
     if (plantsStore.plants.length === 0 && !plantsStore.isLoading) {
       void plantsStore.fetchPlants()
     }
@@ -206,95 +198,6 @@ function onAssignChange(snapshotId: string, event: Event): void {
 }
 
 // =============================================================================
-// Plants Tab — Filters, Detail Panel, Create Modal
-// =============================================================================
-const plantZoneFilter = ref<string>('')
-const plantPhaseFilter = ref<string>('')
-const plantBatchFilter = ref<string>('')
-
-const filteredPlants = computed<Plant[]>(() => {
-  let list = plantsStore.plants
-  if (plantZoneFilter.value) {
-    list = list.filter((p) => p.zone_id === plantZoneFilter.value)
-  }
-  if (plantPhaseFilter.value) {
-    list = list.filter((p) => p.phase === plantPhaseFilter.value)
-  }
-  if (plantBatchFilter.value.trim()) {
-    const needle = plantBatchFilter.value.trim().toLowerCase()
-    list = list.filter((p) => (p.batch ?? '').toLowerCase().includes(needle))
-  }
-  return list
-})
-
-const plantZoneOptions = computed(() => zoneStore.activeZones)
-
-function getZoneNameForPlant(plant: Plant): string {
-  if (!plant.zone_id) return '—'
-  const zone = zoneStore.zoneEntities.find((z) => z.zone_id === plant.zone_id)
-  return zone?.name ?? plant.zone_id
-}
-
-function getPlantAgeDays(plant: Plant): string {
-  if (!plant.planting_date) return '—'
-  const planted = Date.parse(plant.planting_date)
-  if (Number.isNaN(planted)) return '—'
-  const days = Math.max(0, Math.floor((Date.now() - planted) / (1000 * 60 * 60 * 24)))
-  return `${days}`
-}
-
-function getPlantPhi2Display(_plant: Plant): string {
-  // Per-row Phi2 needs measurements which are loaded lazily in the detail
-  // panel — keep the column lightweight here. The detail panel shows the
-  // last value with timestamp.
-  return '—'
-}
-
-function getPlantSubzoneLabel(plant: Plant): string {
-  return plant.subzone_id ?? '—'
-}
-
-const isPlantDetailOpen = ref(false)
-const selectedPlant = ref<Plant | null>(null)
-
-function openPlantPanel(plant: Plant): void {
-  selectedPlant.value = plant
-  isPlantDetailOpen.value = true
-}
-
-function closePlantPanel(): void {
-  isPlantDetailOpen.value = false
-}
-
-const showCreatePlantModal = ref(false)
-
-function openCreatePlantModal(): void {
-  showCreatePlantModal.value = true
-}
-
-async function onPlantCreated(plantId: string): Promise<void> {
-  // Refresh the list and open the detail panel for the new plant
-  await plantsStore.fetchPlants()
-  const created = plantsStore.plants.find((p) => p.id === plantId)
-  if (created) openPlantPanel(created)
-}
-
-async function downloadQRForPlant(plant: Plant): Promise<void> {
-  try {
-    await plantsApi.downloadQRCode(plant.id, `${plant.qr_code || 'plant-' + plant.id}.png`)
-    toast.success('QR-Label heruntergeladen')
-  } catch (e) {
-    toast.error(e instanceof Error ? e.message : 'QR-Download fehlgeschlagen')
-  }
-}
-
-function resetPlantFilters(): void {
-  plantZoneFilter.value = ''
-  plantPhaseFilter.value = ''
-  plantBatchFilter.value = ''
-}
-
-// =============================================================================
 // Column Selector
 // =============================================================================
 const showColumnSelector = ref(false)
@@ -356,8 +259,8 @@ onMounted(async () => {
     }
   }
 
-  // If audits/plants tab pre-selected via URL, eagerly load deps
-  if (activeTab.value === 'audits' || activeTab.value === 'plants') {
+  // If audits tab pre-selected via URL, eagerly load deps
+  if (activeTab.value === 'audits') {
     void plantsStore.fetchPlants()
     void zoneStore.fetchZoneEntities()
   }
@@ -415,9 +318,6 @@ function toggleZoneFilter(zone: string) {
           <Package class="w-5 h-5" />
           Komponenten-Inventar
         </h1>
-        <div class="inventory-header__actions">
-          <EmergencyStopButton />
-        </div>
       </div>
 
       <!-- Search + Filter Bar -->
@@ -586,161 +486,6 @@ function toggleZoneFilter(zone: string) {
         :item="selectedItem"
       />
     </SlideOver>
-    </div>
-
-    <!-- Plants Tab (Pflanzen-Inventar) -->
-    <div v-else-if="activeTab === 'plants'" class="plants-tab">
-      <div class="plants-header">
-        <h1 class="plants-header__title">
-          <Sprout class="w-5 h-5" />
-          Pflanzen-Inventar
-        </h1>
-        <button
-          type="button"
-          class="plants-btn plants-btn--primary"
-          @click="openCreatePlantModal"
-        >
-          <Plus class="w-4 h-4" />
-          <span>Neue Pflanze</span>
-        </button>
-      </div>
-
-      <!-- Filter Chips -->
-      <div class="plants-filters">
-        <label class="plants-filter">
-          <span class="plants-filter__label">Zone</span>
-          <select v-model="plantZoneFilter" class="plants-filter__input">
-            <option value="">Alle Zonen</option>
-            <option
-              v-for="zone in plantZoneOptions"
-              :key="zone.zone_id"
-              :value="zone.zone_id"
-            >
-              {{ zone.name }}
-            </option>
-          </select>
-        </label>
-
-        <label class="plants-filter">
-          <span class="plants-filter__label">Phase</span>
-          <select v-model="plantPhaseFilter" class="plants-filter__input">
-            <option value="">Alle Phasen</option>
-            <option
-              v-for="phase in PLANT_PHASES"
-              :key="phase"
-              :value="phase"
-            >
-              {{ PLANT_PHASE_LABELS[phase] }}
-            </option>
-          </select>
-        </label>
-
-        <label class="plants-filter plants-filter--grow">
-          <span class="plants-filter__label">Charge</span>
-          <input
-            v-model="plantBatchFilter"
-            type="text"
-            class="plants-filter__input"
-            placeholder="z.B. 2026-NL-A"
-          />
-        </label>
-
-        <button
-          v-if="plantZoneFilter || plantPhaseFilter || plantBatchFilter"
-          type="button"
-          class="plants-btn plants-btn--ghost"
-          @click="resetPlantFilters"
-        >
-          <X class="w-4 h-4" />
-          <span>Filter zurücksetzen</span>
-        </button>
-      </div>
-
-      <!-- Summary -->
-      <div class="plants-summary">
-        <span>{{ filteredPlants.length }} Pflanzen</span>
-        <span
-          v-if="plantZoneFilter || plantPhaseFilter || plantBatchFilter"
-          class="plants-summary__hint"
-        >
-          (gefiltert aus {{ plantsStore.plants.length }})
-        </span>
-      </div>
-
-      <!-- Loading / Error / Empty -->
-      <div v-if="plantsStore.isLoading" class="plants-state">
-        Lade Pflanzen...
-      </div>
-      <div v-else-if="plantsStore.error" class="plants-state plants-state--error">
-        {{ plantsStore.error }}
-      </div>
-      <div v-else-if="filteredPlants.length === 0" class="plants-state">
-        Keine Pflanzen gefunden.
-      </div>
-
-      <!-- Table -->
-      <div v-else class="plants-table-wrap">
-        <table class="plants-table">
-          <thead>
-            <tr>
-              <th>QR-Code</th>
-              <th>Genotyp</th>
-              <th>Charge</th>
-              <th>Phase</th>
-              <th>Alter (Tage)</th>
-              <th>Subzone</th>
-              <th>Letztes Phi2</th>
-              <th class="plants-table__actions-col">Aktionen</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr
-              v-for="plant in filteredPlants"
-              :key="plant.id"
-              class="plants-table__row"
-              @click="openPlantPanel(plant)"
-            >
-              <td class="plants-table__mono">{{ plant.qr_code || '—' }}</td>
-              <td>{{ plant.genotype }}</td>
-              <td>{{ plant.batch || '—' }}</td>
-              <td>{{ PLANT_PHASE_LABELS[plant.phase] ?? plant.phase }}</td>
-              <td>{{ getPlantAgeDays(plant) }}</td>
-              <td>
-                <div>{{ getZoneNameForPlant(plant) }}</div>
-                <div class="plants-table__sub">{{ getPlantSubzoneLabel(plant) }}</div>
-              </td>
-              <td>{{ getPlantPhi2Display(plant) }}</td>
-              <td class="plants-table__actions" @click.stop>
-                <button
-                  type="button"
-                  class="plants-table__action-btn"
-                  title="QR-Label drucken"
-                  @click="downloadQRForPlant(plant)"
-                >
-                  <Printer class="w-4 h-4" />
-                </button>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-
-      <!-- Detail Panel -->
-      <SlideOver
-        :open="isPlantDetailOpen"
-        :title="selectedPlant?.qr_code || selectedPlant?.genotype || 'Pflanze'"
-        width="lg"
-        @close="closePlantPanel"
-      >
-        <PlantDetailPanel v-if="selectedPlant" :plant="selectedPlant" />
-      </SlideOver>
-
-      <!-- Create Modal -->
-      <PlantCreateModal
-        :open="showCreatePlantModal"
-        @close="showCreatePlantModal = false"
-        @created="onPlantCreated"
-      />
     </div>
 
     <!-- Audits Tab (MultispeQ Import) -->
@@ -962,11 +707,6 @@ function toggleZoneFilter(zone: string) {
   font-size: var(--text-xl);
   font-weight: 600;
   color: var(--color-text-primary);
-}
-
-.inventory-header__actions {
-  display: flex;
-  gap: var(--space-2);
 }
 
 /* Toolbar */
@@ -1554,245 +1294,4 @@ function toggleZoneFilter(zone: string) {
   }
 }
 
-/* =============================================================================
-   Plants Tab (Pflanzen-Inventar)
-   ============================================================================= */
-.plants-tab {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-}
-
-.plants-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-  flex-wrap: wrap;
-}
-
-.plants-header__title {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  font-size: var(--text-xl);
-  font-weight: 600;
-  color: var(--color-text-primary);
-}
-
-/* Filters */
-.plants-filters {
-  display: flex;
-  gap: var(--space-3);
-  align-items: end;
-  flex-wrap: wrap;
-  padding: var(--space-3);
-  background: var(--color-bg-tertiary);
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-md);
-}
-
-.plants-filter {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  min-width: 180px;
-}
-
-.plants-filter--grow {
-  flex: 1;
-}
-
-.plants-filter__label {
-  font-size: var(--text-xs);
-  font-weight: 600;
-  color: var(--color-text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-
-.plants-filter__input {
-  padding: var(--space-2) var(--space-3);
-  background: var(--color-bg-secondary);
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-sm);
-  color: var(--color-text-primary);
-  font-size: var(--text-sm);
-  font-family: inherit;
-  outline: none;
-  transition: border-color var(--transition-fast);
-  min-height: 38px;
-}
-
-.plants-filter__input:focus {
-  border-color: var(--color-accent);
-}
-
-/* Buttons */
-.plants-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-2);
-  padding: var(--space-2) var(--space-4);
-  border-radius: var(--radius-sm);
-  font-size: var(--text-sm);
-  font-weight: 500;
-  cursor: pointer;
-  transition: all var(--transition-fast);
-  min-height: 38px;
-  min-width: 44px;
-  border: 1px solid transparent;
-}
-
-.plants-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.plants-btn--primary {
-  background: var(--color-accent);
-  color: white;
-}
-
-.plants-btn--primary:not(:disabled):hover {
-  background: var(--color-accent-bright);
-}
-
-.plants-btn--ghost {
-  background: transparent;
-  border-color: var(--glass-border);
-  color: var(--color-text-secondary);
-}
-
-.plants-btn--ghost:not(:disabled):hover {
-  border-color: var(--color-accent);
-  color: var(--color-text-primary);
-}
-
-/* Summary */
-.plants-summary {
-  display: flex;
-  gap: var(--space-2);
-  padding: var(--space-2) 0;
-  font-size: var(--text-sm);
-  color: var(--color-text-secondary);
-}
-
-.plants-summary__hint {
-  color: var(--color-text-muted);
-}
-
-/* State (loading / empty / error) */
-.plants-state {
-  padding: var(--space-6);
-  text-align: center;
-  font-size: var(--text-sm);
-  color: var(--color-text-muted);
-  background: var(--color-bg-tertiary);
-  border: 1px dashed var(--glass-border);
-  border-radius: var(--radius-md);
-}
-
-.plants-state--error {
-  color: var(--color-error);
-  border-color: rgba(248, 113, 113, 0.3);
-  background: rgba(248, 113, 113, 0.06);
-}
-
-/* Table */
-.plants-table-wrap {
-  overflow-x: auto;
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-md);
-  background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur-l2));
-  backdrop-filter: blur(var(--glass-blur-l2));
-}
-
-.plants-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: var(--text-sm);
-}
-
-.plants-table thead th {
-  text-align: left;
-  padding: var(--space-2) var(--space-3);
-  font-size: var(--text-xs);
-  font-weight: 600;
-  color: var(--color-text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  background: var(--color-bg-tertiary);
-  border-bottom: 1px solid var(--glass-border);
-  white-space: nowrap;
-}
-
-.plants-table tbody td {
-  padding: var(--space-2) var(--space-3);
-  color: var(--color-text-secondary);
-  border-bottom: 1px solid var(--glass-border);
-  vertical-align: top;
-}
-
-.plants-table__row {
-  cursor: pointer;
-  transition: background var(--transition-fast);
-}
-
-.plants-table__row:hover {
-  background: rgba(255, 255, 255, 0.03);
-}
-
-.plants-table__mono {
-  font-family: var(--font-mono);
-  color: var(--color-text-primary);
-  font-weight: 600;
-}
-
-.plants-table__sub {
-  font-size: var(--text-xs);
-  color: var(--color-text-muted);
-  margin-top: 2px;
-}
-
-.plants-table__actions-col {
-  width: 1%;
-  white-space: nowrap;
-}
-
-.plants-table__actions {
-  text-align: right;
-}
-
-.plants-table__action-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: var(--space-2);
-  background: transparent;
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-sm);
-  color: var(--color-text-secondary);
-  cursor: pointer;
-  transition: all var(--transition-fast);
-  min-width: 36px;
-  min-height: 36px;
-}
-
-.plants-table__action-btn:hover {
-  border-color: var(--color-accent);
-  color: var(--color-accent-bright);
-}
-
-@media (max-width: 640px) {
-  .plants-filters {
-    flex-direction: column;
-    align-items: stretch;
-  }
-  .plants-filter {
-    min-width: 0;
-  }
-}
 </style>

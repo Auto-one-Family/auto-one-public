@@ -3,6 +3,7 @@ import { ref, computed, watch } from 'vue'
 import BaseModal from '@/shared/design/primitives/BaseModal.vue'
 import { Download, AlertTriangle, ChevronRight, ChevronLeft, Check } from 'lucide-vue-next'
 import { useAuthStore } from '@/shared/stores/auth.store'
+import { SENSOR_EXPORT_DEFAULT_COLUMNS } from '@/composables/useExportCsv'
 import type { SensorDataResolution } from '@/types'
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -55,9 +56,10 @@ const RESOLUTION_OPTIONS: Array<{ label: string; value: SensorDataResolution }> 
 const SENSOR_COLUMNS: ColumnOption[] = [
   { key: 'timestamp', label: 'Zeitstempel', visible: true },
   { key: 'processed_value', label: 'Messwert', visible: true },
-  { key: 'raw_value', label: 'Rohwert', visible: false },
   { key: 'unit', label: 'Einheit', visible: true },
   { key: 'quality', label: 'Qualität', visible: true },
+  { key: 'sensor_type', label: 'Sensortyp', visible: true },
+  { key: 'raw_value', label: 'Rohwert', visible: false },
   { key: 'zone_id', label: 'Zone-ID', visible: false },
   { key: 'subzone_id', label: 'Subzone-ID', visible: false },
   { key: 'esp_id', label: 'ESP-ID', visible: false },
@@ -211,9 +213,11 @@ watch(
     selectedResolution.value = '1h'
     selectedFormat.value = 'csv'
     exportError.value = null
-    selectedFields.value = activeColumns.value
-      .filter((c) => c.visible)
-      .map((c) => c.key)
+    selectedFields.value = props.mode === 'sensor'
+      ? [...SENSOR_EXPORT_DEFAULT_COLUMNS]
+      : activeColumns.value
+          .filter((c) => c.visible)
+          .map((c) => c.key)
   }
 )
 

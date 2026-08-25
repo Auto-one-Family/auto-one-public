@@ -29,10 +29,12 @@ import DeviceMiniCard from './DeviceMiniCard.vue'
 import { aggregateZoneSensors } from '@/utils/sensorDefaults'
 import { getESPStatus } from '@/composables/useESPStatus'
 import type { ZoneContextSummary, ZoneEntity } from '@/types'
+import { displayGrowthPhase } from '@/utils/growthPhaseVocabulary'
 import { Settings } from 'lucide-vue-next'
 import StatusBadge from '@/components/base/StatusBadge.vue'
 import type { StatusLevel } from '@/utils/formatters'
 import { useAlertCenterStore } from '@/shared/stores/alert-center.store'
+import { useNotificationInboxStore } from '@/shared/stores/notification-inbox.store'
 
 
 interface Props {
@@ -67,6 +69,7 @@ const emit = defineEmits<{
 const espStore = useEspStore()
 const dragStore = useDragStateStore()
 const alertStore = useAlertCenterStore()
+const inboxStore = useNotificationInboxStore()
 const cameraZone = useCameraZone()
 const plateRef = ref<HTMLElement | null>(null)
 const isCameraHovering = ref(false)
@@ -136,7 +139,7 @@ const zoneContextLabel = computed(() => {
   const ctx = zoneContext.value
   if (!ctx) return ''
   const parts: string[] = []
-  if (ctx.growth_phase) parts.push(ctx.growth_phase.replace(/_/g, ' '))
+  if (ctx.growth_phase) parts.push(displayGrowthPhase(ctx.growth_phase))
   if (ctx.variety) parts.push(ctx.variety)
   return parts.join(' · ')
 })
@@ -173,6 +176,16 @@ const zoneAlertSeverity = computed(() => {
   if (zoneAlerts.value.some(n => n.severity === 'warning')) return 'warning'
   return 'info'
 })
+
+const zoneAlertChipLabel = computed(() => {
+  const count = zoneAlertCount.value
+  return `${count} aktive${count === 1 ? 'r' : ''} Alert${count === 1 ? '' : 's'} in dieser Zone — Inbox öffnen`
+})
+
+function openZoneAlerts(event: Event): void {
+  event.stopPropagation()
+  inboxStore.openDrawerWithActiveAlertsFocus()
+}
 
 // ── Inline Rename ────────────────────────────────────────────────────────
 const isRenaming = ref(false)
@@ -363,18 +376,21 @@ function onCameraDrop(e: DragEvent): void {
           </span>
 
           <!-- AUT-619: Active notification-alerts for this zone (distinct from hardware warnings) -->
-          <span
+          <button
             v-if="zoneAlertCount > 0"
+            type="button"
             :class="[
               'zone-plate__notif-alert',
               zoneAlertSeverity === 'critical' ? 'zone-plate__notif-alert--critical' : 'zone-plate__notif-alert--warning',
             ]"
-            :title="`${zoneAlertCount} aktive${zoneAlertCount === 1 ? 'r' : ''} Alert${zoneAlertCount === 1 ? '' : 's'} in dieser Zone`"
-            aria-label="`${zoneAlertCount} aktive Alerts`"
+            data-testid="zone-alert-chip"
+            :title="zoneAlertChipLabel"
+            :aria-label="zoneAlertChipLabel"
+            @click.stop="openZoneAlerts"
           >
             <Bell class="zone-plate__notif-alert-icon" aria-hidden="true" />
             {{ zoneAlertCount > 9 ? '9+' : zoneAlertCount }}
-          </span>
+          </button>
 
           <!-- Archived badge -->
           <span v-if="isArchived" class="zone-plate__archived-badge">Archiv</span>
@@ -830,13 +846,24 @@ function onCameraDrop(e: DragEvent): void {
 .zone-plate__notif-alert {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 3px;
+  min-width: 44px;
+  min-height: 44px;
   padding: 1px var(--space-2);
   border-radius: var(--radius-full);
+  font: inherit;
   font-size: var(--text-xxs);
   font-weight: 700;
   white-space: nowrap;
   flex-shrink: 0;
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.zone-plate__notif-alert:focus-visible {
+  outline: 2px solid var(--color-iridescent-1);
+  outline-offset: 2px;
 }
 
 .zone-plate__notif-alert--critical {
@@ -845,10 +872,20 @@ function onCameraDrop(e: DragEvent): void {
   border: 1px solid color-mix(in srgb, var(--color-error) 35%, transparent);
 }
 
+.zone-plate__notif-alert--critical:hover {
+  background: color-mix(in srgb, var(--color-error) 22%, transparent);
+  border-color: color-mix(in srgb, var(--color-error) 50%, transparent);
+}
+
 .zone-plate__notif-alert--warning {
   color: var(--color-warning);
   background: color-mix(in srgb, var(--color-warning) 14%, transparent);
   border: 1px solid color-mix(in srgb, var(--color-warning) 35%, transparent);
+}
+
+.zone-plate__notif-alert--warning:hover {
+  background: color-mix(in srgb, var(--color-warning) 22%, transparent);
+  border-color: color-mix(in srgb, var(--color-warning) 50%, transparent);
 }
 
 .zone-plate__notif-alert-icon {

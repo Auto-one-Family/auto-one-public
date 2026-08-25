@@ -135,6 +135,16 @@ export const useDragStateStore = defineStore('dragState', () => {
   /** True wenn die CameraCard per HTML5-Drag einer Zone zugewiesen wird */
   const isDraggingCamera = ref(false)
 
+  /**
+   * Touch-Fallback (Tap-to-add): Wenn ein Komponenten-Item in der ComponentSidebar
+   * angetippt statt gezogen wird (natives HTML5-DnD funktioniert nicht auf Touch),
+   * wird hier eine einmalige "Hinzufuegen"-Anforderung hinterlegt. Das aktuell
+   * offene Orbital (useOrbitalDragDrop) beobachtet diese und oeffnet das passende
+   * AddSensor-/AddActuator-Modal. Kanal statt Event, weil ComponentSidebar via
+   * Teleport ausserhalb des Orbital-Baums liegt.
+   */
+  const pendingComponentAdd = ref<SensorTypeDragPayload | ActuatorTypeDragPayload | null>(null)
+
   /** Zeitpunkt des Drag-Starts (für Timeout-Detection) */
   const dragStartTime = ref<number | null>(null)
 
@@ -345,6 +355,24 @@ export const useDragStateStore = defineStore('dragState', () => {
   }
 
   /**
+   * Touch-Fallback: Fordert das Hinzufuegen einer Komponente per Tap an.
+   * Wird vom aktuell offenen Orbital ueber consumeComponentAdd() abgeholt.
+   */
+  function requestComponentAdd(payload: SensorTypeDragPayload | ActuatorTypeDragPayload): void {
+    logger.debug('Tap-to-add requested', { action: payload.action })
+    pendingComponentAdd.value = payload
+  }
+
+  /**
+   * Holt eine offene Tap-to-add-Anforderung ab und loescht sie (one-shot).
+   */
+  function consumeComponentAdd(): SensorTypeDragPayload | ActuatorTypeDragPayload | null {
+    const req = pendingComponentAdd.value
+    pendingComponentAdd.value = null
+    return req
+  }
+
+  /**
    * Beendet den aktuellen Drag-Vorgang.
    * Wird sowohl von Components als auch vom Safety-Timeout aufgerufen.
    */
@@ -506,6 +534,7 @@ export const useDragStateStore = defineStore('dragState', () => {
     isDraggingDashboardWidget,
     dashboardWidgetPayload,
     isDraggingCamera,
+    pendingComponentAdd,
 
     // Computed
     isAnyDragActive,
@@ -520,6 +549,8 @@ export const useDragStateStore = defineStore('dragState', () => {
     endEspCardDrag,
     startCameraDrag,
     endCameraDrag,
+    requestComponentAdd,
+    consumeComponentAdd,
     endDrag,
     forceReset,
     getStats,

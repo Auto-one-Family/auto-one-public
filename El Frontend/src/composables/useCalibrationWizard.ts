@@ -19,8 +19,10 @@ import type { CalibrationPoint, CalibrateResponse } from '@/api/calibration'
 import { sensorsApi } from '@/api/sensors'
 import { formatUiApiError, toUiApiError } from '@/api/uiApiError'
 import { useUiStore } from '@/shared/stores/ui.store'
+import { useEspStore } from '@/stores/esp'
 import { useWebSocket } from '@/composables/useWebSocket'
 import type { WebSocketMessage } from '@/services/websocket'
+import type { MockSensor } from '@/types'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -785,6 +787,42 @@ export function useCalibrationWizard(
       if (normalizedStatus === 'applied') {
         lifecycleState.value = 'terminal_success'
         lifecycleMessage.value = 'Kalibrierung erfolgreich terminal bestaetigt.'
+        const result = sessionState.calibration_result ?? {}
+        const derivedRaw = result.derived
+        const derived = (derivedRaw && typeof derivedRaw === 'object')
+          ? derivedRaw as Record<string, unknown>
+          : {}
+        const calibratedAt = (
+          (typeof derived.calibrated_at === 'string' && derived.calibrated_at)
+          || (typeof result.calibrated_at === 'string' && result.calibrated_at)
+          || sessionState.completed_at
+          || sessionState.updated_at
+          || null
+        )
+        const calibration = {
+          ...result,
+          derived: {
+            ...derived,
+            ...(calibratedAt ? { calibrated_at: calibratedAt } : {}),
+          },
+        }
+        const gpio = selectedGpio.value
+        const sensorType = normalizeCalibrationSensorType(String(selectedSensorType.value || ''))
+        if (gpio != null && selectedEspId.value && sensorType) {
+          useEspStore().applyDevicePatch(selectedEspId.value, (device) => {
+            const sensors = (device.sensors ?? []) as MockSensor[]
+            return {
+              ...device,
+              sensors: sensors.map((sensor) => {
+                if (Number(sensor.gpio) !== gpio) return sensor
+                if (normalizeCalibrationSensorType(String(sensor.sensor_type ?? '')) !== sensorType) {
+                  return sensor
+                }
+                return { ...sensor, calibration }
+              }),
+            }
+          })
+        }
       } else {
         lifecycleState.value = normalizedStatus === 'expired' ? 'terminal_timeout' : 'terminal_failed'
         lifecycleMessage.value = calibrationResult.value.message ?? `Kalibrierung endete mit Status '${normalizedStatus}'.`
@@ -888,7 +926,9 @@ export function useCalibrationWizard(
 
           const prevMeasurementAt = lastMeasurementAt.value
           measurementTriggerAt.value = Date.now()
-          const triggerResult = await sensorsApi.triggerMeasurement(selectedEspId.value, selectedGpio.value)
+          const triggerResult = await sensorsApi.triggerMeasurement(selectedEspId.value, selectedGpio.value, {
+            sensor_type: selectedSensorType.value,
+          })
           measurementRequestId.value = triggerResult.request_id
 
           // Wait for the WS handler (calibration_measurement_received) to signal a new measurement.

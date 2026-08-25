@@ -26,9 +26,13 @@ import type { TooltipItem } from 'chart.js'
 import 'chartjs-adapter-date-fns'
 import { BarChart3, Download } from 'lucide-vue-next'
 import { sensorsApi } from '@/api/sensors'
+import { readingsToCsv } from '@/composables/useExportCsv'
 import { useEspStore } from '@/stores/esp'
 import type { SensorReading } from '@/types'
 import TimeRangeSelector, { type TimePreset } from '@/components/charts/TimeRangeSelector.vue'
+import { formatSensorValue } from '@/utils/formatters'
+import { getSensorConfig } from '@/utils/sensorDefaults'
+import { getAutoResolutionForWindow } from '@/utils/autoResolution'
 
 ChartJS.register(
   CategoryScale,
@@ -75,11 +79,13 @@ async function fetchData() {
   isLoading.value = true
   errorMsg.value = ''
   try {
+    const resolution = getAutoResolutionForWindow(startTime.value, endTime.value)
     const query: Record<string, unknown> = {
       esp_id: selectedEspId.value,
       start_time: startTime.value,
       end_time: endTime.value,
       limit: 1000,
+      ...(resolution ? { resolution } : {}),
     }
     if (selectedGpio.value !== null) query.gpio = selectedGpio.value
     if (selectedSensorType.value) query.sensor_type = selectedSensorType.value
@@ -130,10 +136,12 @@ const chartData = computed(() => {
       : 'y'
     return {
       label: `${sensorType}${group.unit ? ' (' + group.unit + ')' : ''}`,
-      data: group.readings.map(r => ({
-        x: new Date(r.timestamp).getTime(),
-        y: r.processed_value ?? r.raw_value,
-      })),
+      data: group.readings
+        .map(r => ({
+          x: new Date(r.timestamp).getTime(),
+          y: r.processed_value ?? r.raw_value,
+        }))
+        .sort((a, b) => a.x - b.x),
       borderColor: CHART_COLORS[colorIdx],
       backgroundColor: `${CHART_COLORS[colorIdx]}20`,
       borderWidth: 2,
@@ -170,7 +178,10 @@ const chartOptions = computed(() => {
         font: { family: 'JetBrains Mono', size: 10 },
         callback: (val: string | number) => {
           const unit = units[0] ?? ''
-          return `${val}${unit ? ' ' + unit : ''}`
+          const sensorType = [...groupedReadings.value.entries()]
+            .find(([, g]) => g.unit === unit)?.[0]
+          const decimals = getSensorConfig(sensorType ?? '')?.decimals ?? 1
+          return formatSensorValue(Number(val), unit, decimals)
         },
       },
       border: { display: false },
@@ -192,7 +203,10 @@ const chartOptions = computed(() => {
         font: { family: 'JetBrains Mono', size: 10 },
         callback: (val: string | number) => {
           const unit = units[1] ?? ''
-          return `${val}${unit ? ' ' + unit : ''}`
+          const sensorType = [...groupedReadings.value.entries()]
+            .find(([, g]) => g.unit === unit)?.[0]
+          const decimals = getSensorConfig(sensorType ?? '')?.decimals ?? 1
+          return formatSensorValue(Number(val), unit, decimals)
         },
       },
       border: { display: false },
@@ -248,11 +262,7 @@ const chartOptions = computed(() => {
 
 function exportCsv() {
   if (!readings.value.length) return
-  const header = 'timestamp,raw_value,processed_value,unit,quality'
-  const rows = readings.value.map(r =>
-    `${r.timestamp},${r.raw_value},${r.processed_value ?? ''},${r.unit ?? ''},${r.quality}`
-  )
-  const csv = [header, ...rows].join('\n')
+  const csv = readingsToCsv(readings.value, selectedSensorType.value)
   const blob = new Blob([csv], { type: 'text/csv' })
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')

@@ -31,6 +31,7 @@ import {
   ArrowLeftRight,
   Cpu,
   ListOrdered,
+  ShieldOff,
 } from 'lucide-vue-next'
 import type { Component } from 'vue'
 
@@ -110,12 +111,25 @@ const categories = [
         defaults: { sensorType: 'level', operator: '<', value: 20, conditionCategory: 'level' },
       },
       {
+        // AUT-1399: umgewidmet — einziger Mess-Bindungs-Baustein (kein zweiter Palette-Eintrag)
         type: 'sensor_diff',
-        label: 'Sensor-Differenz',
-        description: 'Differenz zwischen zwei Sensoren vergleichen',
+        label: 'Mess-Bindung',
+        description: 'Misst während die Regel läuft (kein Auslöser)',
         icon: ArrowLeftRight,
         category: 'condition' as const,
-        defaults: { sensorAId: '', sensorBId: '', operator: '>', threshold: 2.5, consecutiveCount: 3 },
+        defaults: {
+          label: '',
+          formulaId: 'difference',
+          sensorEspId: '',
+          sensorGpio: null,
+          sensorType: '',
+          sensorBEspId: '',
+          sensorBGpio: null,
+          sensorBType: '',
+          hooks: ['on_start', 'on_complete'],
+          outputTarget: 'execution_metadata',
+          formulaParams: {},
+        },
       },
     ],
   },
@@ -209,6 +223,14 @@ const categories = [
         icon: Stethoscope,
         category: 'condition' as const,
         defaults: { checkName: 'mqtt', expectedStatus: 'critical', operator: '==' },
+      },
+      {
+        type: 'not_running',
+        label: 'Nicht laufend (Interlock)',
+        description: 'AND: nur feuern wenn Peer-Aktor/Sequenz idle ist',
+        icon: ShieldOff,
+        category: 'condition' as const,
+        defaults: { target: 'actuator', espId: '', gpio: null, ruleId: '' },
       },
     ],
   },

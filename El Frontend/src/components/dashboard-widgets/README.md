@@ -128,7 +128,7 @@ interface BaseWidgetProps {
 | SensorCardWidget | `sensorId` | Config |
 | ActuatorCardWidget | `actuatorId`, `readOnly` | Config + useDashboardWidgets |
 | HistoricalChartWidget | `sensorId`, `timeRange`, `yMin`, `yMax`, `color`, `warnLow`, `warnHigh`, `alarmLow`, `alarmHigh` | Config |
-| MultiSensorWidget | `dataSources`, `compareMode`, `compareSensorType`, `compareZoneId` | Config |
+| MultiSensorWidget | `dataSources`, `actuatorIds`, `syncGroupId` (Crosshair-Sync via useCrosshairSync) | Config |
 | ActuatorRuntimeWidget | `actuatorId`, `zoneFilter` | Config |
 | ESPHealthWidget | `zoneFilter` | Config |
 | AlarmListWidget | `zoneFilter`, `showOfflineOnly`, `maxItems`, `showResolved`, `actuatorFilter` | Config |

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { X } from 'lucide-vue-next'
+import { parseLocaleNumber } from '@/utils/parseLocaleNumber'
 
 interface Props {
   /** v-model value */
@@ -29,6 +30,16 @@ interface Props {
   max?: number
   /** Step value for number inputs */
   step?: number
+  /**
+   * AUT-1389: HTML inputmode (z. B. "decimal" für pH/EC mit Komma-Eingabe).
+   * Bei type=text + inputmode=decimal bleibt der Rohstring im Model bis zum Parse.
+   */
+  inputmode?: 'none' | 'text' | 'decimal' | 'numeric' | 'tel' | 'search' | 'email' | 'url'
+  /**
+   * AUT-1389: Bei type=text Rohwert als Locale-Zahl parsen und als number emittieren
+   * (für pH/EC-Felder mit deutscher Komma-Eingabe).
+   */
+  parseLocaleDecimal?: boolean
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -36,6 +47,7 @@ const props = withDefaults(defineProps<Props>(), {
   disabled: false,
   required: false,
   clearable: false,
+  parseLocaleDecimal: false,
 })
 
 const emit = defineEmits<{
@@ -56,8 +68,18 @@ const inputClasses = computed(() => [
 
 function handleInput(event: Event) {
   const target = event.target as HTMLInputElement
-  const value = props.type === 'number' ? parseFloat(target.value) || 0 : target.value
-  emit('update:modelValue', value)
+  if (props.type === 'number' || props.parseLocaleDecimal) {
+    const raw = target.value
+    // Zwischenstand „5,“ / „5.“ beim Tippen behalten — sonst frisst Komma-Eingabe.
+    if (raw === '' || raw === '-' || /[.,]$/.test(raw.trim())) {
+      emit('update:modelValue', raw)
+      return
+    }
+    const n = parseLocaleNumber(raw)
+    emit('update:modelValue', Number.isFinite(n) ? n : raw)
+    return
+  }
+  emit('update:modelValue', target.value)
 }
 
 function clear() {
@@ -89,6 +111,7 @@ function clear() {
         :min="min"
         :max="max"
         :step="step"
+        :inputmode="inputmode"
         :class="inputClasses"
         @input="handleInput"
       />

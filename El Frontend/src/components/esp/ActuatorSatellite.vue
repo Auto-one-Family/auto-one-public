@@ -19,6 +19,7 @@ import { getActuatorTypeInfo } from '@/utils/labels'
 import { formatRelativeTime } from '@/utils/formatters'
 import { useDragStateStore } from '@/shared/stores/dragState.store'
 import { useEspStore } from '@/stores/esp'
+import { actuatorDutyToDisplayPercent } from '@/utils/eventTransformer'
 
 interface Props {
   /** ESP ID this actuator belongs to */
@@ -151,10 +152,10 @@ function humanizeTriggerReason(reason: string | null | undefined): string | null
   return cleaned.charAt(0).toUpperCase() + cleaned.slice(1)
 }
 
+/** SSOT: letzter Schaltzeitpunkt dieses Aktors — nur last_command_at, nicht Regel-triggered_at. */
 const lastActionText = computed(() => {
-  if (props.lastTriggeredAt) return formatRelativeTime(props.lastTriggeredAt)
-  if (props.lastCommandAt) return formatRelativeTime(props.lastCommandAt)
-  return null
+  if (!props.lastCommandAt) return null
+  return formatRelativeTime(props.lastCommandAt)
 })
 
 const triggerReasonLabel = computed(() => humanizeTriggerReason(props.triggerReason))
@@ -179,7 +180,7 @@ const statusDisplay = computed(() => {
   
   if (props.actuatorType === 'pwm' || props.actuatorType === 'fan') {
     const pwm = props.pwmValue || 0
-    const percent = Math.round((pwm / 255) * 100)
+    const percent = actuatorDutyToDisplayPercent(pwm)
     return {
       text: `${percent}%`,
       variant: pwm > 0 ? 'success' : 'gray'
@@ -292,19 +293,25 @@ function handleDragEnd(event: DragEvent) {
             {{ statusDisplay.text }}
           </Badge>
 
-          <button
-            v-if="isToggleable"
-            class="actuator-satellite__toggle"
-            :class="{
-              'actuator-satellite__toggle--on': state && !emergencyStopped,
-              'actuator-satellite__toggle--disabled': emergencyStopped,
-            }"
-            :disabled="emergencyStopped"
-            @click.stop="handleToggle"
-            :title="state ? 'Ausschalten' : 'Einschalten'"
-          >
-            <span class="actuator-satellite__toggle-thumb" />
-          </button>
+          <div v-if="isToggleable" class="touch-target actuator-satellite__toggle-wrap">
+            <button
+              type="button"
+              role="switch"
+              :aria-checked="state && !emergencyStopped"
+              class="toggle-switch toggle-switch--accent hardware-onoff-control"
+              :class="{
+                'toggle-switch--on': state && !emergencyStopped,
+                'toggle-switch--disabled': emergencyStopped,
+              }"
+              :disabled="emergencyStopped"
+              data-testid="actuator-satellite-toggle"
+              @click.stop="handleToggle"
+              :title="state ? 'Ausschalten' : 'Einschalten'"
+              :aria-label="state ? 'Ausschalten' : 'Einschalten'"
+            >
+              <span class="toggle-switch__thumb" />
+            </button>
+          </div>
 
           <span
             v-if="scopeBadge"
@@ -570,43 +577,21 @@ function handleDragEnd(event: DragEvent) {
   color: rgb(251, 146, 60);
 }
 
-/* Toggle slider — 28×16px quick on/off for digital actuators */
-.actuator-satellite__toggle {
-  width: 28px;
-  height: 16px;
+.actuator-satellite__toggle-wrap {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   flex-shrink: 0;
-  position: relative;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 8px;
-  background: var(--color-bg-tertiary, rgba(255, 255, 255, 0.06));
-  cursor: pointer;
+  min-width: var(--touch-min-target);
+  min-height: var(--touch-min-target);
   padding: 0;
-  transition: background 0.2s, border-color 0.2s;
 }
 
-.actuator-satellite__toggle--on {
-  background: var(--color-real);
-  border-color: var(--color-real);
-}
-
-.actuator-satellite__toggle--disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-.actuator-satellite__toggle-thumb {
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 10px;
-  height: 10px;
-  background: rgba(255, 255, 255, 0.85);
-  border-radius: 50%;
-  transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.actuator-satellite__toggle--on .actuator-satellite__toggle-thumb {
-  transform: translateX(12px);
+.actuator-satellite__toggle-wrap .toggle-switch {
+  min-width: unset;
+  min-height: unset;
+  width: var(--toggle-width);
+  height: var(--toggle-height);
 }
 
 /* Connection indicator */

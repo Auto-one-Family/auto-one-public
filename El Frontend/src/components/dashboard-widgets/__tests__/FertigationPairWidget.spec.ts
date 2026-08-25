@@ -39,13 +39,48 @@ vi.mock('@/components/charts/HistoricalChart.vue', () => ({
   },
 }))
 
+const INFLOW_CONFIG_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+const RUNOFF_CONFIG_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
+
+vi.mock('@/stores/esp', () => ({
+  useEspStore: () => ({
+    devices: [
+      {
+        sensors: [
+          {
+            config_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+            gpio: 34,
+            sensor_type: 'ec',
+            name: 'Zufluss',
+            unit: 'mS/cm',
+          },
+          {
+            config_id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+            gpio: 35,
+            sensor_type: 'ec',
+            name: 'Ablauf',
+            unit: 'mS/cm',
+          },
+        ],
+      },
+    ],
+    getDeviceId: () => 'ESP_REAL',
+  }),
+}))
+
 // Mock sensor config
-vi.mock('@/utils/sensorDefaults', () => ({
-  SENSOR_TYPE_CONFIG: {
+vi.mock('@/utils/sensorDefaults', () => {
+  const SENSOR_TYPE_CONFIG: Record<string, { unit: string; label: string }> = {
     ec: { unit: 'mS/cm', label: 'Elektrische Leitfähigkeit' },
     ph: { unit: 'pH', label: 'pH-Wert' },
-  },
-}))
+  }
+  return {
+    SENSOR_TYPE_CONFIG,
+    // Case-insensitive lookup mirrors the real getSensorConfig (AUT-913 B3 unit-fix).
+    getSensorConfig: (sensorType: string) =>
+      SENSOR_TYPE_CONFIG[sensorType?.toLowerCase()] ?? null,
+  }
+})
 
 vi.mock('@/utils/logger', () => ({
   createLogger: () => ({
@@ -418,5 +453,36 @@ describe('FertigationPairWidget', () => {
     })
 
     expect(wrapper.text()).toContain('pH')
+  })
+
+  it('should chart store config_id sensors instead of mock-esp', () => {
+    const wrapper = mount(FertigationPairWidget, {
+      props: {
+        inflowSensorId: INFLOW_CONFIG_ID,
+        runoffSensorId: RUNOFF_CONFIG_ID,
+        sensorType: 'ec',
+      },
+      global: {
+        stubs: {
+          MultiSensorChart: {
+            name: 'MultiSensorChart',
+            props: ['sensors'],
+            template: '<div class="multi-sensor-chart-stub" />',
+          },
+          TrendingUp: true,
+          TrendingDown: true,
+          AlertCircle: true,
+          Droplet: true,
+          Activity: true,
+        },
+      },
+    })
+
+    const chart = wrapper.findComponent({ name: 'MultiSensorChart' })
+    const sensors = chart.props('sensors') as Array<{ espId: string; gpio: number; sensorType: string }>
+    expect(sensors).toHaveLength(2)
+    expect(sensors.every((row) => row.espId === 'ESP_REAL')).toBe(true)
+    expect(sensors.some((row) => row.espId === 'mock-esp')).toBe(false)
+    expect(sensors.map((row) => row.gpio).sort()).toEqual([34, 35])
   })
 })

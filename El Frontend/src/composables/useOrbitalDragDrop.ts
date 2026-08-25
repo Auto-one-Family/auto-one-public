@@ -175,6 +175,34 @@ export function useOrbitalDragDrop(espId: Ref<string> | ComputedRef<string>) {
   }
 
   // ═══════════════════════════════════════════════════════════════════════
+  // Touch-Fallback: Tap-to-add aus ComponentSidebar (kein natives DnD auf Touch)
+  // ═══════════════════════════════════════════════════════════════════════
+
+  /**
+   * Beobachtet die einmalige Tap-to-add-Anforderung im dragStore und oeffnet
+   * dasselbe AddSensor-/AddActuator-Modal wie der Drop-Pfad. Auf L2 ist genau
+   * ein Orbital gemountet, daher landet die Anforderung beim offenen Geraet.
+   */
+  watch(
+    () => dragStore.pendingComponentAdd,
+    (req) => {
+      if (!req) return
+      const payload = dragStore.consumeComponentAdd()
+      if (!payload) return
+
+      if (payload.action === 'add-sensor') {
+        droppedSensorType.value = payload.sensorType || null
+        showAddSensorModal.value = true
+        logger.info('[Tap] Opening AddSensorModal', { sensorType: payload.sensorType, espId: espId.value })
+      } else if (payload.action === 'add-actuator') {
+        droppedActuatorType.value = payload.actuatorType || null
+        showAddActuatorModal.value = true
+        logger.info('[Tap] Opening AddActuatorModal', { actuatorType: payload.actuatorType, espId: espId.value })
+      }
+    },
+  )
+
+  // ═══════════════════════════════════════════════════════════════════════
   // Watchers
   // ═══════════════════════════════════════════════════════════════════════
 

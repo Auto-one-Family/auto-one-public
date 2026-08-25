@@ -80,11 +80,20 @@ export const zonesApi = {
 
   /**
    * Get zone monitor data for L2 display (sensors/actuators grouped by subzone).
-
+   *
    * Used by MonitorView L2 for subzone accordion. GPIO-based grouping via subzone_configs.
+   * Optional `domain` (AUT-1321): pre-filter by ESPDevice.domain. Omit = all domains
+   * (default — MonitorView / widgets unchanged).
    */
-  async getZoneMonitorData(zoneId: string, signal?: AbortSignal): Promise<ZoneMonitorData> {
-    const response = await api.get<ZoneMonitorData>(`/zone/${zoneId}/monitor-data`, { signal })
+  async getZoneMonitorData(
+    zoneId: string,
+    signal?: AbortSignal,
+    domain?: string,
+  ): Promise<ZoneMonitorData> {
+    const response = await api.get<ZoneMonitorData>(`/zone/${zoneId}/monitor-data`, {
+      signal,
+      params: domain ? { domain } : undefined,
+    })
     return response.data
   },
 
@@ -103,11 +112,22 @@ export const zonesApi = {
 
   /**
    * List zone entities, optionally filtered by status.
+   *
+   * Contract-Normalisierung: Der List-Endpoint (GET /v1/zones) serialisiert
+   * pro Zone ein `ZoneListEntry` mit `zone_name` (+ device/sensor/actuator counts),
+   * waehrend der Single-Endpoint (GET /v1/zones/{id}) ein `ZoneResponse` mit `name`
+   * liefert. Der ZoneEntity-Contract des Frontends erwartet `name`, daher hier auf
+   * `name` normalisieren (Fallback-Kette name -> zone_name -> zone_id). Sonst bleibt
+   * `name` undefined und z. B. der Editor-Dropdown zeigt leere Zone-Eintraege.
    */
   async listZoneEntities(status?: ZoneStatus): Promise<ZoneEntityListResponse> {
     const params = status ? { status } : undefined
     const response = await api.get<ZoneEntityListResponse>('/zones', { params })
-    return response.data
+    const zones = (response.data.zones ?? []).map((zone) => {
+      const raw = zone as ZoneEntity & { zone_name?: string | null }
+      return { ...zone, name: raw.name || raw.zone_name || raw.zone_id }
+    })
+    return { ...response.data, zones }
   },
 
   /**

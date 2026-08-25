@@ -19,6 +19,7 @@ export const QUALITY_LABELS: Record<string, string> = {
   'stale': 'Veraltet',
   'error': 'Fehler',
   'unknown': 'Unbekannt',
+  'warming_up': 'Aufwärmen',
 }
 
 /**
@@ -35,6 +36,7 @@ export function getQualityInfo(quality: string): { label: string; colorClass: st
     'stale': { label: 'Veraltet', colorClass: 'text-muted' },
     'error': { label: 'Fehler', colorClass: 'text-error' },
     'unknown': { label: 'Unbekannt', colorClass: 'text-muted' },
+    'warming_up': { label: 'Aufwärmen', colorClass: 'text-muted' },
   }
   return info[quality] ?? { label: quality, colorClass: 'text-muted' }
 }
@@ -405,6 +407,46 @@ export const MESSAGE_LABELS: Record<string, string> = {
   'no_results': 'Keine Ergebnisse gefunden',
   'confirm_delete': 'Wirklich löschen?',
 }
+
+// =============================================================================
+// SUBZONE ASSIGNMENT LABELS (AUT-1155 n:m Abdeckung)
+// =============================================================================
+
+/**
+ * Operator-facing copy for GPIO (Einzelfall) vs n:m coverage (Mehrfach).
+ * Keep in sync with SubzoneAssignmentSection precedence comments.
+ */
+export const SUBZONE_ASSIGNMENT_LABELS = {
+  gpioSection: 'Heimat-Subzone (GPIO)',
+  gpioHint: 'Einzelfall fuer ESP-Config-Push — eine Subzone pro GPIO.',
+  noneOption: 'Keine Subzone',
+  createOption: '+ Neue Subzone erstellen...',
+  createPlaceholder: 'Subzone-Name eingeben...',
+  positionLabel: 'Position im Raum',
+  positionPlaceholder: 'z.B. Reihe 2, oberes Regal (optional)',
+  coverageSection: 'Abdeckung',
+  coverageHint: 'Welche Subzonen diese Komponente dauerhaft abdeckt (n:m).',
+  coverageHintSensor: 'Welche Subzonen dieser Sensor dauerhaft abdeckt (n:m).',
+  coverageHintActuator: 'Welche Subzonen dieser Aktor dauerhaft abdeckt (n:m).',
+  coverageIst: 'Ist',
+  coverageSoll: 'Soll',
+  unnamedPlace: 'Ort ohne Namen',
+  emptyCoverage: 'keine Sensor-Abdeckung —',
+  emptyCoverageSensor: 'keine Sensor-Abdeckung —',
+  emptyCoverageActuator:
+    'Dieser Aktor deckt noch keine Subzone ab —',
+  assignSubzoneAction: 'Subzone zuordnen',
+  addCoverageAction: 'Weitere Subzone zuordnen',
+  applyCoverageAction: 'Abdeckung uebernehmen',
+  cancelEditAction: 'Abbrechen',
+  removeCoverageAria: 'Abdeckung entfernen',
+  emptySubzoneSensors: 'keine Sensor-Abdeckung —',
+  assignSensorAction: 'Sensor zuordnen',
+  coverageLoadError: 'Abdeckung konnte nicht geladen werden',
+  coverageSaveError: 'Abdeckung konnte nicht gespeichert werden',
+  coverageSaveSuccess: 'Abdeckung aktualisiert',
+  coverageRemoveSuccess: 'Abdeckung entfernt',
+} as const
 
 
 

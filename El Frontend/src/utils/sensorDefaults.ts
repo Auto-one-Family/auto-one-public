@@ -521,21 +521,21 @@ export const SENSOR_TYPE_CONFIG: Record<string, SensorTypeConfig> = {
     label: 'Durchfluss',
     unit: 'L/min',
     min: 0,
-    max: 100,
+    max: 60,
     decimals: 2,
     icon: 'Waves',
     defaultValue: 0,
-    description: 'Durchflussrate in Liter pro Minute.',
+    description: 'Durchflussrate in Liter pro Minute (FS300A: 1–60 L/min).',
     category: 'water',
     // Operating Mode (Phase 2B)
     recommendedMode: 'continuous',
     recommendedTimeout: 60,
     supportsOnDemand: false,
-    // Datasheet (AUT-252)
-    manufacturer: 'Generisch (Hall-Effekt-Durchflusssensor, z.B. YF-S201)',
+    // Datasheet (AUT-252 / AUT-849): FS300A G3/4 = 330 Pulse/L, 1–60 L/min
+    manufacturer: 'FS300A G3/4 (Hall-Effekt; Legacy YF-S201 = 450 Pulse/L)',
     accuracy: '±3 %',
     calibrationRequired: true,
-    calibrationNote: 'Kalibrierung durch Volumenmessung über definierte Zeit (Impulse pro Liter abgleichen).',
+    calibrationNote: 'Default 330 Impulse/Liter (FS300A). Messbereich 1–60 L/min — unter 1 L/min ggf. kein zuverlässiges Signal.',
     maintenanceYears: 3,
   },
 
@@ -547,14 +547,14 @@ export const SENSOR_TYPE_CONFIG: Record<string, SensorTypeConfig> = {
     decimals: 0,
     icon: 'ToggleLeft',
     defaultValue: 0,
-    description: 'Digitaler Füllstandsschalter (XKC-Y25-NPN, berührungslos). Active-Low: 1 = Flüssigkeit erkannt, 0 = kein Kontakt.',
+    description: 'Kapazitiver Füllstandsschalter (PNP/NPN, berührungslos). Polarität im Config-Panel einstellbar.',
     category: 'water',
     // Operating Mode (Phase 2B)
     recommendedMode: 'continuous',
     recommendedTimeout: 60,
     supportsOnDemand: false,
     // Datasheet
-    manufacturer: 'XKC Technology Co. Ltd. (XKC-Y25-NPN, NPN Open-Collector, IP67)',
+    manufacturer: 'XKC Technology Co. Ltd. (z.B. XKC-Y25-NPN oder XKC-Y26S-PNP, berührungslos, IP67)',
     accuracy: 'Digital (0/1)',
     maintenanceYears: 5,
   },

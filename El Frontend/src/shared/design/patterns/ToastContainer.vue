@@ -2,7 +2,7 @@
 /**
  * ToastContainer Component
  *
- * Renders toast notifications in bottom-right corner with:
+ * Renders toast notifications in top-right corner with:
  * - Smooth enter/leave animations
  * - Progress bar for auto-dismiss countdown
  * - Action buttons (Retry, Undo, etc.)
@@ -146,7 +146,7 @@ async function handleAction(toastId: string, action: ToastAction) {
 <style scoped>
 .toast-container {
   position: fixed;
-  bottom: 1.5rem;
+  top: 1.5rem;
   right: 1.5rem;
   z-index: var(--z-toast);
   display: flex;
@@ -370,12 +370,18 @@ async function handleAction(toastId: string, action: ToastAction) {
   }
 }
 
-/* Mobile responsive */
+/* Tablet & Mobile: clear the hamburger bar (.shell__mobile-bar, 48px, visible < 768px) */
+@media (max-width: 767px) {
+  .toast-container {
+    top: calc(48px + 0.5rem);
+  }
+}
+
+/* Mobile: full-width stack */
 @media (max-width: 480px) {
   .toast-container {
     left: 1rem;
     right: 1rem;
-    bottom: 1rem;
     max-width: none;
   }
 }

@@ -284,6 +284,17 @@
   --color-zone-warning:    rgba(234, 179, 8, 0.10);
   --color-zone-normal:     rgba(34, 197, 94, 0.10);
 
+  /* AUT-1099: solid-surface counterpart for the normal zone. --color-zone-normal
+     above is a translucent wash tuned for background use (RangeSlider track,
+     ActuatorCard/AlarmList background) where it sits BEHIND other visible
+     content. A Chart.js doughnut ring segment (GaugeChart) has no such content
+     behind it — at alpha 0.10 it renders as barely-tinted-dark, reading as
+     "durchsichtig" next to the fully opaque --color-status-warning/-alarm used
+     for the adjacent zones. Same green-500 hue, higher alpha so it reads as a
+     clearly colored (but still calmer/desaturated-looking than the saturated
+     warn/alarm zones) surface — ISA-101 neutral-zone intent from AUT-1099. */
+  --color-zone-normal-ring: rgba(34, 197, 94, 0.5);
+
   /* Chart gap overlay */
   --color-chart-gap:        rgba(90, 90, 117, 0.10);
   --color-chart-gap-stroke: rgba(90, 90, 117, 0.25);
@@ -296,6 +307,39 @@
   --slide-over-width-lg:   560px;
   --slide-over-backdrop:   rgba(0, 0, 0, 0.5);
   --slide-over-duration:   300ms;
+
+  /* Toggle switch dimensions (shared .toggle-switch in main.css) */
+  --toggle-width:          40px;
+  --toggle-height:         22px;
+  --toggle-thumb-size:     16px;
+  --toggle-thumb-offset:   2px;
+  --touch-min-target:      44px;
+}
+
+/* Touch density — coarse pointer / touchscreens (Pi). Desktop defaults unchanged. */
+@media (pointer: coarse), (hover: none) {
+  :root {
+    --text-xxs:     0.75rem;    /* 12px */
+    --text-xs:      0.8125rem;  /* 13px */
+    --text-sm:      0.875rem;   /* 14px */
+    --text-base:    1rem;       /* 16px */
+    --toggle-width: 52px;
+    --toggle-height: 28px;
+    --toggle-thumb-size: 22px;
+    --toggle-thumb-offset: 3px;
+  }
+}
+
+/* Explicit touch density (E2E / future settings toggle) — mirrors @media block above */
+:root[data-ui-density="touch"] {
+  --text-xxs:     0.75rem;
+  --text-xs:      0.8125rem;
+  --text-sm:      0.875rem;
+  --text-base:    1rem;
+  --toggle-width: 52px;
+  --toggle-height: 28px;
+  --toggle-thumb-size: 22px;
+  --toggle-thumb-offset: 3px;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -306,6 +350,10 @@
 .grid-auto-sm { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }
 .grid-auto-md { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
 .grid-auto-lg { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); }
+/* Rule-group cards (LogicView + Monitor L2): auto-fit collapses unused tracks so
+   1–2 groups fill the row instead of sitting as 200px sticks next to empty space.
+   min(100%, 22rem) keeps a single column on phones narrower than 360px. */
+.grid-auto-lg-fit { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr)); }
 
 /* Fallback for devices without backdrop-filter (Raspberry Pi, older browsers) */
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {

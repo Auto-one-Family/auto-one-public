@@ -3,9 +3,8 @@
  * DeviceMiniCard Component
  *
  * Compact device card for Level 1 (Zone Overview).
- * Shows: status dot, device name, mock/real badge (via ESPCardBase header),
- * status text line, up to 4 sensor rows with icons and sparklines,
- * and an action row (Öffnen + overflow menu).
+ * Shows: status dot, device name, alert chip in the header when alerts are active,
+ * optional health/suppression line, and sensor/actuator rows.
  *
  * Click: Zoom to Level 2 (device detail) with DOMRect for transition origin.
  * Drag: Header element has .esp-drag-handle for VueDraggable (via ESPCardBase).
@@ -24,6 +23,7 @@ import ESPCardBase from '@/components/esp/ESPCardBase.vue'
 import { getESPStatus, type ESPStatus } from '@/composables/useESPStatus'
 import { useEspStore } from '@/stores/esp'
 import { useAlertCenterStore } from '@/shared/stores/alert-center.store'
+import { useNotificationInboxStore } from '@/shared/stores/notification-inbox.store'
 import { espHealthPresentation } from '@/domain/esp/espHealth'
 import { groupSensorsByBaseType, getSensorConfig, type RawSensor } from '@/utils/sensorDefaults'
 import { getActuatorTypeInfo } from '@/utils/labels'
@@ -38,6 +38,7 @@ interface Props {
 const props = defineProps<Props>()
 const espStore = useEspStore()
 const alertStore = useAlertCenterStore()
+const inboxStore = useNotificationInboxStore()
 
 /** Always bind live fields from esp.store (AUT-580 L1 — avoids VueDraggable local copies going stale). */
 const liveDevice = computed(() => {
@@ -73,6 +74,16 @@ const deviceAlertSeverity = computed(() => {
   if (deviceAlerts.value.some(n => n.severity === 'warning')) return 'warning'
   return 'info'
 })
+
+const deviceAlertChipLabel = computed(() => {
+  const count = deviceAlertCount.value
+  return `${count} aktive${count === 1 ? 'r' : ''} Alert${count === 1 ? '' : 's'} — Inbox öffnen`
+})
+
+function openDeviceAlerts(event: Event): void {
+  event.stopPropagation()
+  inboxStore.openDrawerWithActiveAlertsFocus()
+}
 
 // ── Status ───────────────────────────────────────────────────────────────
 const deviceStatus = computed<ESPStatus>(() => getESPStatus(liveDevice.value))
@@ -323,26 +334,23 @@ const dataOverflowText = computed(() => {
 /** Fallback text when no sensor data */
 const sensorFallback = computed(() => {
   if (sensorDisplays.value.length > 0) return ''
-  const count = sensorCount.value
-  if (count && count > 0) return `${count} Sensoren`
-  return ''
-})
-
-/** Sensor & actuator counts for status line (grouped values, consistent with overflow count) */
-const sensorCount = computed(() => {
   const sensors = liveDevice.value.sensors as RawSensor[] | undefined
   if (Array.isArray(sensors)) {
     const grouped = groupSensorsByBaseType(sensors)
-    return grouped.reduce((sum, g) => sum + g.values.length, 0)
+    const count = grouped.reduce((sum, g) => sum + g.values.length, 0)
+    if (count > 0) return `${count} Sensoren`
+  } else if ((liveDevice.value.sensor_count ?? 0) > 0) {
+    return `${liveDevice.value.sensor_count} Sensoren`
   }
-  return liveDevice.value.sensor_count ?? 0
+  return ''
 })
 
-const actuatorCount = computed(() => {
-  const actuators = (liveDevice.value as { actuators?: unknown[] }).actuators
-  if (Array.isArray(actuators)) return actuators.length
-  return liveDevice.value.actuator_count ?? 0
-})
+const hasStatusLineContent = computed(() =>
+  isDeviceSuppressed.value
+  || Boolean(runtimeHealthBadge.value?.showBadge)
+  || Boolean(handoverBadge.value)
+  || Boolean(lastSeenText.value),
+)
 
 /** Subzone label (if assigned) */
 const subzoneName = computed(() => liveDevice.value.subzone_name || '')
@@ -394,26 +402,32 @@ function handleDeviceDelete() {
     @monitor-nav="handleMonitorNav"
     @delete="handleDeviceDelete"
   >
-    <!-- Header actions slot intentionally empty — settings moved to action row -->
+    <template #badge>
+      <button
+        v-if="deviceAlertCount > 0"
+        type="button"
+        :class="[
+          'device-mini-card__alert-badge',
+          deviceAlertSeverity === 'critical'
+            ? 'device-mini-card__alert-badge--critical'
+            : 'device-mini-card__alert-badge--warning',
+        ]"
+        data-testid="device-alert-chip"
+        :title="deviceAlertChipLabel"
+        :aria-label="deviceAlertChipLabel"
+        @click.stop="openDeviceAlerts"
+        @pointerdown.stop
+        @mousedown.stop
+      >
+        <Bell class="device-mini-card__alert-badge-icon" aria-hidden="true" />
+        {{ deviceAlertCount > 9 ? '9+' : deviceAlertCount }}
+      </button>
+    </template>
 
     <!-- Card content: status line, subzone, sensors -->
     <template #default>
-      <!-- Status line: health badges + last seen + sensor count (dot lives in ESPCardBase header) -->
-      <div class="device-mini-card__status-line">
-        <!-- AUT-619: Active notification-alert badge (Bell icon + count, farblich von Status-Dot unterscheidbar) -->
-        <span
-          v-if="deviceAlertCount > 0"
-          :class="[
-            'device-mini-card__alert-badge',
-            deviceAlertSeverity === 'critical'
-              ? 'device-mini-card__alert-badge--critical'
-              : 'device-mini-card__alert-badge--warning',
-          ]"
-          :title="`${deviceAlertCount} aktive${deviceAlertCount === 1 ? 'r' : ''} Alert${deviceAlertCount === 1 ? '' : 's'}`"
-        >
-          <Bell class="device-mini-card__alert-badge-icon" aria-hidden="true" />
-          {{ deviceAlertCount > 9 ? '9+' : deviceAlertCount }}
-        </span>
+      <!-- Status line: health / suppression / last seen (alert chip lives in header) -->
+      <div v-if="hasStatusLineContent" class="device-mini-card__status-line">
         <span
           v-if="isDeviceSuppressed"
           class="device-mini-card__suppression-pill"
@@ -442,7 +456,6 @@ function handleDeviceDelete() {
           {{ handoverBadge.label }}
         </span>
         <span v-if="lastSeenText" class="device-mini-card__last-seen">· {{ lastSeenText }}</span>
-        <span v-if="sensorCount > 0 || actuatorCount > 0" class="device-mini-card__sensor-count">{{ sensorCount }}S<template v-if="actuatorCount > 0"> / {{ actuatorCount }}A</template></span>
       </div>
 
       <!-- Subzone indicator -->
@@ -664,9 +677,9 @@ function handleDeviceDelete() {
   box-shadow: 0 0 8px currentColor;
 }
 
-/* Smaller name text */
+/* Smaller name text — desktop compact; touch via coarse/hover-none below */
 :deep(.esp-card-base__name) {
-  font-size: var(--text-xs);
+  font-size: var(--text-sm);
   font-weight: 500;
 }
 
@@ -766,13 +779,24 @@ function handleDeviceDelete() {
 .device-mini-card__alert-badge {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 2px;
+  min-width: 44px;
+  min-height: 44px;
   padding: 1px var(--space-2);
   border-radius: var(--radius-full);
+  font: inherit;
   font-size: var(--text-xxs);
   font-weight: 700;
   white-space: nowrap;
   flex-shrink: 0;
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.device-mini-card__alert-badge:focus-visible {
+  outline: 2px solid var(--color-iridescent-1);
+  outline-offset: 2px;
 }
 
 .device-mini-card__alert-badge--critical {
@@ -781,10 +805,20 @@ function handleDeviceDelete() {
   border: 1px solid color-mix(in srgb, var(--color-error) 35%, transparent);
 }
 
+.device-mini-card__alert-badge--critical:hover {
+  background: color-mix(in srgb, var(--color-error) 22%, transparent);
+  border-color: color-mix(in srgb, var(--color-error) 50%, transparent);
+}
+
 .device-mini-card__alert-badge--warning {
   color: var(--color-warning);
   background: color-mix(in srgb, var(--color-warning) 14%, transparent);
   border: 1px solid color-mix(in srgb, var(--color-warning) 35%, transparent);
+}
+
+.device-mini-card__alert-badge--warning:hover {
+  background: color-mix(in srgb, var(--color-warning) 22%, transparent);
+  border-color: color-mix(in srgb, var(--color-warning) 50%, transparent);
 }
 
 .device-mini-card__alert-badge-icon {
@@ -814,13 +848,6 @@ function handleDeviceDelete() {
   font-size: var(--text-xxs);
 }
 
-.device-mini-card__sensor-count {
-  margin-left: auto;
-  font-family: var(--font-mono);
-  font-size: var(--text-xxs);
-  color: var(--color-text-muted);
-  font-variant-numeric: tabular-nums;
-}
 
 /* ── Subzone indicator ── */
 .device-mini-card__subzone {
@@ -932,6 +959,18 @@ function handleDeviceDelete() {
 @media (max-width: 640px) {
   .device-mini-card {
     max-width: none;
+  }
+}
+
+/* Touch density: tokens.css @media (pointer: coarse) + hover:none (Pi touchscreen) */
+@media (pointer: coarse), (hover: none) {
+  :deep(.esp-card-base__name) {
+    font-size: var(--text-base);
+  }
+
+  .device-mini-card__sensor-icon {
+    width: 14px;
+    height: 14px;
   }
 }
 </style>
