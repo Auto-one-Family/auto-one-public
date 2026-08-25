@@ -9,6 +9,8 @@ import {
   formatNumber,
   formatInteger,
   formatSensorValue,
+  unitFromChartLabel,
+  isFirstTooltipItemForDataset,
   formatPercent,
   formatUptime,
   formatUptimeShort,
@@ -54,6 +56,12 @@ describe('formatNumber', () => {
 
   it('formats thousands with German separator', () => {
     expect(formatNumber(1234.56, 2)).toBe('1.234,56')
+  })
+
+  it('rounds Chart.js floating-point tick artifacts', () => {
+    expect(formatNumber(63.400000000000006, 1)).toBe('63,4')
+    expect(formatNumber(62.800000000000004, 1)).toBe('62,8')
+    expect(formatNumber(63.00000000000001, 1)).toBe('63,0')
   })
 })
 
@@ -102,6 +110,49 @@ describe('formatSensorValue', () => {
   it('formats small values correctly (AUT-26)', () => {
     expect(formatSensorValue(42, '°C', 1)).toBe('42,0 °C')
     expect(formatSensorValue(999, 'ppm', 0)).toBe('999 ppm')
+  })
+
+  it('rounds floating-point artifacts for axis labels', () => {
+    expect(formatSensorValue(63.400000000000006, '%RH', 1)).toBe('63,4 %RH')
+    expect(formatSensorValue(62.800000000000004, '%RH', 1)).toBe('62,8 %RH')
+  })
+
+  it('formats 7d VPD as one number plus kPa (AUT-837 E2)', () => {
+    expect(formatSensorValue(1.78, 'kPa', 2)).toBe('1,78 kPa')
+  })
+
+  it('formats EC tooltip as one µS/cm value without mS conversion (AUT-837 E2)', () => {
+    expect(formatSensorValue(1350.5, 'µS/cm', 2)).toBe('1.350,50 µS/cm')
+  })
+})
+
+describe('unitFromChartLabel', () => {
+  it('should use the last parenthetical as unit', () => {
+    expect(unitFromChartLabel('VPD (berechnet) (kPa)')).toBe('kPa')
+    expect(unitFromChartLabel('EC (µS/cm)')).toBe('µS/cm')
+  })
+
+  it('should fall back when the label has no unit paren', () => {
+    expect(unitFromChartLabel('VPD (berechnet)', 'kPa')).toBe('berechnet')
+    expect(unitFromChartLabel('Sensor', 'µS/cm')).toBe('µS/cm')
+    expect(unitFromChartLabel(undefined, 'kPa')).toBe('kPa')
+  })
+
+  it('should keep the unit when AUT-1543 appends zone or subzone after the paren', () => {
+    expect(unitFromChartLabel('Substrat (%) · Z1')).toBe('%')
+    expect(unitFromChartLabel('Substrat (%) · Z1 / SZ-A')).toBe('%')
+    expect(unitFromChartLabel('Temp&Hum (Luftfeuchte) (°C) · Haus A')).toBe('°C')
+  })
+})
+
+describe('isFirstTooltipItemForDataset', () => {
+  it('should keep one row per dataset when neighbor buckets share a hover', () => {
+    const items = [
+      { datasetIndex: 0, parsed: { y: 1.78 } },
+      { datasetIndex: 0, parsed: { y: 1.79 } },
+    ]
+    expect(isFirstTooltipItemForDataset(items[0], 0, items)).toBe(true)
+    expect(isFirstTooltipItemForDataset(items[1], 1, items)).toBe(false)
   })
 })
 

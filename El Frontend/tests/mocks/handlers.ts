@@ -4,7 +4,7 @@
  * Mock API responses for testing.
  * These handlers intercept HTTP requests and return mock responses.
  *
- * API Endpoints Reference: .claude/reference/api/REST_ENDPOINTS.md
+ * API Endpoints Reference: REST endpoint types in src/types
  */
 
 import { http, HttpResponse } from 'msw'
@@ -63,7 +63,7 @@ const mockSensor = {
   subzone_id: null,
   raw_value: 23.5,
   processed_value: 23.5,
-  unit: '°C',
+  unit: 'Â°C',
   quality: 'excellent' as const,
   data_source: 'mock' as const,
   raw_mode: true,
@@ -156,7 +156,7 @@ const mockHumiditySensorESP = {
       device_type: null,
       multi_values: {
         humidity: { value: 38.2, unit: '%', quality: 'excellent' },
-        temperature: { value: 23.1, unit: '°C', quality: 'excellent' }
+        temperature: { value: 23.1, unit: 'Â°C', quality: 'excellent' }
       }
     }
   ],
@@ -440,7 +440,7 @@ const sensorHandlers = [
           timestamp: new Date().toISOString(),
           raw_value: 23.5,
           processed_value: 23.5,
-          unit: '°C',
+          unit: 'Â°C',
           quality: 'excellent'
         }
       ],
@@ -598,7 +598,7 @@ const zoneHandlers = [
 const mockLogicRule = {
   id: 'rule-001',
   name: 'Temperature Fan Control',
-  description: 'Turn on fan when temperature exceeds 25°C',
+  description: 'Turn on fan when temperature exceeds 25Â°C',
   enabled: true,
   conditions: [
     {
@@ -627,7 +627,7 @@ const mockLogicRule = {
   updated_at: '2026-01-01T00:00:00Z'
 }
 
-// Humidity → Humidifier logic rule
+// Humidity â†’ Humidifier logic rule
 const mockHumidityRule = {
   id: 'rule-002',
   name: 'Humidity Humidifier Control',
@@ -661,7 +661,7 @@ const mockHumidityRule = {
   updated_at: '2026-01-15T00:00:00Z'
 }
 
-// AND rule: Temperature > 30°C AND Humidity < 40% → Humidifier ON
+// AND rule: Temperature > 30Â°C AND Humidity < 40% â†’ Humidifier ON
 const mockAndRule = {
   id: 'rule-003',
   name: 'Heat & Dry Protection',
@@ -703,7 +703,7 @@ const mockAndRule = {
   updated_at: '2026-02-01T00:00:00Z'
 }
 
-// OR rule: Soil moisture low OR manual trigger → Irrigation ON
+// OR rule: Soil moisture low OR manual trigger â†’ Irrigation ON
 const mockOrRule = {
   id: 'rule-004',
   name: 'Irrigation Fallback',
@@ -745,7 +745,7 @@ const mockOrRule = {
   updated_at: '2026-02-01T00:00:00Z'
 }
 
-// Multi-Action rule: Temperature > 35°C → Fan ON + Alert
+// Multi-Action rule: Temperature > 35Â°C â†’ Fan ON + Alert
 const mockMultiActionRule = {
   id: 'rule-005',
   name: 'Heat Emergency Multi-Action',
@@ -773,7 +773,7 @@ const mockMultiActionRule = {
       type: 'notification',
       channel: 'websocket',
       target: 'dashboard',
-      message_template: 'CRITICAL: Temperature {value}°C exceeds 35°C!'
+      message_template: 'CRITICAL: Temperature {value}Â°C exceeds 35Â°C!'
     }
   ],
   priority: 10,
@@ -1394,7 +1394,7 @@ const mockPlugin = {
   is_enabled: true,
   config: { include_containers: true, alert_on_degraded: false },
   config_schema: {
-    include_containers: { type: 'boolean', default: true, label: 'Container prüfen' },
+    include_containers: { type: 'boolean', default: true, label: 'Container prÃ¼fen' },
     alert_on_degraded: { type: 'boolean', default: false, label: 'Alert bei Degraded' },
   },
   capabilities: ['validate', 'monitor'],
@@ -1438,7 +1438,7 @@ const mockPluginWithSelect = {
   is_enabled: true,
   config: { device_mode: 'mock', auto_heartbeat: true },
   config_schema: {
-    device_mode: { type: 'select', options: ['mock', 'real', 'hybrid'], default: 'mock', label: 'Geräte-Modus' },
+    device_mode: { type: 'select', options: ['mock', 'real', 'hybrid'], default: 'mock', label: 'GerÃ¤te-Modus' },
     auto_heartbeat: { type: 'boolean', default: true, label: 'Auto-Heartbeat' },
   },
   capabilities: ['configure', 'validate'],

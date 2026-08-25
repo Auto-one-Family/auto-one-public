@@ -1,10 +1,12 @@
 /**
  * Tests for ESPSettingsSheet accessibility and structure.
  * Verifies dialog role, ARIA attributes, section rendering.
+ * Also covers domain/tank hydrate-on-open (store SSOT).
  */
 
 import { describe, it, expect, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { nextTick } from 'vue'
 import ESPSettingsSheet from '@/components/esp/ESPSettingsSheet.vue'
 
 const mockDevice = {
@@ -22,12 +24,16 @@ const mockDevice = {
   hardware_type: 'ESP32',
   sensors: [],
   actuators: [],
+  domain: null as string | null,
+  tank_id: null as string | null,
 }
+
+const storeDevices = [mockDevice]
 
 // Mock all external dependencies
 vi.mock('@/stores/esp', () => ({
   useEspStore: () => ({
-    devices: [mockDevice],
+    devices: storeDevices,
     triggerHeartbeat: vi.fn(),
     deleteDevice: vi.fn(),
     updateDevice: vi.fn(),
@@ -40,6 +46,15 @@ vi.mock('@/shared/stores', () => ({
     pushModal: vi.fn(),
     popModal: vi.fn(),
     confirm: vi.fn(),
+  }),
+}))
+
+vi.mock('@/shared/stores/tank.store', () => ({
+  useTankStore: () => ({
+    tanks: [
+      { id: 'tank-uuid-1', name: 'Nährlösung', zone_id: 'zone-a' },
+    ],
+    fetchTanks: vi.fn().mockResolvedValue([]),
   }),
 }))
 
@@ -72,10 +87,10 @@ vi.mock('@/utils/logger', () => ({
   }),
 }))
 
-function mountSheet(isOpen = true) {
+function mountSheet(isOpen = true, device: Record<string, unknown> = mockDevice) {
   return mount(ESPSettingsSheet, {
     props: {
-      device: mockDevice as any,
+      device: device as any,
       isOpen,
     },
     global: {
@@ -84,6 +99,11 @@ function mountSheet(isOpen = true) {
         ZoneAssignmentPanel: { template: '<div class="zone-panel" />' },
         SensorConfigPanel: { template: '<div class="sensor-panel" />' },
         ActuatorConfigPanel: { template: '<div class="actuator-panel" />' },
+        BaseSelect: {
+          props: ['modelValue', 'options', 'label'],
+          template:
+            '<select :aria-label="label" :value="modelValue" @change="$emit(\'update:modelValue\', $event.target.value)"><option v-for="o in options" :key="o.value" :value="o.value">{{ o.label }}</option></select>',
+        },
       },
     },
     attachTo: document.body,
@@ -158,6 +178,31 @@ describe('ESPSettingsSheet', () => {
   it('does not render when closed', () => {
     const wrapper = mountSheet(false)
     expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('should hydrate domain and tank from store on open (immediate sync)', async () => {
+    storeDevices[0] = {
+      ...mockDevice,
+      domain: 'wasser',
+      tank_id: 'tank-uuid-1',
+    }
+    // Stale props snapshot without domain — reproduces HardwareView.settingsDevice bug
+    const staleProps = {
+      ...mockDevice,
+      domain: null,
+      tank_id: null,
+    }
+    const wrapper = mountSheet(true, staleProps)
+    await nextTick()
+
+    const domainSelect = wrapper.find('select[aria-label="Auswertungs-Domäne"]')
+    expect(domainSelect.exists()).toBe(true)
+    expect((domainSelect.element as HTMLSelectElement).value).toBe('wasser')
+
+    const tankSelect = wrapper.find('select[aria-label="Zugeordneter Tank"]')
+    expect(tankSelect.exists()).toBe(true)
+    expect((tankSelect.element as HTMLSelectElement).value).toBe('tank-uuid-1')
     wrapper.unmount()
   })
 })

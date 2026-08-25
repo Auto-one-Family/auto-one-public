@@ -74,7 +74,7 @@ vi.mock('@/composables/useToast', () => ({
 
 // Import store after mocks are set up
 import { useEspStore } from '@/stores/esp'
-import { useActuatorStore, ACTUATOR_UI_COMMAND_COOLDOWN_MS } from '@/shared/stores/actuator.store'
+import { useActuatorStore } from '@/shared/stores/actuator.store'
 import { actuatorsApi } from '@/api/actuators'
 import { websocketService } from '@/services/websocket'
 
@@ -1141,25 +1141,32 @@ describe('ESP Store - Actuator Commands', () => {
       // Should not throw
     })
 
-    it('should block second command within UI cooldown (AUT-481)', async () => {
-      const sendSpy = vi.spyOn(actuatorsApi, 'sendCommand')
+    it('sets optimistic last_command_at on the targeted GPIO only', async () => {
+      vi.setSystemTime(new Date('2026-07-06T20:50:00.000Z'))
+      const nowIso = '2026-07-06T20:50:00.000Z'
       const store = useEspStore()
-      store.devices = [{ ...mockESPDevice, device_id: 'ESP_12345678', esp_id: 'ESP_12345678', status: 'online' }]
+      store.devices = [{
+        ...mockESPDevice,
+        device_id: 'ESP_12345678',
+        esp_id: 'ESP_12345678',
+        status: 'online',
+        last_heartbeat: nowIso,
+        last_seen: nowIso,
+        actuators: [
+          { ...mockActuator, gpio: 5, last_command_at: '2026-07-06T19:00:00.000Z' },
+          { ...mockActuator, gpio: 13, last_command_at: '2026-07-06T19:30:00.000Z' },
+        ],
+      }]
 
-      await store.sendActuatorCommand('ESP_12345678', 16, 'ON')
-      await store.sendActuatorCommand('ESP_12345678', 16, 'OFF')
+      await store.sendActuatorCommand('ESP_12345678', 13, 'ON')
 
-      expect(sendSpy).toHaveBeenCalledTimes(1)
-      expect(mockToastFunctions.warning).toHaveBeenCalledWith(
-        expect.stringContaining('warten'),
-        expect.objectContaining({ dedupeKey: 'actuator-cooldown:ESP_12345678:16' }),
-      )
+      const device = store.devices.find(d => d.esp_id === 'ESP_12345678')
+      const gpio5 = device?.actuators?.find(a => a.gpio === 5)
+      const gpio13 = device?.actuators?.find(a => a.gpio === 13)
 
-      vi.advanceTimersByTime(ACTUATOR_UI_COMMAND_COOLDOWN_MS)
-      await store.sendActuatorCommand('ESP_12345678', 16, 'OFF')
-
-      expect(sendSpy).toHaveBeenCalledTimes(2)
-      sendSpy.mockRestore()
+      expect(gpio5?.last_command_at).toBe('2026-07-06T19:00:00.000Z')
+      expect(gpio13?.last_command_at).toBe(nowIso)
+      expect(gpio13?.state).toBe(true)
     })
 
     it('should call debugApi for mock ESP', async () => {

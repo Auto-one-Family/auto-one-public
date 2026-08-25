@@ -49,6 +49,7 @@ vi.mock('@/api/sensors', () => ({
 }))
 
 import { useCalibrationWizard } from '@/composables/useCalibrationWizard'
+import { useEspStore } from '@/stores/esp'
 
 describe('useCalibrationWizard', () => {
   beforeEach(() => {
@@ -156,6 +157,87 @@ describe('useCalibrationWizard', () => {
     expect(calibrationApiMock.applySession).toHaveBeenCalledTimes(1)
     expect(calibrationApiMock.getSession).toHaveBeenCalled()
     expect(wizard.phase.value).toBe('done')
+  })
+
+  it('should patch the existing store sensor calibration after apply', async () => {
+    const appliedAt = '2026-08-22T12:00:00.000Z'
+    calibrationApiMock.startSession.mockResolvedValue({
+      id: 'session-store-1',
+      status: 'pending',
+      method: 'linear_2point',
+      sensor_type: 'moisture',
+      calibration_points: { points: [] },
+    })
+    calibrationApiMock.addPoint.mockResolvedValue({
+      id: 'session-store-1',
+      status: 'collecting',
+      method: 'linear_2point',
+      sensor_type: 'moisture',
+      calibration_points: {
+        points: [{ id: 'p-1', point_role: 'dry' }, { id: 'p-2', point_role: 'wet' }],
+      },
+    })
+    calibrationApiMock.finalizeSession.mockResolvedValue({
+      id: 'session-store-1',
+      status: 'finalizing',
+      method: 'linear_2point',
+      sensor_type: 'moisture',
+      calibration_result: { slope: 1, offset: 0 },
+      failure_reason: null,
+    })
+    calibrationApiMock.applySession.mockResolvedValue({
+      id: 'session-store-1',
+      status: 'applied',
+      method: 'linear_2point',
+      sensor_type: 'moisture',
+      calibration_result: { slope: 1, offset: 0 },
+      completed_at: appliedAt,
+      failure_reason: null,
+    })
+    calibrationApiMock.getSession.mockResolvedValue({
+      id: 'session-store-1',
+      status: 'applied',
+      method: 'linear_2point',
+      sensor_type: 'moisture',
+      calibration_result: { slope: 1, offset: 0 },
+      completed_at: appliedAt,
+      failure_reason: null,
+    })
+
+    const espStore = useEspStore()
+    espStore.replaceDevices([{
+      device_id: 'ESP_TEST_001',
+      esp_id: 'ESP_TEST_001',
+      sensors: [{
+        gpio: 4,
+        sensor_type: 'moisture',
+        name: 'Soil',
+        raw_value: null,
+        unit: '%',
+        quality: 'good',
+        raw_mode: true,
+        last_read: null,
+        calibration: null,
+      }],
+    }])
+
+    const wizard = useCalibrationWizard({
+      skipSelect: true,
+      espId: 'ESP_TEST_001',
+      gpio: 4,
+      sensorType: 'moisture',
+    })
+    await wizard.onPoint1Captured({ raw: 1000, reference: 0 })
+    await wizard.onPoint2Captured({ raw: 500, reference: 100 })
+    await wizard.submitCalibration()
+
+    const patched = (espStore.devices[0]?.sensors ?? [])[0]
+    expect(wizard.phase.value).toBe('done')
+    expect(patched?.calibration).toMatchObject({
+      slope: 1,
+      offset: 0,
+      derived: { calibrated_at: appliedAt },
+    })
   })
 
   it('setzt overwrite=true bei erneutem Rollenpunkt', async () => {

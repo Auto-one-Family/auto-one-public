@@ -587,11 +587,10 @@ describe('Humidity Rule - Connection Validation', () => {
     expect(result.valid).toBe(true)
   })
 
-  it('validates sensor → actuator connection as invalid (must go through logic/condition)', () => {
+  it('validates sensor → actuator connection as valid (AUT-1318 routing edge)', () => {
     const store = useLogicStore()
     const result = store.isValidConnection('sensor', 'actuator', 'sensor-1', 'actuator-1')
-    expect(result.valid).toBe(false)
-    expect(result.reason).toBeDefined()
+    expect(result.valid).toBe(true)
   })
 
   it('validates logic → actuator connection as valid', () => {

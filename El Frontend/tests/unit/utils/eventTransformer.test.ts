@@ -14,6 +14,7 @@ import {
   transformEventMessage,
   normalizeActuatorOnState,
   actuatorDutyToDisplayPercent,
+  pwmPercentToNormalizedCommand,
   type EventCategory
 } from '@/utils/eventTransformer'
 import type { UnifiedEvent } from '@/types/websocket-events'
@@ -159,33 +160,36 @@ describe('formatMemory', () => {
 // formatSensorValue
 // =============================================================================
 
+// AUT-885: formatSensorValue liefert NUR die Zahl. Die Einheit kommt aus data.unit
+// (Server-Registry) und wird im Summary angehaengt — keine Einheit im Formatter,
+// damit es keine Dopplung gibt (z.B. "1200 µS/cm µS/cm").
 describe('formatSensorValue', () => {
-  it('formats temperature with 1 decimal', () => {
-    expect(formatSensorValue(23.5, 'temperature')).toBe('23.5 °C')
+  it('formats temperature with 1 decimal (no unit)', () => {
+    expect(formatSensorValue(23.5, 'temperature')).toBe('23.5')
   })
 
-  it('formats ds18b20 with 1 decimal', () => {
-    expect(formatSensorValue(23.5, 'ds18b20')).toBe('23.5 °C')
+  it('formats ds18b20 with 1 decimal (no unit)', () => {
+    expect(formatSensorValue(23.5, 'ds18b20')).toBe('23.5')
   })
 
-  it('formats humidity as percentage', () => {
-    expect(formatSensorValue(65, 'humidity')).toBe('65%')
+  it('rounds humidity to integer (no unit)', () => {
+    expect(formatSensorValue(65, 'humidity')).toBe('65')
   })
 
-  it('formats pH with 2 decimals', () => {
+  it('formats pH with 2 decimals (dimensionless)', () => {
     expect(formatSensorValue(7.12, 'ph')).toBe('7.12')
   })
 
-  it('formats EC with unit', () => {
-    expect(formatSensorValue(1200, 'ec')).toBe('1200 µS/cm')
+  it('formats EC value only (unit comes from event data)', () => {
+    expect(formatSensorValue(1200, 'ec')).toBe('1200')
   })
 
   it('formats unknown type with 1 decimal', () => {
     expect(formatSensorValue(42.567, undefined)).toBe('42.6')
   })
 
-  it('rounds humidity to integer', () => {
-    expect(formatSensorValue(65.7, 'humidity')).toBe('66%')
+  it('rounds humidity 65.7 to 66 (no unit)', () => {
+    expect(formatSensorValue(65.7, 'humidity')).toBe('66')
   })
 })
 
@@ -232,8 +236,26 @@ describe('transformEventMessage - sensor_data', () => {
     const result = transformEventMessage(event)
     expect(result.type).toBe('sensor_data')
     expect(result.title).toBe('SENSORDATEN')
-    expect(result.summary).toContain('23.5')
+    expect(result.summary).toContain('23.5 °C')
     expect(result.category).toBe('sensors')
+    // AUT-885: Einheit darf nur einmal erscheinen (keine "°C °C"-Dopplung)
+    expect(result.summary).not.toContain('°C °C')
+  })
+
+  it('appends EC unit exactly once (AUT-885 regression)', () => {
+    const event = makeEvent({
+      event_type: 'sensor_data',
+      gpio: 36,
+      data: {
+        sensor_type: 'ec',
+        value: 353,
+        unit: 'µS/cm'
+      }
+    })
+    const result = transformEventMessage(event)
+    expect(result.summary).toContain('353 µS/cm')
+    // Genau ein Vorkommen der Einheit — nicht "353 µS/cm µS/cm"
+    expect(result.summary.match(/µS\/cm/g)?.length).toBe(1)
   })
 })
 
@@ -336,6 +358,15 @@ describe('normalizeActuatorOnState / actuatorDutyToDisplayPercent', () => {
     expect(actuatorDutyToDisplayPercent(0.5)).toBe(50)
     expect(actuatorDutyToDisplayPercent(255)).toBe(100)
     expect(actuatorDutyToDisplayPercent(128)).toBe(50)
+  })
+
+  it('converts UI percent to normalized command value', () => {
+    expect(pwmPercentToNormalizedCommand(0)).toBe(0)
+    expect(pwmPercentToNormalizedCommand(50)).toBe(0.5)
+    expect(pwmPercentToNormalizedCommand(100)).toBe(1)
+    expect(pwmPercentToNormalizedCommand(28)).toBe(0.28)
+    expect(pwmPercentToNormalizedCommand(150)).toBe(1)
+    expect(pwmPercentToNormalizedCommand(-5)).toBe(0)
   })
 })
 
@@ -489,6 +520,69 @@ describe('transformEventMessage - unknown event', () => {
     expect(result.type).toBe('custom_event')
     expect(result.title).toBe('CUSTOM EVENT')
     expect(result.summary).toBe('Custom message')
+  })
+})
+
+// =============================================================================
+// transformEventMessage - system_event (nested sub-type)
+// =============================================================================
+
+describe('transformEventMessage - system_event', () => {
+  it('resolves mqtt_disconnected from nested data.event (server broadcast field)', () => {
+    const event = makeEvent({
+      event_type: 'system_event',
+      message: '',
+      data: { event: 'mqtt_disconnected', timestamp: '2026-06-21T16:32:08Z' },
+    })
+    const result = transformEventMessage(event)
+    expect(result.type).toBe('system_event')
+    expect(result.titleDE).toBe('MQTT-Verbindung getrennt')
+    expect(result.summary).not.toBe('Keine Details verfügbar')
+    expect(result.summary.toLowerCase()).toContain('broker')
+    expect(result.category).toBe('system')
+  })
+
+  it('also resolves the documented contract field data.event_type', () => {
+    const event = makeEvent({
+      event_type: 'system_event',
+      message: '',
+      data: { event_type: 'mqtt_disconnected' },
+    })
+    const result = transformEventMessage(event)
+    expect(result.titleDE).toBe('MQTT-Verbindung getrennt')
+  })
+
+  it('includes phase and status for database_restore_status', () => {
+    const event = makeEvent({
+      event_type: 'system_event',
+      message: '',
+      data: { event: 'database_restore_status', phase: 'terminal', status: 'success' },
+    })
+    const result = transformEventMessage(event)
+    expect(result.titleDE).toBe('Datenbank-Wiederherstellung')
+    expect(result.summary).toContain('Phase: terminal')
+    expect(result.summary).toContain('Status: success')
+  })
+
+  it('humanizes unknown sub-types instead of showing the raw key', () => {
+    const event = makeEvent({
+      event_type: 'system_event',
+      message: '',
+      data: { event: 'some_future_event' },
+    })
+    const result = transformEventMessage(event)
+    expect(result.titleDE).toBe('Some Future Event')
+    expect(result.summary).not.toBe('Keine Details verfügbar')
+  })
+
+  it('prefers an explicit server message when present', () => {
+    const event = makeEvent({
+      event_type: 'system_event',
+      message: '',
+      data: { event: 'mqtt_disconnected', message: 'Broker 10.0.0.5 nicht erreichbar' },
+    })
+    const result = transformEventMessage(event)
+    expect(result.summary).toBe('Broker 10.0.0.5 nicht erreichbar')
   })
 })
 

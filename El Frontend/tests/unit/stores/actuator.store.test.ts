@@ -1,10 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import type { ESPDevice } from '@/api/esp'
-import {
-  useActuatorStore,
-  ACTUATOR_UI_COMMAND_COOLDOWN_MS,
-} from '@/shared/stores/actuator.store'
+import { useActuatorStore } from '@/shared/stores/actuator.store'
 
 const mockListIntentOutcomes = vi.fn()
 
@@ -333,29 +330,6 @@ describe('actuator.store', () => {
     expect(reconciledCount).toBe(1)
     const intent = store.getActuatorIntent('ESP_1', 5)
     expect(intent?.state).toBe('terminal_failed')
-  })
-
-  it('blockiert zweiten UI-Befehl innerhalb ACTUATOR_UI_COMMAND_COOLDOWN_MS', () => {
-    const store = useActuatorStore()
-
-    expect(store.isActuatorCommandInCooldown('ESP_1', 14)).toBe(false)
-    store.recordActuatorCommandSent('ESP_1', 14)
-    expect(store.isActuatorCommandInCooldown('ESP_1', 14)).toBe(true)
-    expect(store.getActuatorCooldownRemainingMs('ESP_1', 14)).toBeGreaterThan(0)
-
-    vi.advanceTimersByTime(ACTUATOR_UI_COMMAND_COOLDOWN_MS)
-
-    expect(store.isActuatorCommandInCooldown('ESP_1', 14)).toBe(false)
-    expect(store.getActuatorCooldownRemainingMs('ESP_1', 14)).toBe(0)
-  })
-
-  it('cooldown ist pro esp:gpio isoliert', () => {
-    const store = useActuatorStore()
-    store.recordActuatorCommandSent('ESP_1', 14)
-
-    expect(store.isActuatorCommandInCooldown('ESP_1', 14)).toBe(true)
-    expect(store.isActuatorCommandInCooldown('ESP_1', 15)).toBe(false)
-    expect(store.isActuatorCommandInCooldown('ESP_2', 14)).toBe(false)
   })
 
   it('mappt fw_* config_response auf einziges pending Config-Intent pro ESP', () => {

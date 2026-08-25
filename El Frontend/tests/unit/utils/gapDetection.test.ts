@@ -14,6 +14,7 @@ import {
   computeExpectedInterval,
   calculateMedianInterval,
   resolutionToMs,
+  lastFiniteSampleX,
 } from '@/utils/gapDetection'
 
 const HOUR = 3_600_000
@@ -97,5 +98,61 @@ describe('resolutionToMs', () => {
     expect(resolutionToMs('1h')).toBe(HOUR)
     expect(resolutionToMs('raw')).toBe(0)
     expect(resolutionToMs(null)).toBe(0)
+  })
+})
+
+describe('lastFiniteSampleX', () => {
+  it('should use the last sample timestamp, not a later wall-clock window', () => {
+    const lastSample = Date.UTC(2026, 7, 23, 12, 0, 0)
+    const wallClock = lastSample + 5 * 60 * 1000
+    const max = lastFiniteSampleX([
+      { data: [{ x: lastSample - HOUR }, { x: lastSample }] },
+    ])
+    expect(max).toBe(lastSample)
+    expect(max).toBeLessThan(wallClock)
+  })
+
+  it('should return null when datasets have no finite samples', () => {
+    expect(lastFiniteSampleX([{ data: [] }])).toBeNull()
+    expect(lastFiniteSampleX([])).toBeNull()
+  })
+})
+
+/**
+ * AUT-1545: L3-7d detailChartData uses the same helper chain as
+ * MonitorExpanded1hChart.chartData (median → expected → insertGapMarkers).
+ */
+describe('L3-7d detailChartData gap path (AUT-1545)', () => {
+  function toChartPoints(points: GapDataPoint[]): Array<{ x: number; y: number | null }> {
+    const medianMs = calculateMedianInterval(points)
+    const expectedMs = computeExpectedInterval(medianMs, null, points.length)
+    return insertGapMarkers(points, expectedMs).map((p) => ({
+      x: p.timestamp.getTime(),
+      y: p.value,
+    }))
+  }
+
+  it('should insert null markers for a reconnect hole above median × multiplier', () => {
+    // Hourly 7d-style buckets with a 6h reconnect hole (00–02, then 08–10).
+    const points = hourlyPoints([0, 1, 2, 8, 9, 10])
+    const data = toChartPoints(points)
+    const nulls = data.filter((p) => p.y === null)
+    expect(nulls.length).toBe(2)
+    expect(data.some((p) => p.y !== null)).toBe(true)
+  })
+
+  it('should keep a dense hourly series continuous', () => {
+    const points = hourlyPoints([0, 1, 2, 3, 4, 5])
+    const data = toChartPoints(points)
+    expect(data.filter((p) => p.y === null)).toHaveLength(0)
+    expect(data).toHaveLength(points.length)
+  })
+
+  it('should keep lastFiniteSampleX on the last sample after gap markers (AUT-837 E1)', () => {
+    const points = hourlyPoints([0, 1, 2, 8, 9, 10])
+    const lastSample = points[points.length - 1].timestamp.getTime()
+    const data = toChartPoints(points)
+    const max = lastFiniteSampleX([{ data }])
+    expect(max).toBe(lastSample)
   })
 })

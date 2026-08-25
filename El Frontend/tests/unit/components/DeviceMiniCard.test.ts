@@ -1,9 +1,10 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { defineComponent } from 'vue'
 import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import DeviceMiniCard from '@/components/dashboard/DeviceMiniCard.vue'
 import { useEspStore } from '@/stores/esp'
+import { useNotificationInboxStore } from '@/shared/stores/notification-inbox.store'
 
 vi.mock('@/composables/useESPStatus', () => ({
   getESPStatus: () => 'online',
@@ -20,6 +21,7 @@ const ESPCardBaseStub = defineComponent({
       <button data-testid="emit-change-zone" @click="$emit('change-zone')">change-zone</button>
       <button data-testid="emit-monitor-nav" @click="$emit('monitor-nav')">monitor-nav</button>
       <button data-testid="emit-delete" @click="$emit('delete')">delete</button>
+      <slot name="badge" />
       <slot />
     </div>
   `,
@@ -80,6 +82,24 @@ describe('DeviceMiniCard', () => {
     expect(wrapper.emitted('monitor-nav')?.[0]).toEqual([device])
   })
 
+  it('should not show sensor or actuator count chips', () => {
+    const wrapper = mountCard({
+      sensors: [
+        { gpio: 4, sensor_type: 'ds18b20', raw_value: 22.1, name: 'Temperatur' },
+      ],
+      sensor_count: 3,
+      actuators: [
+        { gpio: 16, actuator_type: 'relay', name: 'Pumpe', state: 'off' },
+      ],
+      actuator_count: 2,
+    })
+
+    expect(wrapper.text()).not.toMatch(/\d+S/)
+    expect(wrapper.text()).not.toMatch(/\d+A/)
+    expect(wrapper.text()).not.toContain('3S')
+    expect(wrapper.text()).not.toContain('2A')
+  })
+
   it('does not show stale fallback sensor_count when sensors array is empty', () => {
     const wrapper = mountCard({
       sensors: [],
@@ -90,5 +110,41 @@ describe('DeviceMiniCard', () => {
 
     expect(wrapper.text()).not.toContain('2 Sensoren')
     expect(wrapper.text()).toContain('Keine Sensoren oder Aktoren')
+  })
+
+  it('should open the notification drawer from the alert chip without emitting card click', async () => {
+    const wrapper = mountCard()
+    const inboxStore = useNotificationInboxStore()
+    inboxStore.notifications = [{
+      id: 'alert-1',
+      user_id: 1,
+      channel: 'websocket',
+      severity: 'warning',
+      category: 'system',
+      title: 'pH hoch',
+      body: null,
+      metadata: { esp_id: 'ESP_TEST_001' },
+      source: 'sensor_threshold',
+      is_read: false,
+      is_archived: false,
+      digest_sent: false,
+      parent_notification_id: null,
+      fingerprint: null,
+      created_at: new Date().toISOString(),
+      updated_at: null,
+      read_at: null,
+      status: 'active',
+      acknowledged_at: null,
+      acknowledged_by: null,
+      resolved_at: null,
+      correlation_id: null,
+    }]
+    await wrapper.vm.$nextTick()
+
+    const openSpy = vi.spyOn(inboxStore, 'openDrawerWithActiveAlertsFocus').mockImplementation(() => {})
+    await wrapper.get('[data-testid="device-alert-chip"]').trigger('click')
+
+    expect(openSpy).toHaveBeenCalledTimes(1)
+    expect(wrapper.emitted('click')).toBeFalsy()
   })
 })

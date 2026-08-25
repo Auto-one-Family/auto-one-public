@@ -1145,6 +1145,126 @@ describe('Logic Store - WebSocket Integration', () => {
 })
 
 // =============================================================================
+// AUT-1304: paired_rule_id + warnings roundtrip (store merge)
+// =============================================================================
+
+describe('Logic Store - AUT-1304 paired_rule_id and warnings', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+  })
+
+  it('createRule stores rule_metadata.paired_rule_id from API response', async () => {
+    const store = useLogicStore()
+    const pairedId = 'rule-002'
+
+    server.use(
+      http.post('/api/v1/logic/rules', async ({ request }) => {
+        const body = (await request.json()) as Record<string, unknown>
+        return HttpResponse.json(
+          {
+            id: 'rule-new-paired',
+            name: 'pH Minus',
+            enabled: false,
+            conditions: body.conditions,
+            logic_operator: body.logic_operator ?? 'AND',
+            actions: body.actions,
+            rule_metadata: body.rule_metadata,
+            warnings: ['Totband ueberlappt mit gekoppelter Regel'],
+            created_at: '2026-07-23T00:00:00Z',
+            updated_at: '2026-07-23T00:00:00Z',
+          },
+          { status: 201 },
+        )
+      }),
+    )
+
+    const created = await store.createRule({
+      name: 'pH Minus',
+      conditions: mockLogicRule.conditions,
+      logic_operator: 'AND',
+      actions: mockLogicRule.actions,
+      rule_metadata: { paired_rule_id: pairedId },
+    })
+
+    expect(created.rule_metadata?.paired_rule_id).toBe(pairedId)
+    expect(store.getRuleById('rule-new-paired')?.rule_metadata?.paired_rule_id).toBe(pairedId)
+    expect(store.getRuleById('rule-new-paired')?.warnings).toEqual([
+      'Totband ueberlappt mit gekoppelter Regel',
+    ])
+  })
+
+  it('updateRule replaces rule in store including warnings (no merge loss)', async () => {
+    const store = useLogicStore()
+    store.rules = [
+      {
+        ...mockLogicRule,
+        id: 'rule-001',
+        rule_metadata: {},
+        warnings: undefined,
+      },
+    ]
+
+    server.use(
+      http.put('/api/v1/logic/rules/:ruleId', async ({ request }) => {
+        const body = (await request.json()) as Record<string, unknown>
+        return HttpResponse.json({
+          ...mockLogicRule,
+          id: 'rule-001',
+          rule_metadata: body.rule_metadata,
+          warnings: ['Totband ueberlappt mit gekoppelter Regel'],
+          updated_at: '2026-07-23T00:00:00Z',
+        })
+      }),
+    )
+
+    const updated = await store.updateRule('rule-001', {
+      rule_metadata: { paired_rule_id: 'rule-002', dose_config: { components: [] } },
+    })
+
+    expect(updated.warnings).toEqual(['Totband ueberlappt mit gekoppelter Regel'])
+    expect(store.getRuleById('rule-001')?.warnings).toEqual([
+      'Totband ueberlappt mit gekoppelter Regel',
+    ])
+    expect(store.getRuleById('rule-001')?.rule_metadata).toEqual({
+      paired_rule_id: 'rule-002',
+      dose_config: { components: [] },
+    })
+  })
+
+  it('fetchRules keeps warnings from list response', async () => {
+    server.use(
+      http.get('/api/v1/logic/rules', () =>
+        HttpResponse.json({
+          success: true,
+          data: [
+            {
+              ...mockLogicRule,
+              id: 'rule-001',
+              rule_metadata: { paired_rule_id: 'rule-002' },
+              warnings: ['Totband ueberlappt'],
+            },
+          ],
+          pagination: {
+            page: 1,
+            page_size: 50,
+            total_items: 1,
+            total_pages: 1,
+            has_next: false,
+            has_previous: false,
+          },
+        }),
+      ),
+    )
+
+    const store = useLogicStore()
+    await store.fetchRules()
+
+    expect(store.getRuleById('rule-001')?.rule_metadata?.paired_rule_id).toBe('rule-002')
+    expect(store.getRuleById('rule-001')?.warnings).toEqual(['Totband ueberlappt'])
+  })
+})
+
+// =============================================================================
 // ERROR RECOVERY - API FAILURES
 // =============================================================================
 

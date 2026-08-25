@@ -7,6 +7,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { mount } from '@vue/test-utils'
 import ZonePlate from '@/components/dashboard/ZonePlate.vue'
 import DeviceMiniCard from '@/components/dashboard/DeviceMiniCard.vue'
+import { useNotificationInboxStore } from '@/shared/stores/notification-inbox.store'
 
 // lucide-vue-next is mocked globally in tests/setup.ts
 
@@ -65,9 +66,11 @@ const mockDevices = [
 ]
 
 function mountPlate(overrides: Record<string, unknown> = {}) {
+  const pinia = createPinia()
+  setActivePinia(pinia)
   return mount(ZonePlate, {
     props: { zoneId: 'zone_1', zoneName: 'Zone 1', devices: mockDevices as any, ...overrides },
-    global: { plugins: [createPinia()] },
+    global: { plugins: [pinia] },
   })
 }
 
@@ -123,5 +126,40 @@ describe('ZonePlate', () => {
     const w = mountPlate({ devices: [] })
     expect(w.text()).toContain('0 ESPs')
     expect(w.text()).toContain('- Leer')
+  })
+
+  it('should open the notification drawer when the zone alert chip is clicked', async () => {
+    const w = mountPlate()
+    const inboxStore = useNotificationInboxStore()
+    inboxStore.notifications = [{
+      id: 'alert-zone-1',
+      user_id: 1,
+      channel: 'websocket',
+      severity: 'critical',
+      category: 'system',
+      title: 'Temperatur kritisch',
+      body: null,
+      metadata: { esp_id: 'ESP_001' },
+      source: 'sensor_threshold',
+      is_read: false,
+      is_archived: false,
+      digest_sent: false,
+      parent_notification_id: null,
+      fingerprint: null,
+      created_at: new Date().toISOString(),
+      updated_at: null,
+      read_at: null,
+      status: 'active',
+      acknowledged_at: null,
+      acknowledged_by: null,
+      resolved_at: null,
+      correlation_id: null,
+    }]
+    await w.vm.$nextTick()
+
+    const openSpy = vi.spyOn(inboxStore, 'openDrawerWithActiveAlertsFocus').mockImplementation(() => {})
+    await w.get('[data-testid="zone-alert-chip"]').trigger('click')
+
+    expect(openSpy).toHaveBeenCalledTimes(1)
   })
 })
