@@ -8,8 +8,7 @@ an operator configure devices in space.
 
 A reading is bound to a **zone** (the house or climate context) and a
 **subzone** (the place inside that zone — air volume, substrate, or
-solution circuit). The value is a placed observation, not a nameless
-logger point.
+solution circuit).
 
 ```
 El Trabajante (ESP32)
@@ -37,6 +36,10 @@ interface shows them and lets an operator assign devices to places.
 Data path: ESP32 publishes over MQTT, FastAPI writes PostgreSQL, the Vue
 interface updates over HTTP and WebSocket.
 
+Readings are a PostgreSQL time series in UTC. Each row carries zone and
+subzone. The measurement interval is configurable per sensor. Calibration
+uses slope/offset coefficients and a two-point wizard.
+
 ---
 
 ## Operator surface
@@ -46,36 +49,19 @@ interface — zone → device → pin — without flashing firmware for that
 assignment. Live and historical readings are shown by zone and subzone.
 
 Actuator types in this tree: pump, valve, PWM, relay. They are
-configurable nodes on the same hardware view. This README makes no
-control, climate, or yield promise.
+configurable nodes on the same hardware view.
 
 ---
 
 ## Measured quantities
 
-Types present in this tree — not a site log and not a running campaign:
-
 1. **Air:** temperature, humidity, CO₂, air pressure
 2. **Substrate:** moisture, temperature
 3. **Nutrient solution:** pH, EC
-4. **Also named in this snapshot:** flow, light intensity, fill level.
-   Light intensity is a type on the server and in the interface schema;
-   this snapshot has no firmware driver for it.
+4. **Also in this tree:** flow, light intensity, fill level
 
----
-
-## What this snapshot is
-
-This tree is a snapshot from **2026-06-17**. It documents architecture and
-quantity types. It does not document a current experiment series.
-
-- **Calibration.** Slope/offset coefficients and a two-point wizard exist.
-  This tree does not record a calibration event against a reference standard,
-  with date, validity window, or operator.
-- **Sample interval.** The measurement interval is configurable per sensor.
-  This description does not fix a period.
-- **Storage.** Readings are stored as a PostgreSQL time series in UTC.
-  Each reading carries zone and subzone at measurement time.
+Light intensity is typed on the server and in the interface. The next
+step is a firmware driver so the type is end-to-end.
 
 ---
 
