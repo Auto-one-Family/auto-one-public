@@ -78,20 +78,39 @@ step is a firmware driver so the type is end-to-end.
 git clone https://github.com/Auto-one-Family/auto-one-public.git
 cd auto-one-public
 cp .env.example .env
-# Fill in values. Keep CHANGE_ME keys and empty optional keys until you set them.
 ```
+
+Replace every `CHANGE_ME_USE_STRONG_PASSWORD` with the same strong password in `POSTGRES_PASSWORD`, `DB_BACKUP_PG_PASSWORD`, and `DATABASE_URL`. Replace `CHANGE_ME_GENERATE_SECURE_KEY` with a JWT secret.
+
+The shipped `docker/mosquitto/passwd` matches the example `MQTT_*` placeholders. If you change `MQTT_*`, regenerate `docker/mosquitto/passwd`.
+
+Leave `COMPOSE_PROFILES` empty so `docker compose up -d` starts the core stack. Monitoring is optional:
+
+```bash
+COMPOSE_PROFILES=monitoring docker compose up -d
+```
+
+On Docker Desktop Windows, that profile pulls node-exporter with rslave and compose exits 1.
 
 ### 2. Start the stack
 
 ```bash
 docker compose up -d
+docker compose ps
 ```
 
-Typical local ports after compose (from the compose files in this tree):
+`docker compose ps` should show el-frontend, el-servador, postgres, and mqtt healthy or running.
 
-- Frontend: http://localhost:5173
-- Backend API: http://localhost:8000
-- API docs: http://localhost:8000/docs
+Then open:
+
+- Frontend: http://127.0.0.1:5173
+- Backend API: http://127.0.0.1:8000
+- API docs: http://127.0.0.1:8000/docs
+- Live health: http://127.0.0.1:8000/api/v1/health/live
+
+Those URLs answered HTTP 200. `localhost` on the same ports timed out on a Windows IPv6 stack — if `localhost` hangs, use `127.0.0.1`.
+
+The first visit to the UI goes to `/setup` to create the first admin.
 
 ### 3. Flash ESP32 firmware (optional)
 
@@ -117,6 +136,7 @@ auto-one-public/
 │       ├── tests/
 │       └── alembic/
 ├── El Frontend/            # Vue 3 interface
+├── docker/                 # compose bind-mounts (mosquitto, postgres, ...)
 ├── docker-compose.yml
 ├── docker-compose.dev.yml
 └── docker-compose.ci.yml
