@@ -626,7 +626,7 @@ describe('formatSubzoneKpiLine', () => {
       good('bmp280_pressure', 1010),
       good('co2', 900),
     ])
-    expect(line).toBe('55%RH · 1010hPa · 900ppm')
+    expect(line).toBe('55,0%RH · 1.010,0hPa · 900ppm')
   })
 
   it('skips stale readings', () => {

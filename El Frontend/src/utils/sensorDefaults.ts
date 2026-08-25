@@ -849,8 +849,8 @@ const _sensorConfigByLowerKey: Record<string, SensorTypeConfig> = Object.fromEnt
  * Retrieve sensor config with case-insensitive matching.
  * Always prefer this over direct SENSOR_TYPE_CONFIG[sensorType] access.
  */
-export function getSensorConfig(sensorType: string): SensorTypeConfig | null {
-  return SENSOR_TYPE_CONFIG[sensorType] ?? _sensorConfigByLowerKey[sensorType.toLowerCase()] ?? null
+export function getSensorConfig(sensorType: string): SensorTypeConfig | undefined {
+  return SENSOR_TYPE_CONFIG[sensorType] ?? _sensorConfigByLowerKey[sensorType.toLowerCase()] ?? undefined
 }
 
 /**

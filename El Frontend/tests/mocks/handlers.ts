@@ -156,7 +156,7 @@ const mockHumiditySensorESP = {
       device_type: null,
       multi_values: {
         humidity: { value: 38.2, unit: '%', quality: 'excellent' },
-        temperature: { value: 23.1, unit: 'Â°C', quality: 'excellent' }
+        temperature: { value: 23.1, unit: '°C', quality: 'excellent' }
       }
     }
   ],
@@ -213,6 +213,12 @@ const mockHumidifierESP = {
 // =============================================================================
 
 const authHandlers = [
+  http.get('/api/v1/test', ({ request }) => {
+    return HttpResponse.json({ ok: true, requestId: request.headers.get('X-Request-ID') })
+  }),
+  http.get('/api/v1/unique-test', ({ request }) => {
+    return HttpResponse.json({ ok: true, requestId: request.headers.get('X-Request-ID') })
+  }),
   // GET /auth/status - Check setup status
   http.get('/api/v1/auth/status', () => {
     return HttpResponse.json({

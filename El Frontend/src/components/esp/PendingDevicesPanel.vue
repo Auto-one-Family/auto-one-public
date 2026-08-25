@@ -350,17 +350,17 @@ async function executeFlashForPort(port: string, eraseConfirm = false) {
 <template>
   <SlideOver :open="isOpen" title="Geräteverwaltung" width="md" @close="handleClose">
     <div class="pdp-tabs">
-      <button :class="['pdp-tab', { 'pdp-tab--active': activeTab === 'devices' }]" @click="activeTab = 'devices'">
+      <button :class="['pdp-tab', 'device-panel__tab', { 'pdp-tab--active': activeTab === 'devices', 'device-panel__tab--active': activeTab === 'devices' }]" @click="activeTab = 'devices'">
         <Settings2 class="pdp-tab__icon w-4 h-4" />
         <span>Geräte</span>
         <span v-if="totalDeviceCount > 0" class="pdp-tab-count">{{ totalDeviceCount }}</span>
       </button>
-      <button :class="['pdp-tab', { 'pdp-tab--active': activeTab === 'pending' }]" @click="activeTab = 'pending'">
+      <button :class="['pdp-tab', 'device-panel__tab', { 'pdp-tab--active': activeTab === 'pending', 'device-panel__tab--active': activeTab === 'pending' }]" @click="activeTab = 'pending'">
         <Radio class="pdp-tab__icon w-4 h-4" />
         <span>Wartend</span>
         <span v-if="pendingDevices.length > 0" class="pdp-tab-badge">{{ pendingDevices.length }}</span>
       </button>
-      <button :class="['pdp-tab', { 'pdp-tab--active': activeTab === 'info' }]" @click="activeTab = 'info'">
+      <button :class="['pdp-tab', 'device-panel__tab', { 'pdp-tab--active': activeTab === 'info', 'device-panel__tab--active': activeTab === 'info' }]" @click="activeTab = 'info'">
         <Info class="pdp-tab__icon w-4 h-4" />
         <span>Anleitung</span>
       </button>
@@ -370,16 +370,16 @@ async function executeFlashForPort(port: string, eraseConfirm = false) {
     <div v-if="activeTab === 'devices'" class="pdp-content">
       <div class="pdp-search">
         <Search class="pdp-search-icon" />
-        <input v-model="searchQuery" type="text" class="pdp-search-input" placeholder="Gerät suchen..." />
-        <button v-if="searchQuery" class="pdp-search-clear" @click="searchQuery = ''">
+        <input v-model="searchQuery" type="text" class="pdp-search-input device-panel__search-input" placeholder="Gerät suchen..." />
+        <button v-if="searchQuery" class="pdp-search-clear device-panel__search-clear" @click="searchQuery = ''">
           <X class="w-3.5 h-3.5" />
         </button>
       </div>
 
       <div v-if="filteredZoneGroups.length > 0 || filteredUnassigned.length > 0" class="pdp-list">
         <div v-for="group in filteredZoneGroups" :key="group.zoneId" class="pdp-zone-group">
-          <div class="pdp-zone-title">{{ group.zoneName }}</div>
-          <div v-for="device in group.devices" :key="getDeviceId(device)" class="pdp-device">
+          <div class="pdp-zone-title device-panel__zone-title">{{ group.zoneName }}</div>
+          <div v-for="device in group.devices" :key="getDeviceId(device)" class="pdp-device device-panel__device">
             <div class="pdp-device-info">
               <div class="pdp-device-name">{{ device.name || getDeviceId(device) }}</div>
               <div class="pdp-device-meta">
@@ -392,10 +392,10 @@ async function executeFlashForPort(port: string, eraseConfirm = false) {
               </div>
             </div>
             <div class="pdp-device-actions">
-              <BaseButton variant="ghost" size="sm" title="Konfigurieren" @click="handleOpenConfig(device)">
+              <BaseButton class="device-panel__btn--config" variant="ghost" size="sm" title="Konfigurieren" @click="handleOpenConfig(device)">
                 <Settings2 class="w-4 h-4" />
               </BaseButton>
-              <BaseButton variant="danger" size="sm" title="Löschen" @click="handleDeleteDevice(device)">
+              <BaseButton class="device-panel__btn--delete" variant="danger" size="sm" title="Löschen" @click="handleDeleteDevice(device)">
                 <Trash2 class="w-4 h-4" />
               </BaseButton>
             </div>
@@ -431,7 +431,7 @@ async function executeFlashForPort(port: string, eraseConfirm = false) {
         </div>
       </div>
 
-      <div v-else-if="totalDeviceCount === 0" class="pdp-empty">
+      <div v-else-if="totalDeviceCount === 0" class="pdp-empty device-panel__empty">
         <Settings2 class="pdp-empty-icon" />
         <p class="pdp-empty-text">Keine Geräte vorhanden.</p>
         <p class="pdp-empty-hint">Erstelle ein Mock-ESP oder verbinde ein echtes Gerät.</p>
@@ -469,7 +469,7 @@ async function executeFlashForPort(port: string, eraseConfirm = false) {
           <div
             v-for="(device, index) in pendingDevices"
             :key="device.device_id"
-            class="pdp-pending-device"
+            class="pdp-pending-device device-panel__pending-device"
             :class="{
               'pdp-pending-device--processing': isProcessing(device.device_id),
               'pdp-pending-device--fresh': getTimeAgo(device.last_seen || device.discovered_at) === 'gerade eben',
@@ -491,11 +491,11 @@ async function executeFlashForPort(port: string, eraseConfirm = false) {
               </div>
             </div>
             <div class="pdp-pending-actions">
-              <BaseButton variant="primary" :loading="approvingDevices.has(device.device_id)" :disabled="isProcessing(device.device_id)" title="Gerät genehmigen" @click="handleApprove(device)">
+              <BaseButton class="device-panel__btn--approve" variant="primary" :loading="approvingDevices.has(device.device_id)" :disabled="isProcessing(device.device_id)" title="Gerät genehmigen" @click="handleApprove(device)">
                 <Check v-if="!approvingDevices.has(device.device_id)" class="w-4 h-4" />
                 <span>Genehmigen</span>
               </BaseButton>
-              <BaseButton variant="danger" :loading="rejectingDevices.has(device.device_id)" :disabled="isProcessing(device.device_id)" title="Gerät ablehnen" @click="handleReject(device)">
+              <BaseButton class="device-panel__btn--reject" variant="danger" :loading="rejectingDevices.has(device.device_id)" :disabled="isProcessing(device.device_id)" title="Gerät ablehnen" @click="handleReject(device)">
                 <Ban v-if="!rejectingDevices.has(device.device_id)" class="w-4 h-4" />
                 <span>Ablehnen</span>
               </BaseButton>

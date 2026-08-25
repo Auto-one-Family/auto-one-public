@@ -50,13 +50,9 @@ watch(
   { deep: true },
 )
 
-function handleChange(event: {
-  added?: { element: Plant; newIndex: number }
-  removed?: { element: Plant; oldIndex: number }
-  moved?: { element: Plant; newIndex: number; oldIndex: number }
-}): void {
+function handleChange(event: unknown): void {
   // Only react to cross-list additions (the drop target receiving a plant)
-  const added = event?.added
+  const added = (event as { added?: { element: Plant; newIndex: number } } | undefined)?.added
   if (!added) return
 
   emit('plant-dropped', {

@@ -233,13 +233,13 @@ function onActuatorAuxGpioValidation(valid: boolean, _message: string | null): v
       </div>
 
       <!-- Max Runtime: pump/valve/relay (mirrors ActuatorConfigPanel Sicherheit-Tab) -->
-      <div v-if="['pump', 'valve', 'relay'].includes(newActuator.actuator_type)" class="form-group">
+      <div v-if="['pump', 'valve'].includes(newActuator.actuator_type)" class="form-group">
         <label class="form-label">Sicherheitslimit <span class="form-label-hint">Sekunden (0 = kein Limit)</span></label>
         <input v-model.number="newActuator.max_runtime_seconds" type="number" min="0" max="86400" class="form-input" placeholder="3600" />
       </div>
 
       <!-- Cooldown: pump/relay only (mirrors ActuatorConfigPanel Sicherheit-Tab) -->
-      <div v-if="['pump', 'relay'].includes(newActuator.actuator_type)" class="form-group">
+      <div v-if="newActuator.actuator_type === 'pump'" class="form-group">
         <label class="form-label">Cooldown <span class="form-label-hint">Sekunden (0 = kein Cooldown)</span></label>
         <input v-model.number="newActuator.cooldown_seconds" type="number" min="0" max="3600" class="form-input" placeholder="30" />
       </div>

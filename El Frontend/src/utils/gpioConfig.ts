@@ -222,11 +222,11 @@ const ESP32_WROOM_PINS: GpioPin[] = [
   },
   {
     gpio: 13,
-    category: 'avoid',
-    label: 'GPIO 13 (RESERVIERT)',
+    category: 'recommended',
+    label: 'GPIO 13',
     features: ['ADC', 'PWM', 'Touch'],
     recommendedFor: 'both',
-    warning: 'Systemseitig reserviert (JTAG MTCK) — NICHT VERWENDEN',
+    warning: 'JTAG MTCK — beim Debuggen belegen',
   },
   {
     gpio: 1,

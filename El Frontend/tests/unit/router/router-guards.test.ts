@@ -1,6 +1,29 @@
-import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, afterEach, beforeAll, afterAll, describe, expect, it, vi } from 'vitest'
+import { server } from '../../mocks/server'
 import { setActivePinia, createPinia } from 'pinia'
 import type { User } from '@/types'
+
+vi.mock('@/stores/esp', () => ({
+  useEspStore: () => ({
+    ensureRealtimeHandlers: vi.fn(async () => undefined),
+    fetchAll: vi.fn(async () => undefined),
+    devices: [],
+  }),
+}))
+
+vi.mock('@/services/websocket', () => ({
+  websocketService: {
+    disconnect: vi.fn(),
+    connect: vi.fn(),
+    isConnected: vi.fn(() => false),
+    onConnect: vi.fn(() => () => {}),
+    onStatusChange: vi.fn(() => () => {}),
+    getStatus: vi.fn(() => 'disconnected'),
+    subscribe: vi.fn(() => 'sub-router'),
+    unsubscribe: vi.fn(),
+    sendClientStageObservation: vi.fn(),
+  },
+}))
 
 vi.mock('@/shared/design/layout/AppShell.vue', () => ({
   default: { name: 'AppShellStub', template: '<div><router-view /></div>' },
@@ -10,6 +33,12 @@ vi.mock('@/views/LoginView.vue', () => ({
 }))
 vi.mock('@/views/SetupView.vue', () => ({
   default: { name: 'SetupViewStub', template: '<div>setup</div>' },
+}))
+vi.mock('@/views/DashboardsView.vue', () => ({
+  default: { name: 'DashboardsViewStub', template: '<div>dashboards</div>' },
+}))
+vi.mock('@/views/MonitorView.vue', () => ({
+  default: { name: 'MonitorViewStub', template: '<div>monitor</div>' },
 }))
 vi.mock('@/views/HardwareView.vue', () => ({
   default: { name: 'HardwareViewStub', template: '<div>hardware</div>' },
@@ -46,6 +75,10 @@ async function navigate(path: string): Promise<void> {
 }
 
 describe('Router Guards', () => {
+  beforeAll(() => server.listen({ onUnhandledRequest: 'bypass' }))
+  afterAll(() => server.close())
+  afterEach(() => server.resetHandlers())
+
   beforeEach(async () => {
     setActivePinia(createPinia())
     localStorage.clear()
@@ -98,7 +131,7 @@ describe('Router Guards', () => {
     await navigate('/hardware')
     await navigate('/login')
 
-    expect(router.currentRoute.value.name).toBe('hardware')
+    expect(router.currentRoute.value.name).toBe('dashboards')
   })
 
   it('faengt checkAuthStatus-Fehler ab und nutzt Login-Recovery fuer protected route', async () => {

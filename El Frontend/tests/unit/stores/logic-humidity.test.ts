@@ -27,6 +27,10 @@ vi.mock('@/services/websocket', () => {
     websocketService: {
       subscribe: mockSubscribe,
       unsubscribe: mockUnsubscribe,
+      onConnect: vi.fn(() => () => {}),
+      onStatusChange: vi.fn(() => () => {}),
+    getStatus: vi.fn(() => 'disconnected'),
+      sendClientStageObservation: vi.fn(),
     },
     WebSocketMessage: {},
   }

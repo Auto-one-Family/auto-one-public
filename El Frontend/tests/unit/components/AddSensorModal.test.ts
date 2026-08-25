@@ -38,6 +38,12 @@ vi.mock('@/composables/useToast', () => ({
   }),
 }))
 
+vi.mock('@/api/esp', () => ({
+  espApi: {
+    isMockEsp: () => true,
+  },
+}))
+
 vi.mock('@/utils/logger', () => ({
   createLogger: () => ({
     debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn(),
@@ -103,12 +109,16 @@ describe('AddSensorModal', () => {
     expect(wrapper.emitted('update:modelValue')).toBeTruthy()
   })
 
-  it('shows OneWire scan section when DS18B20 selected', () => {
+  it('shows OneWire scan section when DS18B20 selected', async () => {
     const wrapper = mount(AddSensorModal, {
       props: { modelValue: true, espId: 'ESP_001' },
       global: { plugins: [createPinia()], stubs: { Teleport: true, GpioPicker: true } },
     })
-    // Default sensor type is DS18B20
+    const select = wrapper.find('select')
+    const option = select.findAll('option').find((o) => o.element.value.toLowerCase().includes('ds18b20'))
+    if (option) {
+      await select.setValue(option.element.value)
+    }
     expect(wrapper.text()).toContain('OneWire-Bus scannen')
   })
 })
