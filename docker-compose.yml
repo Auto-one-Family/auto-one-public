@@ -171,6 +171,8 @@ services:
     volumes:
       # Live-reload: Mount source code
       - ./El Servador/god_kaiser_server/src:/app/src:ro
+      # Alembic revisions live outside src/ — mount so new migrations apply without image rebuild
+      - ./El Servador/god_kaiser_server/alembic:/app/alembic:ro
       - ./logs/server:/app/logs
       # Persist database backups on host (Fix-T Block 2)
       - ./backups:/app/backups
@@ -566,16 +568,10 @@ services:
       CAMERA_SERVICE_PORT: 8080
       TZ: UTC
     # Pi 5 RP1/PiSP camera devices — verified on BCM2712_D0 (imx708_wide).
+    # Kernel 6.18+ exposes PiSP nodes as /dev/video19–35 (not /dev/video0–7).
+    # Only map devices that exist on the host — Docker fails on missing paths.
     # No --privileged needed: group_add video(44)+render(992) covers all device access.
     devices:
-      - /dev/video0:/dev/video0
-      - /dev/video1:/dev/video1
-      - /dev/video2:/dev/video2
-      - /dev/video3:/dev/video3
-      - /dev/video4:/dev/video4
-      - /dev/video5:/dev/video5
-      - /dev/video6:/dev/video6
-      - /dev/video7:/dev/video7
       - /dev/video19:/dev/video19
       - /dev/video20:/dev/video20
       - /dev/video21:/dev/video21
@@ -596,11 +592,6 @@ services:
       - /dev/media0:/dev/media0
       - /dev/media1:/dev/media1
       - /dev/media2:/dev/media2
-      - /dev/media3:/dev/media3
-      - /dev/v4l-subdev0:/dev/v4l-subdev0
-      - /dev/v4l-subdev1:/dev/v4l-subdev1
-      - /dev/v4l-subdev2:/dev/v4l-subdev2
-      - /dev/v4l-subdev3:/dev/v4l-subdev3
       - /dev/dma_heap/linux,cma:/dev/dma_heap/linux,cma
       - /dev/dma_heap/system:/dev/dma_heap/system
     group_add:
