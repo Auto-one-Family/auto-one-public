@@ -1490,7 +1490,7 @@ void MQTTClient::processManagedReconnect_() {
     if (managed_reconnect_attempts_ > 5) {
         /* AUT-539/AUT-555 — Hard-Reset: destroy+reinit instead of stop+start.
          *
-         * Root cause of the 4+ hour post-disconnect silence on ESP_EA5484 (pi-elbherb):
+         * Root cause of a multi-hour post-disconnect silence on a field device:
          *
          *   The previous code called esp_mqtt_client_stop() + esp_mqtt_client_start()
          *   after 5 failed soft-reconnects. This reused the existing MQTT client handle

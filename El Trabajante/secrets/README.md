@@ -57,6 +57,11 @@ Use only for a fresh ESP or after an intentional full reset.**
    python scripts/esp/flash_nvs.py --env dev-local --generate-only
    ```
 
+Flash environments: `dev-local` (machine-local broker), `lab` (LAN),
+`field` (strict — confirmation required before flashing).
+The tracked example is `dev-local`. Copy it to `nvs_secrets.lab.csv` or
+`nvs_secrets.field.csv` when targeting those environments.
+
 The tracked example uses `localhost` and `PLACEHOLDER_*` values only.
 
 ## Security

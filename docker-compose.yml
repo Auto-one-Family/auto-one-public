@@ -211,7 +211,7 @@ services:
         max-size: "5m"
         max-file: "3"
     environment:
-      # Browser auf anderem Host (z. B. Funkturm-WLAN): in .env VITE_* auf http://<Pi-eth0-IP>:8000 setzen
+      # Browser auf anderem Host: in .env VITE_* auf http://<host-lan-ip>:8000 setzen
       VITE_API_URL: ${VITE_API_URL:-http://localhost:8000}
       VITE_WS_URL: ${VITE_WS_URL:-ws://localhost:8000}
       VITE_API_TARGET: http://el-servador:8000

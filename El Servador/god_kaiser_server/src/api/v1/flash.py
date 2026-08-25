@@ -248,7 +248,7 @@ async def build_flash_secrets(
         "Flashes the pre-built NVS binary to an ESP32 via esptool (synchronous). "
         "Run POST /flash/secrets/{env}/build first to generate the binary. "
         "Port exclusivity: no other process may hold the serial port during flash. "
-        "Returns 400 if env=pi-elbherb and confirm is not True. "
+        "Returns 400 if env=field and confirm is not True. "
         "Returns 422 with error code 3102 if the NVS binary does not exist. "
         "Returns 500 with error code 3105 if esptool fails."
     ),
@@ -257,12 +257,12 @@ async def execute_flash(
     request: FlashExecuteRequest,
     current_user: OperatorUser,
 ) -> FlashExecuteResponse:
-    if request.env == NvsEnv.pi_elbherb and not request.confirm:
+    if request.env == NvsEnv.field and not request.confirm:
         raise HTTPException(
             status_code=400,
             detail={
                 "detail": (
-                    "confirm=true is required for env=pi-elbherb (STRICT production environment). "
+                    "confirm=true is required for env=field (strict environment). "
                     "Set confirm=true in the request body to proceed."
                 ),
             },

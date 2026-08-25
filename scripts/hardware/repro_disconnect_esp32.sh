@@ -9,10 +9,10 @@ set -euo pipefail
 #
 # Usage examples:
 #   ./scripts/hardware/repro_disconnect_esp32.sh
-#   ./scripts/hardware/repro_disconnect_esp32.sh --esp-id ESP_EA5484 --capture-seconds 240
+#   ./scripts/hardware/repro_disconnect_esp32.sh --esp-id ESP_DEV01 --capture-seconds 240
 #   ACTUATOR_GPIOS="25,26,27" ./scripts/hardware/repro_disconnect_esp32.sh
 
-ESP_ID="${ESP_ID:-ESP_EA5484}"
+ESP_ID="${ESP_ID:-ESP_DEV01}"
 SERIAL_PORT="${SERIAL_PORT:-}"
 BAUD="${BAUD:-115200}"
 CAPTURE_SECONDS="${CAPTURE_SECONDS:-180}"

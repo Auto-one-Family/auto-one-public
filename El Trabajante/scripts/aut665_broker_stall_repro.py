@@ -168,11 +168,11 @@ if __name__ == "__main__":
         status = "CONFIRMED" if hit else "not triggered"
         print(f"  {label}: {status} (bytes_sent_before_stall={sent})")
 
-    print(f"\nBroker-Config-Delta dev-local vs pi-home:")
+    print(f"\nBroker-Config-Delta dev-local vs lab:")
     print(f"  dev-local: anonymous=true, persistence=true, autosave_interval=300s")
     print(f"             max_keepalive=300, max_inflight=10, Mosquitto 2.x in Docker")
-    print(f"  pi-home:   UNKNOWN (requires pi-home-Session G1) — likely:")
+    print(f"  lab:       UNKNOWN (requires a lab broker session) — likely:")
     print(f"             auth=password_file (authenticated), persistence=true")
-    print(f"             Pi 3/4 hardware → lower recv-buffer drain rate under load")
-    print(f"             Pi swap/IO during cron/logrotate → broker read() stalls")
-    print(f"             This is the pi-SPECIFIC trigger — needs G1 for confirmation")
+    print(f"             constrained host hardware → lower recv-buffer drain rate under load")
+    print(f"             swap/IO during cron/logrotate → broker read() stalls")
+    print(f"             This is the lab-host trigger — needs a lab session for confirmation")

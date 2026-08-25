@@ -23,7 +23,7 @@ static const uint8_t MHZ19_CMD_READ_PPM[9] = {
 };
 
 // ABC (Auto-Baseline-Calibration) disable command — send once after first successful read.
-// Required for indoor grow / greenhouse: ABC would re-calibrate 800-1500 ppm CO2 as 400 ppm.
+// Required in greenhouse and indoor horticulture climate: ABC would re-calibrate 800-1500 ppm CO2 as 400 ppm.
 static const uint8_t MHZ19_CMD_ABC_OFF[9] = {
     0xFF, 0x01, 0x79, 0x00, 0x00, 0x00, 0x00, 0x00, 0x86
 };

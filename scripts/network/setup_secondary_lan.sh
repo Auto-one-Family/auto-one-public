@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 #
-# AutomationOne / Pi: eth0 nur Funkturm-LAN (DHCP), KEINE Default-Route.
-# wlan0 (z. B. Vodafone) bleibt alleiniger Internet- und SSH-Pfad für Cursor.
+# Host dual-homing: eth0 as secondary LAN (DHCP), no default route.
+# wlan0 remains the sole internet and SSH path.
 #
-# Voraussetzung: LAN-Kabel Funkturm -> eth0, Link muss LOWer_UP haben (kein NO-CARRIER).
+# Prerequisite: Ethernet cable on eth0, link must be LOWER_UP (no NO-CARRIER).
 #
-# Ausführung: sudo ./scripts/network/setup_funkturm_dual_homing.sh
+# Run: sudo ./scripts/network/setup_secondary_lan.sh
 #
 set -euo pipefail
 
-CON_NAME="ao-funkturm-lan"
+CON_NAME="ao-secondary-lan"
 IFACE="eth0"
 
 die() { echo "FEHLER: $*" >&2; exit 1; }
@@ -24,7 +24,7 @@ command -v ip >/dev/null 2>&1 || die "ip nicht gefunden"
 [[ -d "/sys/class/net/${IFACE}" ]] || die "Interface ${IFACE} existiert nicht"
 
 if ip link show "${IFACE}" 2>/dev/null | grep -q "NO-CARRIER"; then
-  die "Interface ${IFACE}: NO-CARRIER — LAN-Kabel an Funkturm anschließen und erneut ausführen."
+  die "Interface ${IFACE}: NO-CARRIER — LAN-Kabel anschließen und erneut ausführen."
 fi
 if [[ -r "/sys/class/net/${IFACE}/carrier" ]]; then
   c="$(cat "/sys/class/net/${IFACE}/carrier" 2>/dev/null || echo 0)"
@@ -63,16 +63,16 @@ if ip -4 route show default | grep -q "dev ${IFACE}"; then
 fi
 
 if ! ip -4 route show default | grep -q .; then
-  die "Keine Default-Route gefunden — Internet/Cursor wäre weg. wlan0 prüfen."
+  die "Keine Default-Route gefunden — Internet wäre weg. wlan0 prüfen."
 fi
 
 ETH_IP="$(ip -4 -o addr show "${IFACE}" 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -1)"
 echo ""
-echo "OK — Dual-Homing aktiv (Vodafone/Default unverändert, ${IFACE} nur LAN)."
+echo "OK — Dual-Homing aktiv (Default-Route unverändert, ${IFACE} nur LAN)."
 if [[ -n "${ETH_IP}" ]]; then
   echo ""
-  echo "Pi im Funkturm-LAN (eth0): ${ETH_IP}"
-  echo "ESP MQTT/Server-Adresse (NVS): ${ETH_IP}  (nicht die Vodafone-IP von wlan0)"
+  echo "Host im secondary LAN (eth0): ${ETH_IP}"
+  echo "ESP MQTT/Server-Adresse (NVS): ${ETH_IP}  (nicht die wlan0-Adresse)"
   echo ""
   echo ".env (Beispiel, Anführungszeichen beachten):"
   echo "  VITE_API_URL=http://${ETH_IP}:8000"

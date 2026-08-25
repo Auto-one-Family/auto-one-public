@@ -26,7 +26,7 @@ ESPTOOL_PY = os.path.normpath(os.path.join(
 NVS_ADDR = "0x9000"
 NVS_SIZE = hex(0x8000)
 
-VALID_ENVS = ("dev-local", "pi-home", "pi-elbherb")
+VALID_ENVS = ("dev-local", "lab", "field")
 
 
 def _generate_nvs_binary(csv_path: str, bin_path: str) -> None:
@@ -94,8 +94,8 @@ def main() -> int:
         print("ERROR: --port required unless --generate-only", file=sys.stderr)
         return 1
 
-    if args.env == "pi-elbherb":
-        print("  STRICT env — Robin must approve flash (chat block required).")
+    if args.env == "field":
+        print("  Strict env — confirmation required before flashing.")
         print(f"  Binary: {bin_path}")
         print(f"  Command: python esptool.py --chip esp32 --port <PORT> write_flash {NVS_ADDR} {os.path.basename(bin_path)}")
         return 0

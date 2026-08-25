@@ -2,7 +2,7 @@
 set -euo pipefail
 
 MODE=""
-DEVICE_ID="ESP_EA5484"
+DEVICE_ID="ESP_DEV01"
 KAISER_ID="god"
 WATCH_SECONDS=120
 WATCH_STEP=30
@@ -20,7 +20,7 @@ Behebt "ESP offline trotz Heartbeats/Approval" per Runtime-Maßnahmen:
 Optionen:
   --dry-run            Nur Diagnose + geplante Aktionen anzeigen
   --apply              Aktionen wirklich ausführen
-  --device <id>        Zielgerät (Default: ESP_EA5484)
+  --device <id>        Zielgerät (Default: ESP_DEV01)
   --kaiser <id>        Kaiser-ID für MQTT-Topics (Default: god)
   --watch-seconds <n>  Post-Check Dauer in Sekunden (Default: 120)
   --force              Update auch ohne Stale/Offline-Indikator erzwingen

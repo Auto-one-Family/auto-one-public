@@ -1,22 +1,22 @@
 #!/usr/bin/env bash
-# Provision an ESP in AP mode from the Pi (pi-home workflow).
+# Provision an ESP in AP mode from the host (lab workflow).
 # Requires: ESP in provisioning AP (AutoOne-ESP_<ID>), nmcli, curl.
 #
 # Usage:
-#   export ESP_WIFI_SSID="${ESP_WIFI_SSID:-Vodafone-6F44}"
+#   export ESP_WIFI_SSID="${ESP_WIFI_SSID:-PLACEHOLDER_WIFI_SSID}"
 #   export ESP_WIFI_PASSWORD='your-wlan-password'
-#   export ESP_SERVER_ADDRESS="${ESP_SERVER_ADDRESS:-192.168.0.2}"
+#   export ESP_SERVER_ADDRESS="${ESP_SERVER_ADDRESS:-192.0.2.10}"
 #   export ESP_MQTT_PORT="${ESP_MQTT_PORT:-1883}"
-#   ./scripts/esp/provision_device.sh ESP_698EB4
+#   ./scripts/esp/provision_device.sh ESP_DEV01
 #
 # Serial safety: clears CH340 DTR/RTS before any serial use (GPIO0 boot-button trap).
 
 set -euo pipefail
 
-ESP_ID="${1:?ESP device id required, e.g. ESP_698EB4}"
-ESP_WIFI_SSID="${ESP_WIFI_SSID:-Vodafone-6F44}"
+ESP_ID="${1:?ESP device id required, e.g. ESP_DEV01}"
+ESP_WIFI_SSID="${ESP_WIFI_SSID:-PLACEHOLDER_WIFI_SSID}"
 ESP_WIFI_PASSWORD="${ESP_WIFI_PASSWORD:-}"
-ESP_SERVER_ADDRESS="${ESP_SERVER_ADDRESS:-192.168.0.2}"
+ESP_SERVER_ADDRESS="${ESP_SERVER_ADDRESS:-192.0.2.10}"
 ESP_MQTT_PORT="${ESP_MQTT_PORT:-1883}"
 AP_SSID="AutoOne-${ESP_ID}"
 AP_PASSWORD="provision"
@@ -49,7 +49,7 @@ PY
 echo "Clearing USB serial DTR/RTS (GPIO0 safety)..."
 clear_serial_lines
 
-echo "Connecting Pi wlan0 to ${AP_SSID} (Pi may lose upstream WiFi briefly)..."
+echo "Connecting host wlan0 to ${AP_SSID} (host may lose upstream WiFi briefly)..."
 nmcli device wifi connect "${AP_SSID}" password "${AP_PASSWORD}" ifname wlan0
 
 sleep 2
@@ -80,7 +80,7 @@ if [[ "${HTTP_CODE}" != "200" ]]; then
   exit 2
 fi
 
-echo "Reconnecting Pi to home WiFi (${ESP_WIFI_SSID})..."
+echo "Reconnecting host to uplink WiFi (${ESP_WIFI_SSID})..."
 nmcli device wifi connect "${ESP_WIFI_SSID}" password "${ESP_WIFI_PASSWORD}" ifname wlan0 || true
 
 echo "Warte 30s auf ESP-Reboot und MQTT..."

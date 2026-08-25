@@ -46,7 +46,7 @@ FLASH_FREQ = "40m"
 FLASH_SIZE = "4MB"
 BAUD = "460800"
 
-VALID_ENVS = ("dev-local", "pi-home", "pi-elbherb")
+VALID_ENVS = ("dev-local", "lab", "field")
 
 REQUIRED_BINARIES: tuple[tuple[str, str], ...] = (
     ("bootloader.bin", BOOTLOADER_ADDR),
@@ -177,8 +177,8 @@ def main() -> int:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
 
-    if args.env == "pi-elbherb":
-        print("  STRICT env — Robin must approve flash (chat block required).")
+    if args.env == "field":
+        print("  Strict env — confirmation required before flashing.")
         print(f"  NVS binary: {bin_path}")
         flash_pairs = " ".join(f"{addr} {os.path.basename(path)}" for path, addr in firmware_pairs)
         nvs_part = f"{NVS_ADDR} {os.path.basename(bin_path)}"

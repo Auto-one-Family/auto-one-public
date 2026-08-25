@@ -3,7 +3,7 @@
 #   pio run -e flash_nvs -t flash_nvs NVS_ENV=dev-local UPLOAD_PORT=COM5
 #   pio run -e flash_nvs -t flash_nvs NVS_ENV=dev-local   (generate-only if no port)
 #
-# NVS_ENV: dev-local | pi-home | pi-elbherb (default: dev-local)
+# NVS_ENV: dev-local | lab | field (default: dev-local)
 # UPLOAD_PORT: serial port, e.g. COM5 or /dev/ttyUSB0 (optional)
 
 import os
@@ -34,6 +34,6 @@ env.AddCustomTarget(  # noqa: F821
     title="Flash NVS Secrets",
     description=(
         "Generate and flash NVS credential binary. "
-        "Set NVS_ENV=dev-local|pi-home|pi-elbherb and optionally UPLOAD_PORT=COM5."
+        "Set NVS_ENV=dev-local|lab|field and optionally UPLOAD_PORT=COM5."
     ),
 )

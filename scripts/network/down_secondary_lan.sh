@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# eth0-Profil ao-funkturm-lan deaktivieren (Rollback / Test Ende).
-# Ausführung: sudo ./scripts/network/down_funkturm_lan.sh
+# Deactivate the eth0 profile ao-secondary-lan (rollback / end of test).
+# Run: sudo ./scripts/network/down_secondary_lan.sh
 set -euo pipefail
-CON_NAME="ao-funkturm-lan"
+CON_NAME="ao-secondary-lan"
 
 if [[ "${EUID:-0}" -ne 0 ]]; then
   echo "FEHLER: Root nötig — sudo $0" >&2

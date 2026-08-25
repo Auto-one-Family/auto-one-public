@@ -612,7 +612,7 @@ class TestB1FlagPropagation:
         mock_rule.trigger_conditions = [
             {
                 "type": "hysteresis",
-                "esp_id": "ESP_EA5484",
+                "esp_id": "ESP_DEV01",
                 "gpio": 0,
                 "sensor_type": "sht31_humidity",
                 "activate_below": 50,
@@ -628,7 +628,7 @@ class TestB1FlagPropagation:
         mock_rule.actions = [
             {
                 "type": "actuator_command",
-                "esp_id": "ESP_EA5484",
+                "esp_id": "ESP_DEV01",
                 "gpio": 1,
                 "command": "ON",
                 "value": 1.0,
@@ -646,7 +646,7 @@ class TestB1FlagPropagation:
 
         # Trigger with value > deactivate_above (75 > 60)
         trigger_data = {
-            "esp_id": "ESP_EA5484",
+            "esp_id": "ESP_DEV01",
             "gpio": 0,
             "sensor_type": "sht31_humidity",
             "value": 75.0,

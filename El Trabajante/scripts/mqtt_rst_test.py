@@ -19,7 +19,7 @@ import paho.mqtt.client as mqtt
 
 BROKER = "localhost"
 PORT = 1883
-CLIENT_ID = "ESP_EA5484_MOCK"
+CLIENT_ID = "ESP_DEV01_MOCK"
 RECONNECT_TIMEOUT_S = 120
 
 

@@ -444,7 +444,7 @@ class ConfigPayloadBuilder:
         # Problem context:
         #   AUT-54 switched all sensor publishes to QoS-0 because simultaneous QoS-1
         #   sensor + actuator traffic filled the IDF OUTBOX under WiFi jitter, causing
-        #   1500 ms write-timeouts and MQTT disconnects (root-cause on ESP_EA5484).
+        #   1500 ms write-timeouts and MQTT disconnects.
         #   But sensors referenced in a cross_esp_logic rule MUST have their reading
         #   delivered — a lost QoS-0 packet means the rule engine sees a stale value
         #   and may miss or delay a trigger (e.g. humidity threshold not crossed).

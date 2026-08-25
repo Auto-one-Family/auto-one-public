@@ -17,7 +17,7 @@ export default defineConfig(({ mode }) => {
 
   return {
     plugins: [vue()],
-    // VITE_CACHE_DIR: override via .env.local on SSD-enabled machines (e.g. pi-home)
+    // VITE_CACHE_DIR: override via .env.local on SSD-enabled machines
     ...(env.VITE_CACHE_DIR ? { cacheDir: env.VITE_CACHE_DIR } : {}),
     resolve: {
       alias: {

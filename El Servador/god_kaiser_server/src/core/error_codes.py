@@ -566,7 +566,7 @@ ESP32_ERROR_DESCRIPTIONS: Dict[int, str] = {
     3101: "USB scanning not available on this platform (Docker on Windows without passthrough)",
     3102: "NVS secrets CSV not found for environment — run PUT /flash/secrets/{env} first",
     3103: "NVS partition binary generation failed (nvs_partition_gen error)",
-    3104: "Invalid flash environment — must be dev-local, pi-home, or pi-elbherb",
+    3104: "Invalid flash environment — must be dev-local, lab, or field",
     3105: "Flash execution failed (esptool error — check port and NVS binary)",
     # Application (4000-4999)
     4001: "Invalid system state",

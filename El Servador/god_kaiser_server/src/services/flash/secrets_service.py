@@ -366,7 +366,7 @@ def flash_firmware(port: str, env: str, chip_family: str, board: str) -> str:
 
     Args:
         port: Serial port, e.g. /dev/ttyUSB0
-        env: NVS env name (pi-home, dev-local, pi-elbherb)
+        env: NVS env name (dev-local, lab, field)
         chip_family: From device_scanner, e.g. "ESP32", "ESP32-S3"
         board: firmware_builds subdirectory name, e.g. "esp32_dev"
 
