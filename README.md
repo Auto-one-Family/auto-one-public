@@ -1,14 +1,18 @@
 # AutomationOne
 
-Own acquisition system for environmental time series in protected horticulture
-(greenhouse, polytunnel, and indoor horticulture climate).
+AutomationOne is a local stack for horticultural climate, substrate and
+nutrient measurements — and for the devices that sit on the same nodes.
+Firmware on ESP32 reads sensors and drives pumps, valves, PWM and relays.
+A FastAPI server stores UTC time series and runs rules. A Vue interface
+shows live and history and lets you assign pins and places without flashing.
 
-Firmware measures, the server stores, the interface shows readings and lets
-an operator configure devices in space.
-
-A reading is bound to a **zone** (the house or climate context) and a
-**subzone** (the place inside that zone — air volume, substrate, or
-solution circuit).
+A reading without a place is just a name. The same temperature in canopy
+air, at the bench edge, or in the slab is not the same measurement. This
+system therefore treats place as part of the setup: a zone (the house or
+climate context), a subzone (air volume, substrate or solution circuit),
+and, when you set them, mount height, medium and angle. The number stays
+attached to how and where it was taken, so two houses can be compared
+later without guessing the probe position from a sensor nickname.
 
 ```
 El Trabajante (ESP32)
@@ -24,32 +28,54 @@ El Frontend (Vue)
 
 ## Architecture
 
-Three layers. The device collects readings, the server persists them, the
-interface shows them and lets an operator assign devices to places.
+Three layers. Firmware measures and switches. The server stores readings,
+runs rules, and applies a safety chain. The interface shows live and
+history and lets an operator assign pins and places.
 
 | Layer | Stack | Role |
 |-------|--------|------|
-| **El Trabajante** | C++ / PlatformIO / ESP32 | Measure and publish environmental readings |
-| **El Servador** | Python / FastAPI / PostgreSQL / MQTT | Store UTC time series and serve them |
-| **El Frontend** | Vue 3 / TypeScript | Show live and history; configure devices in space |
+| **El Trabajante** | C++ / PlatformIO / ESP32 | Read sensors; drive pumps, valves, PWM and relays; publish over MQTT |
+| **El Servador** | Python / FastAPI / PostgreSQL / MQTT | Store UTC time series, distribute config, run rules and the safety chain |
+| **El Frontend** | Vue 3 / TypeScript | Show live and history; assign pins and places without flashing |
 
 Data path: ESP32 publishes over MQTT, FastAPI writes PostgreSQL, the Vue
 interface updates over HTTP and WebSocket.
 
-Readings are a PostgreSQL time series in UTC. Each row carries zone and
-subzone. The measurement interval is configurable per sensor. Calibration
-uses slope/offset coefficients and a two-point wizard.
+### How a reading is stored
+
+Readings are a PostgreSQL time series in UTC. Each row snapshots zone and
+subzone at write time. The measurement interval lives on the sensor
+config, not as a global tick. Calibration is slope/offset coefficients
+and a two-point wizard; a nullable validity timestamp can sit on that
+blob. Mount height, medium (`air` | `canopy` | `substrate` | `solution`)
+and angle live on the sensor config. Charts join the config for labels.
+Changing the config later does not rewrite the mount history of older
+rows.
 
 ---
 
 ## Operator surface
 
 An operator assigns sensors and actuators to GPIO and subzone in the
-interface — zone → device → pin — without flashing firmware for that
-assignment. Live and historical readings are shown by zone and subzone.
+same hardware view — zone → device → pin — without flashing firmware for
+that assignment.
 
-Actuator types in this tree: pump, valve, PWM, relay. They are
-configurable nodes on the same hardware view.
+Actuator types in this tree: pump, valve, PWM, relay. They sit on the
+same nodes that measure.
+
+Rules can fire across ESP boundaries: if sensor X crosses a threshold,
+actuator Y runs. Offline rules stay on the ESP when the link is down.
+A new ESP is discovered from its heartbeat and waits for approval
+before it is trusted.
+
+Actuator commands go through a server safety chain. The checks in this
+tree are emergency stop, GPIO conflict, loop detection, and rate limit.
+The ESP applies local checks as well.
+
+Live and historical charts are grouped by zone and subzone. A dataset
+label carries name, unit, and zone/subzone. When mount fields are set
+on the config, the label appends them — for example
+`Substrate (%) · Z1 / SZ-A · 30cm canopy`.
 
 ---
 
@@ -57,11 +83,29 @@ configurable nodes on the same hardware view.
 
 1. **Air:** temperature, humidity, CO₂, air pressure
 2. **Substrate:** moisture, temperature
-3. **Nutrient solution:** pH, EC
-4. **Also in this tree:** flow, light intensity, fill level
+3. **Nutrient solution:** pH, EC (internal ADC or ADS1115 is the
+   acquisition path, not a separate sensor type)
+4. **Also in this tree:** flow, light intensity, fill level, generic
+   analog/digital
+
+VPD is derived on the server from an SHT31 temperature/humidity pair
+and appears like a sensor.
 
 Light intensity is typed on the server and in the interface. The next
 step is a firmware driver so the type is end-to-end.
+
+---
+
+## What this repo does not claim
+
+This is a public mirror of a running system, not a frozen trial dataset.
+
+It does not record a first-class calibration event with a reference
+standard, an operator name, and a validity window as its own row.
+It does not flag individual samples for quality.
+It has no site identifier for house A versus house B — zone is inside
+one installation.
+It does not export a scientific schema.
 
 ---
 
