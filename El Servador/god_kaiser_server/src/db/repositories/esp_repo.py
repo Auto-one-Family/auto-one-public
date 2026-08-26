@@ -61,15 +61,22 @@ class ESPRepository(BaseRepository[ESPDevice]):
     async def get_all(
         self, skip: int = 0, limit: int = 100, include_deleted: bool = False
     ) -> list[ESPDevice]:
-        """Get all devices with optional soft-delete filter."""
+        """Get all devices with optional soft-delete filter.
+
+        Ordered by name/device_id for a deterministic, stable listing order
+        (PostgreSQL does not guarantee row order without ORDER BY).
+        """
         stmt = select(self.model)
         if not include_deleted:
             stmt = stmt.where(self._not_deleted())
+        stmt = stmt.order_by(self.model.name, self.model.device_id)
         stmt = stmt.offset(skip).limit(limit)
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
 
-    async def get_all_with_components(self, *, include_deleted: bool = False) -> list[ESPDevice]:
+    async def get_all_with_components(
+        self, *, include_deleted: bool = False
+    ) -> list[ESPDevice]:
         """Return all devices with sensors + actuators eager-loaded.
 
         AUT-224 A2: replaces an inline ``select(ESPDevice).options(selectinload(...))``
@@ -114,13 +121,20 @@ class ESPRepository(BaseRepository[ESPDevice]):
         """
         Get all active ESP devices in a zone.
 
+        Ordered by name/device_id for a deterministic, stable listing order
+        (PostgreSQL does not guarantee row order without ORDER BY).
+
         Args:
             zone_id: Zone identifier
 
         Returns:
             List of ESPDevice instances
         """
-        stmt = select(ESPDevice).where(ESPDevice.zone_id == zone_id, self._not_deleted())
+        stmt = (
+            select(ESPDevice)
+            .where(ESPDevice.zone_id == zone_id, self._not_deleted())
+            .order_by(ESPDevice.name, ESPDevice.device_id)
+        )
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
 

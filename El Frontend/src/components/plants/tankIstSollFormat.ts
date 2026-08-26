@@ -2,11 +2,13 @@
  * Ist/Soll/Delta display helpers for TankIstSollPanel (AUT-1225 Q4).
  *
  * Pure functions only — no store/API access — so they stay trivially
- * unit-testable. The single hard rule they encode: a missing/stale
- * value is NEVER rendered as "0" — always the em-dash "—".
+ * unit-testable. Missing/stale/untrusted samples are never treated as a
+ * live Ist of 0. Display may show lastKnownValue with a stale hint;
+ * Delta and assist receive null.
  */
 
 import type { TankMeasureTarget, TankTargetMeasure } from '@/types'
+import { DATA_STALE_THRESHOLD_S } from '@/utils/formatters'
 import { getSensorAggCategory } from '@/utils/sensorDefaults'
 
 /**
@@ -15,11 +17,34 @@ import { getSensorAggCategory } from '@/utils/sensorDefaults'
  */
 export type IstSollMeasureKey = 'ec' | 'ph' | 'temperature'
 
+/** Qualities that must never be treated as a live tank Ist (processor/firmware error). */
+export const UNTRUSTED_IST_QUALITIES = new Set(['error', 'critical', 'warming_up'])
+
+/**
+ * EC below this (µS/cm) is physically possible but typical for a dry / air
+ * probe — display warning only, not a control-loop change.
+ */
+export const DRY_EC_HINT_US_CM = 100
+
+/** How trustworthy the current Ist sample is for display vs. assist/delta. */
+export type IstTrust = 'live' | 'stale' | 'untrusted' | 'missing'
+
+export interface IstSensorReading {
+  /** Usable for Delta / assist only when `trust === 'live'`. */
+  value: number | null
+  lastKnownValue: number | null
+  lastRead: string | null
+  quality: string | null
+  trust: IstTrust
+}
+
 /** Minimal sensor shape needed for the Ist lookup (subset of MockSensor). */
 export interface IstSollSensorLike {
   sensor_type: string
   raw_value?: number | null
   processed_value?: number | null
+  quality?: string | null
+  last_read?: string | null
 }
 
 /** Minimal device shape needed for the Ist lookup (subset of ESPDevice). */
@@ -36,10 +61,87 @@ export function measureKeyFromTarget(measure: TankTargetMeasure): IstSollMeasure
   return null
 }
 
+function finiteSensorNumber(sensor: IstSollSensorLike): number | null {
+  const value = sensor.processed_value ?? sensor.raw_value
+  if (value === null || value === undefined || Number.isNaN(value)) return null
+  return value
+}
+
+function isStaleLastRead(lastRead: string | null | undefined, nowMs: number): boolean {
+  if (!lastRead) return false
+  const ts = new Date(lastRead).getTime()
+  if (!Number.isFinite(ts)) return false
+  return nowMs - ts > DATA_STALE_THRESHOLD_S * 1000
+}
+
+/**
+ * Resolve Ist for a tank measure with trust — stale / error / warming-up
+ * readings stay visible as `lastKnownValue` but `value` is null so Delta
+ * and assist never treat them as live tank EC/pH.
+ */
+export function resolveIstSensorReading(
+  devices: IstSollDeviceLike[],
+  assignedDeviceIds: string[],
+  measureKey: IstSollMeasureKey,
+  nowMs: number = Date.now(),
+): IstSensorReading {
+  const empty: IstSensorReading = {
+    value: null,
+    lastKnownValue: null,
+    lastRead: null,
+    quality: null,
+    trust: 'missing',
+  }
+  if (assignedDeviceIds.length === 0) return empty
+  const assignedIds = new Set(assignedDeviceIds)
+
+  for (const device of devices) {
+    const id = device.device_id || device.esp_id || ''
+    if (!id || !assignedIds.has(id)) continue
+
+    for (const sensor of device.sensors ?? []) {
+      if (getSensorAggCategory(sensor.sensor_type) !== measureKey) continue
+      const lastKnownValue = finiteSensorNumber(sensor)
+      const quality = sensor.quality ?? null
+      const lastRead = sensor.last_read ?? null
+      if (lastKnownValue === null) {
+        return { ...empty, lastRead, quality, trust: 'missing' }
+      }
+      if (quality && UNTRUSTED_IST_QUALITIES.has(quality)) {
+        return {
+          value: null,
+          lastKnownValue,
+          lastRead,
+          quality,
+          trust: 'untrusted',
+        }
+      }
+      if (isStaleLastRead(lastRead, nowMs)) {
+        return {
+          value: null,
+          lastKnownValue,
+          lastRead,
+          quality,
+          trust: 'stale',
+        }
+      }
+      return {
+        value: lastKnownValue,
+        lastKnownValue,
+        lastRead,
+        quality,
+        trust: 'live',
+      }
+    }
+  }
+  return empty
+}
+
 /**
  * Find the current Ist value for a measure across the tank's assigned
  * devices. Returns `null` when no assigned device carries a sensor of that
- * type, or the sensor has no value yet — callers must render "—", not "0".
+ * type, the sensor has no value yet, or the sample is stale/untrusted —
+ * callers must render "—", not "0".
  *
  * Prefers `processed_value` (Pi-enhanced) over `raw_value`, matching the
  * fallback used elsewhere in the dashboard (esp.ts sensor merge).
@@ -49,21 +151,18 @@ export function findIstSensorValue(
   assignedDeviceIds: string[],
   measureKey: IstSollMeasureKey,
 ): number | null {
-  if (assignedDeviceIds.length === 0) return null
-  const assignedIds = new Set(assignedDeviceIds)
+  return resolveIstSensorReading(devices, assignedDeviceIds, measureKey).value
+}
 
-  for (const device of devices) {
-    const id = device.device_id || device.esp_id || ''
-    if (!id || !assignedIds.has(id)) continue
-
-    for (const sensor of device.sensors ?? []) {
-      if (getSensorAggCategory(sensor.sensor_type) !== measureKey) continue
-      const value = sensor.processed_value ?? sensor.raw_value
-      if (value === null || value === undefined || Number.isNaN(value)) continue
-      return value
-    }
-  }
-  return null
+/** Live EC that is implausibly low for nutrient solution — probe likely in air. */
+export function isLikelyDryEcReading(
+  measureKey: IstSollMeasureKey,
+  reading: IstSensorReading,
+): boolean {
+  if (measureKey !== 'ec') return false
+  const sample = reading.lastKnownValue
+  if (sample === null || !Number.isFinite(sample)) return false
+  return sample < DRY_EC_HINT_US_CM
 }
 
 /**
@@ -118,8 +217,7 @@ export function resolvedViaLabel(resolvedVia: TankMeasureTarget['resolved_via'])
 export const TANK_DETAIL_ROUTE = '/nutrient-solution' as const
 
 /**
- * Legacy query key still read by PlantsView for deep-links that used
- * `/plants?tank=` before the NL-Tab became the detail home.
+ * Legacy query key. `/plants?tank=` bookmarks redirect to the NL-Tab detail.
  */
 export const TANK_DETAIL_QUERY_KEY = 'tank' as const
 

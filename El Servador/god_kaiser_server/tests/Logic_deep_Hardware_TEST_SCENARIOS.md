@@ -2,8 +2,8 @@
 
 **Version:** 2.0 (Code-Verifiziert)
 **Datum:** 2026-01-30
-**Autor:** Product Owner / System Architect
-**Code-Analyse:** code review
+**Autor:** Robin (Product Owner / System Architect)
+**Code-Analyse:** Manager #2 (Analyse-Manager)
 **Empfänger:** Test-Suite-Entwickler (Domain-Expert für Gewächshaus-Automatisierung)
 
 ---
@@ -1917,15 +1917,15 @@ def simulate_sensor_fault(self, gpio: int, fault_type: str):
 
 | Dokument | Pfad |
 |----------|------|
-| Server-Doku | `README.md` |
-| ESP32-Doku | `El Trabajante/` |
-| Test-Workflow | `tests/` |
-| System-Hierarchie | `README.md` |
+| Server-Doku | `.claude/CLAUDE_SERVER.md` |
+| ESP32-Doku | `.claude/CLAUDE.md` |
+| Test-Workflow | `.claude/TEST_WORKFLOW.md` |
+| System-Hierarchie | `.claude/Hierarchie.md` |
 
 ---
 
 **Ende des Developer Briefings**
 
 **Erstellt:** 2026-01-30  
-**Autor:** Product Owner / System Architect  
+**Autor:** Robin (Product Owner / System Architect)  
 **Für:** Test-Suite-Entwickler mit Greenhouse-Domain-Expertise

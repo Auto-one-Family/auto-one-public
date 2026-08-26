@@ -12,6 +12,7 @@ Session-based calibration lifecycle:
 """
 
 import uuid
+from datetime import datetime
 from math import isfinite
 from typing import Optional
 
@@ -52,6 +53,11 @@ class StartSessionRequest(BaseModel):
         default=None,
         max_length=64,
         description="Optional provenance marker for temperature value (e.g. manual, config:<uuid>).",
+    )
+    # AUT-1576: nullable expiry for the applied cal event. No default interval.
+    valid_until: Optional[datetime] = Field(
+        default=None,
+        description="Optional calibration validity timestamp (UTC). Stored as session_metadata.valid_until and copied to derived.valid_until on apply. No default interval.",
     )
 
 
@@ -172,9 +178,31 @@ class SessionResponse(BaseModel):
     correlation_id: Optional[str] = None
     initiated_by: Optional[str] = None
     completed_at: Optional[str] = None
+    valid_until: Optional[str] = None
     failure_reason: Optional[str] = None
     created_at: str
     updated_at: str
+
+
+def _session_valid_until(session) -> Optional[str]:  # type: ignore[no-untyped-def]
+    """Read nullable valid_until. After apply, derived is SSOT; metadata is start transport."""
+    result = getattr(session, "calibration_result", None) or {}
+    derived = result.get("derived") if isinstance(result, dict) else None
+    if isinstance(derived, dict) and "valid_until" in derived:
+        raw = derived.get("valid_until")
+        if isinstance(raw, str) and raw.strip():
+            return raw
+        if isinstance(raw, datetime):
+            return raw.isoformat()
+        return None
+    metadata = getattr(session, "session_metadata", None) or {}
+    if isinstance(metadata, dict):
+        raw = metadata.get("valid_until")
+        if isinstance(raw, str) and raw.strip():
+            return raw
+        if isinstance(raw, datetime):
+            return raw.isoformat()
+    return None
 
 
 def _session_to_response(session) -> SessionResponse:  # type: ignore[no-untyped-def]
@@ -193,6 +221,7 @@ def _session_to_response(session) -> SessionResponse:  # type: ignore[no-untyped
         correlation_id=session.correlation_id,
         initiated_by=session.initiated_by,
         completed_at=session.completed_at.isoformat() if session.completed_at else None,
+        valid_until=_session_valid_until(session),
         failure_reason=session.failure_reason,
         created_at=session.created_at.isoformat(),
         updated_at=session.updated_at.isoformat(),
@@ -226,9 +255,9 @@ async def start_session(
         if request.calibration_temperature is not None:
             session_metadata["calibration_temperature"] = request.calibration_temperature
         if request.calibration_temperature_source:
-            session_metadata["calibration_temperature_source"] = (
-                request.calibration_temperature_source
-            )
+            session_metadata["calibration_temperature_source"] = request.calibration_temperature_source
+        if request.valid_until is not None:
+            session_metadata["valid_until"] = request.valid_until.isoformat()
         session = await service.start_session(
             esp_id=request.esp_id,
             gpio=request.gpio,
@@ -388,15 +417,26 @@ async def apply_calibration(
     session_id: uuid.UUID,
     db: DBSession,
     current_user: OperatorUser,
+    valid_until: Optional[datetime] = Query(
+        default=None,
+        description=(
+            "Optional validity end of this calibration event (ISO-8601). "
+            "Stored as derived.valid_until on the existing blob. "
+            "Nullable; no default interval is invented."
+        ),
+    ),
 ) -> SessionResponse:
     """
     Apply the computed calibration result to the sensor configuration.
 
     Only works when session is in FINALIZING state.
+    Optional ``valid_until`` is persisted on the existing Cal blob
+    (``derived.valid_until``). Empty apply (no query) remains valid;
+    Start-Session ``valid_until`` in ``session_metadata`` is used as fallback.
     """
     service = CalibrationService(db)
     try:
-        session = await service.apply(session_id)
+        session = await service.apply(session_id, valid_until=valid_until)
         await db.commit()
         return _session_to_response(session)
     except CalibrationError as e:

@@ -22,7 +22,11 @@ SALT_SOURCE_TYPES: tuple[str, ...] = (
     "beleg_offen",
 )
 
-_SOURCE_TYPE_CHECK = "source_type IN (" + ", ".join(repr(s) for s in SALT_SOURCE_TYPES) + ")"
+_SOURCE_TYPE_CHECK = (
+    "source_type IN ("
+    + ", ".join(repr(s) for s in SALT_SOURCE_TYPES)
+    + ")"
+)
 
 
 class SaltComposition(Base, TimestampMixin):

@@ -28,9 +28,15 @@ def canonicalize_calibration_data(
     {
       "method": str,  # linear_2point, moisture_2point, offset, ph_2point, ec_1point, ec_2point
       "points": list[dict],  # Original measurement points with point_role, raw, reference
-      "derived": dict,  # Computed parameters (slope, offset, cell_factor, etc.)
+      "derived": dict,  # Computed parameters (slope, offset, cell_factor, calibrated_at, valid_until?)
       "metadata": dict  # {schema_version, source, normalized_at}
     }
+
+    Event fields (existing Cal place, AUT-1576):
+    - Zeit-SSOT: derived.calibrated_at (read_calibrated_at)
+    - Gültigkeit: derived.valid_until nullable — never invent a default interval
+    - Referenz: points[].reference + point_role (wizard already stores these)
+    - Wer: calibration_sessions.initiated_by — do not copy into this blob
     """
     if payload is None:
         return None
@@ -159,3 +165,49 @@ def read_calibrated_at(payload: Any) -> Any:
             return cal_ts
 
     return payload.get("calibrated_at") or None
+
+
+def read_valid_until(payload: Any) -> Any:
+    """
+    Read nullable ``valid_until`` for the last applied calibration event.
+
+    AUT-1576: SSOT is ``derived.valid_until`` on the existing blob
+    (``sensor_configs.calibration_data`` / session ``calibration_result``).
+    No default interval. ``None`` means unset, not expired.
+    Who remains ``calibration_sessions.initiated_by`` — never copied here.
+    """
+    if payload is None or not isinstance(payload, dict):
+        return None
+
+    derived = payload.get("derived")
+    if isinstance(derived, dict) and "valid_until" in derived:
+        return derived.get("valid_until")
+
+    if "valid_until" in payload:
+        return payload.get("valid_until")
+
+    return None
+
+
+def attach_valid_until(payload: dict[str, Any], valid_until: Any) -> dict[str, Any]:
+    """
+    Attach nullable ``valid_until`` on ``derived`` without inventing an interval.
+
+    Always writes the key (including explicit ``null``) so K3 can distinguish
+    unset-after-apply from a missing legacy blob. Past dates are stored as-is.
+    """
+    derived = payload.get("derived")
+    if not isinstance(derived, dict):
+        derived = {}
+        payload["derived"] = derived
+
+    if valid_until is None:
+        derived["valid_until"] = None
+        return payload
+
+    if hasattr(valid_until, "isoformat"):
+        derived["valid_until"] = valid_until.isoformat()
+        return payload
+
+    derived["valid_until"] = str(valid_until) if valid_until else None
+    return payload

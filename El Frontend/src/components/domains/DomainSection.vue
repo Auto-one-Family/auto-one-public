@@ -26,7 +26,7 @@ interface Props {
   zoneNames: Record<string, string>
 }
 
-defineProps<Props>()
+const props = defineProps<Props>()
 
 const emit = defineEmits<{
   toggle: []

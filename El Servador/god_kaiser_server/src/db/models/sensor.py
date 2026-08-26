@@ -300,6 +300,30 @@ class SensorConfig(Base, TimestampMixin):
     )
 
     # =========================================================================
+    # MOUNT GEOMETRY (AUT-1555) — server-only, not pushed to firmware
+    # =========================================================================
+    # First-class columns on the existing config row (same pattern as device_scope).
+    # Not stored in sensor_metadata. NULL = unset; old rows stay valid.
+
+    mount_height_cm: Mapped[Optional[float]] = mapped_column(
+        Float,
+        nullable=True,
+        doc="AUT-1555: Mount height in cm. NULL = unset. Server-side only.",
+    )
+
+    mount_medium: Mapped[Optional[str]] = mapped_column(
+        String(16),
+        nullable=True,
+        doc="AUT-1555: Mount medium — air | canopy | substrate | solution. NULL = unset.",
+    )
+
+    mount_angle_deg: Mapped[Optional[float]] = mapped_column(
+        Float,
+        nullable=True,
+        doc="AUT-1555: Mount angle in degrees. NULL = unset. Server-side only.",
+    )
+
+    # =========================================================================
     # CONFIG STATUS (Phase 4 - Detailed Config Feedback)
     # =========================================================================
     # Tracks the configuration status from ESP32 config_response.
@@ -386,6 +410,12 @@ class SensorConfig(Base, TimestampMixin):
         CheckConstraint(
             "device_scope IN ('zone_local', 'multi_zone', 'mobile')",
             name="ck_sensor_configs_device_scope",
+        ),
+        # AUT-1555: mount_medium catalog. NULL stays valid (no backfill).
+        CheckConstraint(
+            "mount_medium IS NULL OR mount_medium IN "
+            "('air', 'canopy', 'substrate', 'solution')",
+            name="ck_sensor_configs_mount_medium",
         ),
     )
 

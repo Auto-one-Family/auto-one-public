@@ -28,6 +28,7 @@ import type { TankMeasureTarget, TankTargetsResponse } from '@/types'
 import ErrorState from '@/shared/design/patterns/ErrorState.vue'
 import EmptyState from '@/shared/design/patterns/EmptyState.vue'
 import BaseSpinner from '@/shared/design/primitives/BaseSpinner.vue'
+import QualityIndicator from '@/shared/design/primitives/QualityIndicator.vue'
 import LiveLineChart, { type ThresholdConfig } from '@/components/charts/LiveLineChart.vue'
 import MonitorExpanded1hChart, {
   type ExpandedLivePoint,
@@ -38,11 +39,14 @@ import {
   findIstSensorValue,
   formatDelta,
   formatIstSollValue,
+  isLikelyDryEcReading,
   measureKeyFromTarget,
   measureLabel,
   resolvedViaLabel,
+  resolveIstSensorReading,
   tankDetailHref,
   type IstSollMeasureKey,
+  type IstTrust,
 } from './tankIstSollFormat'
 import {
   deviceIdsForTank,
@@ -52,7 +56,7 @@ import {
 } from '@/utils/zoneTankEcPh'
 import { getSensorUnit } from '@/utils/sensorDefaults'
 import { createLogger } from '@/utils/logger'
-import { formatDateTime } from '@/utils/formatters'
+import { formatDateTime, formatRelativeTime, qualityToStatus } from '@/utils/formatters'
 import { formatMeasuredFreshWaterOrigin } from '@/utils/volumeZugabeSourceDisplay'
 
 /** Quiet re-fetch interval for plan_segment@now (segment boundary / external edits). */
@@ -170,11 +174,55 @@ interface IstSollRow {
   unit: string
   sollDisplay: string
   istDisplay: string
+  istTrust: IstTrust
+  istHint: string
+  qualityStatus: ReturnType<typeof qualityToStatus> | null
   deltaDisplay: string
   deltaStatus: 'ok' | 'warn' | 'unknown'
   resolvedLabel: string
   /** Sensor identity for sparkline (compact); null when unresolved. */
   sensorRef: TankEcPhSensorRef | null
+}
+
+const FALLBACK_TARGETS: TankMeasureTarget[] = [
+  {
+    measure: 'target_ec',
+    value: null,
+    unit: 'µS/cm',
+    segment_id: null,
+    from_ts: null,
+    to_ts: null,
+    resolved_via: 'none',
+  },
+  {
+    measure: 'target_ph',
+    value: null,
+    unit: '',
+    segment_id: null,
+    from_ts: null,
+    to_ts: null,
+    resolved_via: 'none',
+  },
+]
+
+function istHintFor(
+  measureKey: IstSollMeasureKey | null,
+  reading: ReturnType<typeof resolveIstSensorReading>,
+): string {
+  const parts: string[] = []
+  if (reading.trust === 'stale' && reading.lastKnownValue != null) {
+    parts.push(`letzter Wert ${formatIstSollValue(reading.lastKnownValue)}`)
+  }
+  if (reading.lastRead) {
+    parts.push(formatRelativeTime(reading.lastRead))
+  }
+  if (reading.trust === 'untrusted') {
+    parts.push('Messung unzuverlässig')
+  }
+  if (measureKey && isLikelyDryEcReading(measureKey, reading)) {
+    parts.push('Sonde vermutlich nicht in Lösung')
+  }
+  return parts.join(' · ')
 }
 
 function isMeasureExpanded(measure: string): boolean {
@@ -221,13 +269,19 @@ const DELTA_OK_THRESHOLD: Record<string, number> = {
 }
 
 const rows = computed<IstSollRow[]>(() => {
-  const list = targets.value?.targets ?? []
+  const list = targets.value?.targets ?? FALLBACK_TARGETS
   const targetRows: IstSollRow[] = list.map((target) => {
     const measureKey = measureKeyFromTarget(target.measure)
-    const ist = measureKey
-      ? findIstSensorValue(espStore.devices, assignedDeviceIds.value, measureKey)
-      : null
-    const delta = computeDelta(ist, target.value)
+    const reading = measureKey
+      ? resolveIstSensorReading(espStore.devices, assignedDeviceIds.value, measureKey)
+      : {
+          value: null,
+          lastKnownValue: null,
+          lastRead: null,
+          quality: null,
+          trust: 'missing' as const,
+        }
+    const delta = computeDelta(reading.value, target.value)
     const okThreshold = DELTA_OK_THRESHOLD[target.measure] ?? 0.3
     const deltaStatus: IstSollRow['deltaStatus'] =
       delta === null ? 'unknown' : Math.abs(delta) <= okThreshold ? 'ok' : 'warn'
@@ -242,6 +296,13 @@ const rows = computed<IstSollRow[]>(() => {
           )
         : null
 
+    const displayValue =
+      reading.trust === 'live'
+        ? reading.value
+        : reading.trust === 'stale' || reading.trust === 'untrusted'
+          ? reading.lastKnownValue
+          : null
+
     return {
       measure: target.measure,
       measureKey,
@@ -249,7 +310,14 @@ const rows = computed<IstSollRow[]>(() => {
       unit: target.unit ?? '',
       sollDisplay: formatIstSollValue(target.value),
       // Keep default decimals for full mounts (/plants, /domains); compact may refine later.
-      istDisplay: formatIstSollValue(ist),
+      istDisplay: formatIstSollValue(displayValue),
+      istTrust: reading.trust,
+      istHint: istHintFor(measureKey, reading),
+      qualityStatus: reading.quality
+        ? qualityToStatus(reading.quality, { lastRead: reading.lastRead })
+        : reading.trust === 'stale'
+          ? 'stale'
+          : null,
       deltaDisplay: formatDelta(delta),
       deltaStatus,
       resolvedLabel: resolvedViaLabel(target.resolved_via),
@@ -275,6 +343,9 @@ const rows = computed<IstSollRow[]>(() => {
         unit: unitForSensor(sensorRef),
         sollDisplay: '—',
         istDisplay: formatIstSollValue(sensorRef.value, 1),
+        istTrust: 'live',
+        istHint: '',
+        qualityStatus: null,
         deltaDisplay: '—',
         deltaStatus: 'unknown',
         resolvedLabel: '',
@@ -335,20 +406,18 @@ async function loadMeasuredFreshWater(): Promise<void> {
   }
 }
 
+const showBlockingSpinner = computed(
+  () => isLoading.value && targets.value === null && !hasAssignedDevices.value,
+)
+
 async function load(options?: { quiet?: boolean }): Promise<void> {
   const quiet = options?.quiet === true && targets.value !== null
   if (!quiet) {
     isLoading.value = true
-  }
-  if (!quiet) {
     error.value = null
   }
   try {
     targets.value = await tanksApi.getTargets(props.tankId)
-    if (espStore.devices.length === 0) {
-      await espStore.fetchAll()
-    }
-    await loadMeasuredFreshWater()
   } catch (e) {
     // Quiet polls keep last good Soll; only surface errors on initial/hard load.
     if (!quiet) {
@@ -360,6 +429,8 @@ async function load(options?: { quiet?: boolean }): Promise<void> {
       isLoading.value = false
     }
   }
+  // Freshwater strip is additive — never hold the Ist/Soll spinner for assist.
+  void loadMeasuredFreshWater()
 }
 
 function sparklineFor(row: IstSollRow): ChartDataPoint[] | undefined {
@@ -423,15 +494,18 @@ watch(
     :class="{ 'tank-ist-soll-panel--compact': isCompact }"
     :data-variant="variant"
   >
-    <!-- Loading -->
-    <div v-if="isLoading" class="flex items-center justify-center gap-2 py-6 text-sm text-[var(--color-text-secondary)]">
+    <!-- Loading — only when there is nothing to show yet (Ist is live from store). -->
+    <div
+      v-if="showBlockingSpinner"
+      class="flex items-center justify-center gap-2 py-6 text-sm text-[var(--color-text-secondary)]"
+    >
       <BaseSpinner size="sm" />
       <span>{{ isCompact ? 'Lade Tank-Werte…' : 'Lade Ist/Soll…' }}</span>
     </div>
 
-    <!-- Error -->
+    <!-- Error — only when there is no Ist to show from the live store. -->
     <ErrorState
-      v-else-if="error"
+      v-else-if="error && !hasAssignedDevices"
       :message="error"
       :title="isCompact ? 'Tank-Werte konnten nicht geladen werden' : 'Ist/Soll konnte nicht geladen werden'"
       @retry="load"
@@ -496,8 +570,17 @@ watch(
               {{ row.label }}{{ row.unit ? ` (${row.unit})` : '' }}
             </span>
             <span class="flex items-center gap-1">
+              <QualityIndicator
+                v-if="row.qualityStatus"
+                :status="row.qualityStatus"
+                :show-label="false"
+                size="sm"
+              />
               <span
-                class="font-mono text-lg font-bold text-[var(--color-text-primary)]"
+                class="font-mono text-lg font-bold"
+                :class="row.istTrust === 'live'
+                  ? 'text-[var(--color-text-primary)]'
+                  : 'text-[var(--color-text-secondary)]'"
                 :aria-label="`Ist ${row.label}: ${row.istDisplay}`"
               >
                 {{ row.istDisplay }}
@@ -524,6 +607,13 @@ watch(
             />
             <span v-else class="text-xs text-[var(--color-text-muted)]">Keine Verlaufsdaten</span>
           </div>
+          <p
+            v-if="row.istHint"
+            class="text-xs text-[var(--color-warning)]"
+            :data-testid="`tank-ist-hint-${row.measure}`"
+          >
+            {{ row.istHint }}
+          </p>
         </div>
 
         <Transition name="expand">
@@ -566,6 +656,14 @@ watch(
           Stand: {{ evaluatedAtDisplay }}
         </span>
       </header>
+      <p
+        v-if="error"
+        class="text-xs text-[var(--color-warning)]"
+        role="status"
+      >
+        Soll konnte nicht geladen werden — Ist kommt weiter aus dem Live-Store.
+        <button type="button" class="underline" @click="load">Erneut versuchen</button>
+      </p>
 
       <p
         class="text-xs text-[var(--color-text-secondary)]"
@@ -600,11 +698,29 @@ watch(
 
           <div class="flex flex-col items-center justify-center gap-1 rounded-[var(--radius-sm)] bg-[var(--color-bg-tertiary)] px-2 py-2">
             <span class="text-xs font-semibold uppercase tracking-wide text-[var(--color-text-secondary)]">IST</span>
+            <span class="flex items-center gap-1">
+              <QualityIndicator
+                v-if="row.qualityStatus"
+                :status="row.qualityStatus"
+                :show-label="false"
+                size="sm"
+              />
+              <span
+                class="font-mono text-lg font-bold"
+                :class="row.istTrust === 'live'
+                  ? 'text-[var(--color-text-primary)]'
+                  : 'text-[var(--color-text-secondary)]'"
+                :aria-label="`Ist ${row.label}: ${row.istDisplay}`"
+              >
+                {{ row.istDisplay }}
+              </span>
+            </span>
             <span
-              class="font-mono text-lg font-bold text-[var(--color-text-primary)]"
-              :aria-label="`Ist ${row.label}: ${row.istDisplay}`"
+              v-if="row.istHint"
+              class="text-center text-[10px] leading-snug text-[var(--color-warning)]"
+              :data-testid="`tank-ist-hint-${row.measure}`"
             >
-              {{ row.istDisplay }}
+              {{ row.istHint }}
             </span>
           </div>
 

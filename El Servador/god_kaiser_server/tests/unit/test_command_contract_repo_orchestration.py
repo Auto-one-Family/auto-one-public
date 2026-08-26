@@ -243,9 +243,7 @@ async def test_terminal_outcome_replay_repairs_stale_non_terminal_intent_state(d
     await repo.upsert_outcome(payload, esp_id="ESP_X")
 
     broken_intent = (
-        await db_session.execute(
-            select(CommandIntent).where(CommandIntent.intent_id == "intent-heal-stale")
-        )
+        await db_session.execute(select(CommandIntent).where(CommandIntent.intent_id == "intent-heal-stale"))
     ).scalar_one()
     broken_intent.orchestration_state = "ack_pending"
     await db_session.flush()
@@ -254,8 +252,6 @@ async def test_terminal_outcome_replay_repairs_stale_non_terminal_intent_state(d
     await db_session.commit()
 
     loaded = (
-        await db_session.execute(
-            select(CommandIntent).where(CommandIntent.intent_id == "intent-heal-stale")
-        )
+        await db_session.execute(select(CommandIntent).where(CommandIntent.intent_id == "intent-heal-stale"))
     ).scalar_one()
     assert loaded.orchestration_state == "terminal_failed"

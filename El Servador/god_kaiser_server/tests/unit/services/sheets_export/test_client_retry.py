@@ -138,7 +138,9 @@ class TestExecuteWithRetry:
         async def _no_sleep(_attempt, _max):  # signature matches _sleep_with_jitter
             return 0.0
 
-        monkeypatch.setattr("src.services.sheets_export.client._sleep_with_jitter", _no_sleep)
+        monkeypatch.setattr(
+            "src.services.sheets_export.client._sleep_with_jitter", _no_sleep
+        )
 
         result = await client.execute_with_retry(op)
         assert result == "ok"
@@ -180,7 +182,9 @@ class TestExecuteWithRetry:
         async def _no_sleep(_attempt, _max):
             return 0.0
 
-        monkeypatch.setattr("src.services.sheets_export.client._sleep_with_jitter", _no_sleep)
+        monkeypatch.setattr(
+            "src.services.sheets_export.client._sleep_with_jitter", _no_sleep
+        )
 
         with pytest.raises(RetryableSheetsError) as excinfo:
             await client.execute_with_retry(op)
@@ -229,13 +233,17 @@ class TestAppendRowsWith413:
 
     async def test_split_halves_until_success(self, monkeypatch):
         ws = _FakeWorksheet(split_at=2)
-        client = _FakeClientWithWorksheet(_settings_for_test(batch_min_size_for_split=1), ws)
+        client = _FakeClientWithWorksheet(
+            _settings_for_test(batch_min_size_for_split=1), ws
+        )
         rows = [["a", i] for i in range(8)]
 
         async def _no_sleep(_attempt, _max):
             return 0.0
 
-        monkeypatch.setattr("src.services.sheets_export.client._sleep_with_jitter", _no_sleep)
+        monkeypatch.setattr(
+            "src.services.sheets_export.client._sleep_with_jitter", _no_sleep
+        )
         result = await client.append_rows("sensoren-2026-05", ["x", "y"], rows)
         # All successful sub-batches must be <= split_at.
         successful_batches = [n for n in ws.calls if n <= 2]
@@ -244,12 +252,18 @@ class TestAppendRowsWith413:
 
     async def test_split_limit_reached_raises(self, monkeypatch):
         ws = _FakeWorksheet(split_at=0)  # always 413 even for 1 row
-        client = _FakeClientWithWorksheet(_settings_for_test(batch_min_size_for_split=5), ws)
+        client = _FakeClientWithWorksheet(
+            _settings_for_test(batch_min_size_for_split=5), ws
+        )
 
         async def _no_sleep(_attempt, _max):
             return 0.0
 
-        monkeypatch.setattr("src.services.sheets_export.client._sleep_with_jitter", _no_sleep)
+        monkeypatch.setattr(
+            "src.services.sheets_export.client._sleep_with_jitter", _no_sleep
+        )
         with pytest.raises(NonRetryableSheetsError) as excinfo:
-            await client.append_rows("sensoren-2026-05", ["x"], [["a"] for _ in range(3)])
+            await client.append_rows(
+                "sensoren-2026-05", ["x"], [["a"] for _ in range(3)]
+            )
         assert excinfo.value.numeric_code == ConfigErrorCode.SHEETS_BATCH_SPLIT_LIMIT_REACHED

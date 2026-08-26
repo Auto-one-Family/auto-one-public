@@ -30,8 +30,13 @@ import { useEspStore } from '@/stores/esp'
 import { useToast } from './useToast'
 import type { ESPDevice } from '@/api/esp'
 import { createLogger } from '@/utils/logger'
+import { DEVICE_DOMAIN_KEYS, isDeviceDomainKey } from '@/components/domains/domainLabels'
 
 const logger = createLogger('ZoneDragDrop')
+
+/** Canonical domain display order (luft→wasser→boden→licht→mensch→pflanze); devices without a domain sort last. */
+const DOMAIN_RANK = new Map(DEVICE_DOMAIN_KEYS.map((key, index) => [key, index]))
+const NO_DOMAIN_RANK = DEVICE_DOMAIN_KEYS.length
 
 interface ZoneDropEvent {
   device: ESPDevice
@@ -120,6 +125,21 @@ export function useZoneDragDrop() {
   }
 
   /**
+   * Stable display order within a zone: devices are grouped by domain
+   * (canonical order via DOMAIN_RANK), then alphabetically by name within
+   * each group. Devices without a domain sort after all domain groups.
+   * Deterministic on every call — fixes cards randomly changing position.
+   */
+  function compareDevicesForDisplay(a: ESPDevice, b: ESPDevice): number {
+    const rankA = isDeviceDomainKey(a.domain) ? DOMAIN_RANK.get(a.domain)! : NO_DOMAIN_RANK
+    const rankB = isDeviceDomainKey(b.domain) ? DOMAIN_RANK.get(b.domain)! : NO_DOMAIN_RANK
+    if (rankA !== rankB) return rankA - rankB
+    const nameA = (a.name || espStore.getDeviceId(a)).toLowerCase()
+    const nameB = (b.name || espStore.getDeviceId(b)).toLowerCase()
+    return nameA.localeCompare(nameB)
+  }
+
+  /**
    * Group devices by zone
    * Returns array of zone groups including an "unassigned" group
    * ALWAYS includes the ZONE_UNASSIGNED group (even if empty) as a drop target
@@ -148,6 +168,11 @@ export function useZoneDragDrop() {
       }
 
       zoneMap.get(zoneId)!.devices.push(device)
+    }
+
+    // Stable, domain-grouped order within each zone (fixes random card reordering)
+    for (const group of zoneMap.values()) {
+      group.devices.sort(compareDevicesForDisplay)
     }
 
     // Convert to array and sort (unassigned last)

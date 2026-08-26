@@ -223,7 +223,8 @@ class TestLWTInstantOffline:
                         result = await handler.handle_lwt(topic, valid_lwt_payload)
 
                         assert result is True
-                        assert mock_ws.broadcast.call_count >= 1
+                        # WebSocket broadcast should be called
+                        mock_ws.broadcast.assert_called_once()
                         call_args = mock_ws.broadcast.call_args
                         assert call_args.args[0] == "esp_health"
                         assert call_args.args[1]["status"] == "offline"
@@ -300,9 +301,7 @@ class TestLWTInstantOffline:
         assert result is True
         mock_terminal_authority_repo.upsert_outcome.assert_awaited()
         intent_calls = [
-            call
-            for call in mock_ws.broadcast.call_args_list
-            if call.args and call.args[0] == "intent_outcome"
+            call for call in mock_ws.broadcast.call_args_list if call.args and call.args[0] == "intent_outcome"
         ]
         assert len(intent_calls) == 1
         assert intent_calls[0].args[1]["code"] == "ESP_DISCONNECTED_BEFORE_OUTCOME"
@@ -407,7 +406,6 @@ class TestLWTIdempotency:
                     mock_contract_repo.upsert_terminal_event_authority = AsyncMock(
                         return_value=(MagicMock(), True)
                     )
-                    mock_contract_repo.list_open_intents_for_esp = AsyncMock(return_value=[])
                     mock_contract.return_value = mock_contract_repo
 
                     result = await handler.handle_lwt(topic, valid_lwt_payload)

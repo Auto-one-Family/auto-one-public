@@ -70,7 +70,9 @@ class TankCreate(BaseModel):
     @classmethod
     def validate_operation_mode(cls, v: str) -> str:
         if v not in _OPERATION_MODE_SET:
-            raise ValueError(f"operation_mode must be one of {sorted(_OPERATION_MODE_SET)}")
+            raise ValueError(
+                f"operation_mode must be one of {sorted(_OPERATION_MODE_SET)}"
+            )
         return v
 
 
@@ -98,7 +100,9 @@ class TankUpdate(BaseModel):
         if v is None:
             return v
         if v not in _OPERATION_MODE_SET:
-            raise ValueError(f"operation_mode must be one of {sorted(_OPERATION_MODE_SET)}")
+            raise ValueError(
+                f"operation_mode must be one of {sorted(_OPERATION_MODE_SET)}"
+            )
         return v
 
 
@@ -143,7 +147,9 @@ class TankSubzoneAssignmentInfo(BaseModel):
     tank_id: str = Field(..., description="UUID of the tank")
     subzone_config_id: str = Field(..., description="UUID of the subzone_config")
     assigned_at: str = Field(..., description="ISO-8601 timestamp (UTC)")
-    assigned_by: Optional[int] = Field(None, description="User ID of the assigning operator")
+    assigned_by: Optional[int] = Field(
+        None, description="User ID of the assigning operator"
+    )
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -254,38 +260,38 @@ class TankTargetsResponse(BaseModel):
 # =============================================================================
 # Tank running volume (Anker + Flow-Delta, AUT-1377 A3)
 # =============================================================================
-# Display facade over resolve_v_real — does NOT invent drain/DtW subtraction.
+# Display facade over resolve_v_real — typed volume_l only, no name/GPIO guess.
 
 
 class TankVolumeResponse(BaseModel):
-    """Response for GET /v1/tanks/{tank_id}/volume (AUT-1377)."""
+    """Response for GET /v1/tanks/{tank_id}/volume (AUT-1377 / AUT-1563)."""
 
     tank_id: uuid.UUID = Field(..., description="Tank UUID")
     volume_l: Optional[float] = Field(
         None,
         description=(
-            "Running volume (L) = last '20 Liter' anchor ± flow delta on GPIO14; "
+            "Running volume (L) from persisted dose_config.volume_l; "
             "None when unresolved (fail-closed)"
         ),
     )
     source: Optional[str] = Field(
         None,
-        description="level_anchor_live | anchor_plus_flow_delta | None if unresolved",
+        description="dose_config.volume_l | None if unresolved",
     )
     anchor_liters: Optional[float] = Field(
-        None, description="Absolute anchor liters (typically 20.0)"
+        None, description="Typed volume_l used as the volume truth"
     )
     flow_delta_l: Optional[float] = Field(
-        None, description="Integrated refill flow (L) since last anchor high"
+        None, description="Unused after AUT-1563 (GPIO14 is not volume truth)"
     )
     anchor_at: Optional[datetime] = Field(
-        None, description="Timestamp of last level-anchor high (UTC)"
+        None, description="Unused after AUT-1563 (no level-name anchor)"
     )
     level_gpio: Optional[int] = Field(
-        None, description="GPIO of the '20 Liter' liquid_level sensor"
+        None, description="Unused after AUT-1563 (no GPIO guessed as volume)"
     )
     level_device_id: Optional[str] = Field(
-        None, description="ESP device_id hosting the level anchor"
+        None, description="Unused after AUT-1563 (no level-name device)"
     )
     nominal_volume_l: Optional[float] = Field(
         None,
@@ -384,7 +390,9 @@ class NutrientBatchCreate(BaseModel):
     @classmethod
     def validate_acquisition_method(cls, v: str) -> str:
         if v not in _ACQUISITION_METHOD_SET:
-            raise ValueError(f"acquisition_method must be one of {sorted(_ACQUISITION_METHOD_SET)}")
+            raise ValueError(
+                f"acquisition_method must be one of {sorted(_ACQUISITION_METHOD_SET)}"
+            )
         return v
 
     @field_validator("qualifier")
@@ -399,14 +407,22 @@ class NutrientBatchCreate(BaseModel):
         _validate_components(self.components)
 
         if not self.ec_was_measured and self.ec_measured_after is not None:
-            raise ValueError("ec_measured_after must be omitted when ec_was_measured=false")
+            raise ValueError(
+                "ec_measured_after must be omitted when ec_was_measured=false"
+            )
         if self.ec_was_measured and self.ec_measured_after is None:
-            raise ValueError("ec_measured_after is required when ec_was_measured=true")
+            raise ValueError(
+                "ec_measured_after is required when ec_was_measured=true"
+            )
 
         if not self.ph_was_measured and self.ph_measured_after is not None:
-            raise ValueError("ph_measured_after must be omitted when ph_was_measured=false")
+            raise ValueError(
+                "ph_measured_after must be omitted when ph_was_measured=false"
+            )
         if self.ph_was_measured and self.ph_measured_after is None:
-            raise ValueError("ph_measured_after is required when ph_was_measured=true")
+            raise ValueError(
+                "ph_measured_after is required when ph_was_measured=true"
+            )
 
         return self
 
@@ -421,7 +437,9 @@ class NutrientBatchResponse(BaseModel):
     created_at: datetime = Field(..., description="Server insert timestamp (UTC)")
     recipe_label: Optional[str] = Field(None, description="Optional recipe label")
     volume_l: float = Field(..., description="Volume in liters")
-    components: List[Dict[str, Any]] = Field(default_factory=list, description="Component list")
+    components: List[Dict[str, Any]] = Field(
+        default_factory=list, description="Component list"
+    )
     ec_measured_after: Optional[float] = Field(None, description="EC after entry")
     ec_was_measured: bool = Field(..., description="Whether EC was measured")
     ph_measured_after: Optional[float] = Field(None, description="pH after entry")
@@ -438,7 +456,8 @@ class NutrientBatchResponse(BaseModel):
     prior_ec_ms_cm: Optional[float] = Field(
         None,
         description=(
-            "AUT-1346: Last known EC before this entry (ledger convention). " "NULL when unknown."
+            "AUT-1346: Last known EC before this entry (ledger convention). "
+            "NULL when unknown."
         ),
     )
     warnings: List[str] = Field(
@@ -626,7 +645,9 @@ def _validate_components(components: List[Dict[str, Any]]) -> None:
         if kind == "product":
             has_ml = "dose_ml_per_l" in raw and raw["dose_ml_per_l"] is not None
             has_g = "dose_g_per_l" in raw and raw["dose_g_per_l"] is not None
-            has_abs = "dose_ml_absolute" in raw and raw["dose_ml_absolute"] is not None
+            has_abs = (
+                "dose_ml_absolute" in raw and raw["dose_ml_absolute"] is not None
+            )
             # AUT-1352: logic doses may carry dose_ml_absolute alone when V_alt
             # (hence dose_ml_per_l) is unknown — absolute ml is primary truth (Q2).
             if has_ml and has_g:
@@ -654,9 +675,13 @@ def _validate_components(components: List[Dict[str, Any]]) -> None:
             if has_abs:
                 abs_dose = raw["dose_ml_absolute"]
                 if not isinstance(abs_dose, (int, float)) or isinstance(abs_dose, bool):
-                    raise ValueError(f"components[{idx}].dose_ml_absolute must be a number")
+                    raise ValueError(
+                        f"components[{idx}].dose_ml_absolute must be a number"
+                    )
                 if float(abs_dose) < 0:
-                    raise ValueError(f"components[{idx}].dose_ml_absolute must be ≥ 0")
+                    raise ValueError(
+                        f"components[{idx}].dose_ml_absolute must be ≥ 0"
+                    )
 
         elif kind == "salt":
             if "dose_ml_per_l" in raw or "dose_g_per_l" in raw:
@@ -665,15 +690,21 @@ def _validate_components(components: List[Dict[str, Any]]) -> None:
                 )
             conc = raw.get("conc_g_per_l")
             if not isinstance(conc, (int, float)) or isinstance(conc, bool):
-                raise ValueError(f"components[{idx}].conc_g_per_l is required and must be a number")
+                raise ValueError(
+                    f"components[{idx}].conc_g_per_l is required and must be a number"
+                )
             if float(conc) < 0:
                 raise ValueError(f"components[{idx}].conc_g_per_l must be ≥ 0")
             elements = raw.get("elements")
             if elements is not None and not isinstance(elements, dict):
-                raise ValueError(f"components[{idx}].elements must be an object when provided")
+                raise ValueError(
+                    f"components[{idx}].elements must be an object when provided"
+                )
 
         else:
-            raise ValueError(f"components[{idx}].kind must be 'product' or 'salt', got {kind!r}")
+            raise ValueError(
+                f"components[{idx}].kind must be 'product' or 'salt', got {kind!r}"
+            )
 
         # Optional EC contribution (both forms) — entered value only.
         if "ec_contribution_ms_cm" in raw:
@@ -683,4 +714,6 @@ def _validate_components(components: List[Dict[str, Any]]) -> None:
                     f"components[{idx}].ec_contribution_ms_cm must be a number when provided"
                 )
             if float(ec_contrib) < 0:
-                raise ValueError(f"components[{idx}].ec_contribution_ms_cm must be ≥ 0")
+                raise ValueError(
+                    f"components[{idx}].ec_contribution_ms_cm must be ≥ 0"
+                )

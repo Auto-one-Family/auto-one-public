@@ -119,7 +119,7 @@ const qualityLabel = computed(() => {
   const labels: Record<string, string> = {
     good: 'OK',
     warning: 'Warnung',
-    alarm: 'Kritisch',
+    alarm: 'Alarm',
     stale: 'Veraltet',
     offline: 'Offline',
   }
@@ -240,34 +240,41 @@ function formatValue(value: number | null | undefined): string {
   }).format(Number(value))
 }
 
-// AUT-299: ATC fallback warning badge
-// Show when: EC/pH sensor + temp_sensor_config_id set + last metadata.temp_source === "default_25"
+function hasAtcCompensationValue(meta: Record<string, unknown> | null | undefined): boolean {
+  return typeof meta?.temp_compensation_value === 'number'
+}
+
+// AUT-299 / AUT-1561: ATC fallback warning badge
+// Show when: EC/pH + FK + compensation value + last metadata.temp_source === "default_25"
 const atcFallbackWarning = computed<boolean>(() => {
   const sType = props.sensor.sensor_type.toLowerCase()
   if (sType !== 'ec' && sType !== 'ph') return false
   if (!props.sensor.temp_sensor_config_id) return false
   const meta = props.sensor.metadata
   if (!meta || typeof meta !== 'object') return false
+  if (!hasAtcCompensationValue(meta)) return false
   return meta.temp_source === 'default_25'
 })
 
-// AUT-322: ATC cached temperature badge (yellow)
-// Show when: EC/pH sensor + metadata.temp_source === "cached_temp"
+// AUT-322 / AUT-1561: ATC cached temperature badge (yellow)
+// Show when: EC/pH + compensation value + metadata.temp_source === "cached_temp"
 const atcCachedTemp = computed<boolean>(() => {
   const sType = props.sensor.sensor_type.toLowerCase()
   if (sType !== 'ec' && sType !== 'ph') return false
   const meta = props.sensor.metadata
   if (!meta || typeof meta !== 'object') return false
+  if (!hasAtcCompensationValue(meta)) return false
   return meta.temp_source === 'cached_temp'
 })
 
-// AUT-322: ATC temp read failed badge (red)
-// Show when: EC/pH sensor + metadata.temp_source === "read_failed" or "temp_read_failed"
+// AUT-322 / AUT-1561: ATC temp read failed badge (red)
+// Show when: EC/pH + compensation value + metadata.temp_source === "read_failed" or "temp_read_failed"
 const atcReadFailed = computed<boolean>(() => {
   const sType = props.sensor.sensor_type.toLowerCase()
   if (sType !== 'ec' && sType !== 'ph') return false
   const meta = props.sensor.metadata
   if (!meta || typeof meta !== 'object') return false
+  if (!hasAtcCompensationValue(meta)) return false
   return meta.temp_source === 'read_failed' || meta.temp_source === 'temp_read_failed'
 })
 

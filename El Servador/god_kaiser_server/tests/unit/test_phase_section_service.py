@@ -117,3 +117,22 @@ class TestActionWindow:
         )
         assert covering is not None
         assert covering.phase == "bluete-bulk"
+
+    def test_overlap_prefers_current_section_when_window_spans_phase_change(
+        self,
+    ) -> None:
+        plant = _plant(phase="bluete-bulk")
+        t0 = datetime(2026, 3, 1, tzinfo=timezone.utc)
+        t1 = datetime(2026, 4, 1, 11, 30, tzinfo=timezone.utc)
+        events = [
+            _event(plant, event_type="phase_changed", ts=t0, new_phase="veg-frueh"),
+            _event(plant, event_type="phase_changed", ts=t1, new_phase="bluete-bulk"),
+        ]
+        sections = build_phase_sections(plant, events)
+        covering = section_overlapping_window(
+            sections,
+            t1 - timedelta(minutes=30),
+            t1 + timedelta(minutes=30),
+        )
+        assert covering is not None
+        assert covering.phase == "bluete-bulk"

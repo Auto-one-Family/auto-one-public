@@ -46,7 +46,6 @@ static bool     s_offline_first_eval        = true;
 // deckt Index 0..15 (passend zu ESP32-S3 MAX_OFFLINE_RULES=16).
 static uint16_t s_eval_disabled_logged      = 0;
 static uint16_t s_eval_override_logged      = 0;
-static uint16_t s_eval_cal_inactive_logged  = 0;
 static uint16_t s_eval_time_skip_logged     = 0;
 static bool     s_eval_prev_nan[MAX_OFFLINE_RULES] = {false};
 static uint16_t s_rule_max_on_seconds[MAX_OFFLINE_RULES] = {0};
@@ -61,7 +60,6 @@ static void resetOfflineEvalLogState() {
     s_offline_first_eval       = true;
     s_eval_disabled_logged     = 0;
     s_eval_override_logged     = 0;
-    s_eval_cal_inactive_logged = 0;
     s_eval_time_skip_logged    = 0;
     memset(s_eval_prev_nan, 0, sizeof(s_eval_prev_nan));
     memset(s_timewindow_on_deadline_ms, 0, sizeof(s_timewindow_on_deadline_ms));
@@ -531,16 +529,16 @@ void OfflineModeManager::checkDelayTimer() {
     }
 }
 
-// Defense-in-Depth guard: calibration-required sensors store only ADC raw values
-// (0-4095) in the ValueCache — applyLocalConversion() returns (float)raw_value for
-// these types. Offline rule thresholds are in physical units (pH, mS/cm, %).
-// Comparing ADC raw vs. physical threshold is meaningless and potentially dangerous.
-// Server-side filter (config_builder.py) is the primary defense; this guard handles
-// stale NVS data, manual config manipulation, or server-side bugs.
-static bool requiresCalibration(const char* sensor_value_type) {
+// AUT-1565: ph/ec/moisture keep ADC raw values (0-4095) in the ValueCache —
+// applyLocalConversion() returns (float)raw_value for these types and stays that way
+// (calibration remains server-side, no cal engine on the device). Operator-authored
+// offline rules for these types are therefore compared against the RAW cache, so their
+// thresholds are RAW units, not pH / mS/cm / %. This predicate is a logging hint only;
+// evaluation is no longer skipped (was: hard skip + forced actuator OFF).
+static bool usesRawThreshold(const char* sensor_value_type) {
     // Canonical types — server normalizes aliases before building the config push,
     // but stale NVS data from pre-normalization firmware may still carry alias strings
-    // such as "soil_moisture". Include all known aliases as defense-in-depth.
+    // such as "soil_moisture". Include all known aliases so the hint stays accurate.
     return (strcmp(sensor_value_type, "ph") == 0 ||
             strcmp(sensor_value_type, "ec") == 0 ||
             strcmp(sensor_value_type, "moisture") == 0 ||
@@ -628,25 +626,25 @@ void OfflineModeManager::evaluateOfflineRules() {
         }
     }
 
-    // Boot-time summary: log once how many rules are filtered due to calibration requirement
+    // Boot-time summary: log once which rules compare against ADC raw values (AUT-1565)
     if (s_offline_first_eval) {
         s_offline_first_eval = false;
-        uint8_t filtered = 0;
+        uint8_t raw_rules = 0;
         String detail = "";
         for (uint8_t i = 0; i < offline_rule_count_; i++) {
-            if (requiresCalibration(offline_rules_[i].sensor_value_type)) {
-                filtered++;
+            if (usesRawThreshold(offline_rules_[i].sensor_value_type)) {
+                raw_rules++;
                 if (detail.length() > 0) {
                     detail += ", ";
                 }
                 detail += String(i) + ":" + String(offline_rules_[i].sensor_value_type);
             }
         }
-        if (filtered > 0) {
-            LOG_W(TAG, String("[SAFETY-P4] ") + String(filtered) + " of " +
+        if (raw_rules > 0) {
+            LOG_I(TAG, String("[SAFETY-P4] ") + String(raw_rules) + " of " +
                        String(offline_rule_count_) +
-                       " rules filtered (calibration required) — " + detail +
-                       " — actuators stay OFF.");
+                       " rules compare ADC RAW (thresholds in raw units, no device"
+                       " calibration) — " + detail);
         }
     }
 
@@ -670,30 +668,9 @@ void OfflineModeManager::evaluateOfflineRules() {
             continue;
         }
 
-        // Guard: ph/ec/moisture rules cannot be evaluated without server calibration.
-        if (requiresCalibration(rule.sensor_value_type)) {
-            if (!rule.is_active) {
-                if (!(s_eval_cal_inactive_logged & (1u << i))) {
-                    s_eval_cal_inactive_logged |= (1u << i);
-                    LOG_W(TAG, String("[SAFETY-P4] Rule ") + String(i) + ": SKIP (calibration required: " +
-                                   String(rule.sensor_value_type) + ")");
-                }
-                continue;
-            }
-            bool off_ok = actuatorManager.controlActuatorBinary(rule.actuator_gpio, false);
-            if (!off_ok) {
-                LOG_E(TAG, String("[SAFETY-P4] Rule ") + String(i) +
-                           ": SAFETY - OFF failed for GPIO " + String(rule.actuator_gpio) +
-                           " (actuator not in manager or control error). "
-                           "No direct digitalWrite fallback due to unknown active-low state.");
-            }
-            rule.is_active = false;
-            LOG_W(TAG, String("[SAFETY-P4] Rule ") + String(i) + ": sensor '" +
-                       String(rule.sensor_value_type) +
-                       "' requires calibration - forcing actuator GPIO " +
-                       String(rule.actuator_gpio) + " OFF (safe state)");
-            continue;
-        }
+        // AUT-1565: no calibration gate here. ph/ec/moisture rules run against the RAW
+        // ValueCache (see usesRawThreshold above); a missing or stale RAW sample is
+        // handled by the NaN guard further down, which holds the actuator state.
 
         // TIME FILTER: skip evaluation if outside active window
         if (rule.time_filter_enabled) {
@@ -847,9 +824,9 @@ void OfflineModeManager::evaluateOfflineRules() {
 
         if (warmup_valid_samples_[i] < OFFLINE_WARMUP_VALID_SAMPLES) {
             // AUT-734 C3: val==0.0f guards against spurious zero readings from
-            // getSensorValue(). Analog probes are already blocked upstream by
-            // AUT-726 (raw==0→NaN) and requiresCalibration(); 0.0f here would
-            // indicate a non-calibration sensor (e.g. DS18B20) reading exactly 0°C,
+            // getSensorValue(). Analog probes stay blocked upstream by AUT-726
+            // (raw==0→NaN); 0.0f here would indicate a sensor (e.g. DS18B20)
+            // reading exactly 0°C,
             // which is below greenhouse operating range and treated as suspect.
             // AUT-1307: liquid_level dry == 0.0f is a valid digital sample — count it.
             // Exception is strictly sensor_value_type=="liquid_level"; all others unchanged.

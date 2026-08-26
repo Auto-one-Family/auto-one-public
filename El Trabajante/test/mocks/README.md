@@ -57,3 +57,5 @@ Phase 2 will add HAL-Interfaces for hardware abstraction:
 - INVSHal
 - IWiFiHal
 - IMQTTHal
+
+See `.technical-manager/commands/pending/Unit_tests_esp32.md` Phase 2.

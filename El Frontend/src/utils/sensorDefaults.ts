@@ -88,7 +88,7 @@ export const SENSOR_CATEGORIES: Record<SensorCategoryId, SensorCategory> = {
   water: { name: 'Wasser', icon: 'Droplet', order: 2 },
   soil: { name: 'Boden', icon: 'Leaf', order: 3 },
   air: { name: 'Luft', icon: 'Wind', order: 4 },
-  light: { name: 'Licht', icon: 'Sun', order: 5 },
+  light: { name: 'Beleuchtungsstärke', icon: 'Sun', order: 5 },
   other: { name: 'Sonstige', icon: 'Settings', order: 6 }
 }
 
@@ -576,7 +576,7 @@ export const SENSOR_TYPE_CONFIG: Record<string, SensorTypeConfig> = {
   },
 
   'light': {
-    label: 'Licht',
+    label: 'Beleuchtungsstärke',
     unit: 'lux',
     min: 0,
     max: 100000,
@@ -849,8 +849,8 @@ const _sensorConfigByLowerKey: Record<string, SensorTypeConfig> = Object.fromEnt
  * Retrieve sensor config with case-insensitive matching.
  * Always prefer this over direct SENSOR_TYPE_CONFIG[sensorType] access.
  */
-export function getSensorConfig(sensorType: string): SensorTypeConfig | undefined {
-  return SENSOR_TYPE_CONFIG[sensorType] ?? _sensorConfigByLowerKey[sensorType.toLowerCase()] ?? undefined
+export function getSensorConfig(sensorType: string): SensorTypeConfig | null {
+  return SENSOR_TYPE_CONFIG[sensorType] ?? _sensorConfigByLowerKey[sensorType.toLowerCase()] ?? null
 }
 
 /**
@@ -868,7 +868,7 @@ export function getSensorUnit(sensorType: string): string {
  * @returns The default value or 0 if unknown
  */
 export function getSensorDefault(sensorType: string): number {
-  return SENSOR_TYPE_CONFIG[sensorType]?.defaultValue ?? 0
+  return getSensorConfig(sensorType)?.defaultValue ?? 0
 }
 
 
@@ -894,11 +894,78 @@ export function isValidSensorValue(sensorType: string, value: number): boolean {
 }
 
 /**
+ * Keys the Add-Sensor dropdown / palette must not offer (AUT-1558).
+ * Filter only — SENSOR_TYPE_CONFIG stays intact for existing rows.
+ */
+const ADD_SENSOR_TYPE_CUT = new Set([
+  'analog',
+  'digital',
+  'level',
+  'light',
+  'scd30_co2',
+  'scd30',
+  'mhz19_co2',
+  'dht22',
+  'servo',
+])
+
+/** Persist canonical server keys; labels may still say pH / EC (AUT-1558). */
+const ADD_SENSOR_CREATE_KEYS: Record<string, string> = {
+  ph: 'ph',
+  pH: 'ph',
+  EC: 'ec',
+  ec: 'ec',
+}
+
+/**
+ * API allowlist for ATC temperature-source dropdown (AUT-1559).
+ * Mirrors El Servador schemas/sensor.py — not a type registry.
+ */
+export const ATC_SOURCE_SENSOR_TYPES = [
+  'ds18b20',
+  'temperature',
+  'sht31_temp',
+  'bmp280_temp',
+] as const
+
+export function isAtcSourceSensorType(sensorType: string): boolean {
+  return (ATC_SOURCE_SENSOR_TYPES as readonly string[]).includes(sensorType.toLowerCase())
+}
+
+/**
+ * ATC dropdown rows for SensorConfig (AUT-1511 / AUT-1514).
+ * Operator label is the human word (Temperatur / existing name), value is config_id.
+ * Invalid sources (bme280_temp) stay out. No gpio/chip/URL in the label.
+ */
+export function buildAtcSourceOptions(
+  sensors: ReadonlyArray<{
+    sensor_type?: string | null
+    name?: string | null
+    config_id?: string | null
+    id?: string | null
+  }>,
+): Array<{ value: string; label: string }> {
+  const options: Array<{ value: string; label: string }> = []
+  for (const sensor of sensors) {
+    const sType = String(sensor.sensor_type ?? '')
+    if (!isAtcSourceSensorType(sType)) continue
+    const configId = sensor.config_id ?? sensor.id ?? null
+    if (!configId) continue
+    options.push({
+      value: configId,
+      label: getSensorDisplayName({ sensor_type: sType, name: sensor.name }),
+    })
+  }
+  return options
+}
+
+/**
  * Get all available sensor types as options for select elements (Add-Sensor dropdown).
  * Returns a DEVICE list: one option per multi-value device (canonical key, e.g. "sht31"),
  * plus all single-value sensor types. Value-types (sht31_temp, sht31_humidity) and
  * duplicate base keys (SHT31, SHT31_humidity) are excluded so the dropdown does not show 5 SHT31 variants.
  * Duplicates like DS18B20/ds18b20 are deduplicated (lowercase preferred as canonical).
+ * AUT-1558: cuts analog/digital/level/light/scd30/mhz19/DHT22; persists ph/ec.
  * @returns Array of { value, label } objects
  */
 export function getSensorTypeOptions(): Array<{ value: string; label: string }> {
@@ -909,13 +976,16 @@ export function getSensorTypeOptions(): Array<{ value: string; label: string }> 
     Object.keys(MULTI_VALUE_DEVICES).map((k) => k.toLowerCase())
   )
 
-  const deviceOptions = Object.entries(MULTI_VALUE_DEVICES).map(([deviceType, cfg]) => ({
-    value: deviceType,
-    label: cfg.label ?? getMultiValueDeviceFallbackLabel(deviceType)
-  }))
+  const deviceOptions = Object.entries(MULTI_VALUE_DEVICES)
+    .filter(([deviceType]) => !ADD_SENSOR_TYPE_CUT.has(deviceType.toLowerCase()))
+    .map(([deviceType, cfg]) => ({
+      value: deviceType,
+      label: cfg.label ?? getMultiValueDeviceFallbackLabel(deviceType)
+    }))
 
   const singleValueEntries = Object.entries(SENSOR_TYPE_CONFIG)
     .filter(([key]) => {
+      if (ADD_SENSOR_TYPE_CUT.has(key.toLowerCase())) return false
       if (valueTypeSet.has(key)) return false
       if (valueTypeSet.has(key.toLowerCase())) return false // e.g. SHT31_humidity → sht31_humidity
       if (deviceKeySet.has(key.toLowerCase())) return false // SHT31, sht31 → already in deviceOptions
@@ -938,7 +1008,10 @@ export function getSensorTypeOptions(): Array<{ value: string; label: string }> 
       addedLowercase.add(lower)
       return true
     })
-    .map(([key, config]) => ({ value: key, label: config.label }))
+    .map(([key, config]) => ({
+      value: ADD_SENSOR_CREATE_KEYS[key] ?? key,
+      label: config.label,
+    }))
 
   return [...deviceOptions, ...singleValueOptions]
 }
@@ -977,7 +1050,7 @@ export function formatSensorValueWithUnit(value: number | null, sensorType: stri
  * @returns Interval in seconds, or 30 as fallback
  */
 export function getDefaultInterval(sensorType: string): number {
-  return SENSOR_TYPE_CONFIG[sensorType]?.defaultIntervalSeconds ?? 30
+  return getSensorConfig(sensorType)?.defaultIntervalSeconds ?? 30
 }
 
 /**
@@ -1263,10 +1336,10 @@ export function getValueConfigForSensorType(sensorType: string): MultiValueConfi
  * // => "Temperatur"
  */
 export function getSensorDisplayName(sensor: { sensor_type: string; name?: string | null }): string {
-  const typeConfig = SENSOR_TYPE_CONFIG[sensor.sensor_type]
-  const typeLabel = typeConfig?.label ?? sensor.sensor_type
+  const typeLabel = getSensorConfig(sensor.sensor_type)?.label
+    ?? (isAtcSourceSensorType(sensor.sensor_type) ? SENSOR_CATEGORIES.temperature.name : sensor.sensor_type)
 
-  // No name set → type label
+  // No name set → type label (never a raw processor key for ATC sources)
   if (!sensor.name) {
     return typeLabel
   }
@@ -1630,8 +1703,8 @@ export function getSensorAggCategory(sensorType: string): AggCategory {
   if (lower.includes('light') || lower.includes('lux')) return 'light'
   if (lower.includes('co2')) return 'co2'
   if (lower.includes('moisture') || lower.includes('soil')) return 'moisture'
-  if (lower === 'ph') return 'ph'
-  if (lower === 'ec') return 'ec'
+  if (lower === 'ph' || lower === 'ph_sensor') return 'ph'
+  if (lower === 'ec' || lower === 'ec_sensor') return 'ec'
   if (lower.includes('flow')) return 'flow'
   if (lower === 'vpd') return 'other' // VPD (kPa) must not mix with humidity (%)
 
@@ -1673,7 +1746,7 @@ const CATEGORY_LABELS: Record<AggCategory, string> = {
   humidity: 'Luftfeuchte',
   pressure: 'Luftdruck',
   moisture: 'Bodenfeuchte',
-  light: 'Licht',
+  light: 'Beleuchtungsstärke',
   co2: 'CO2',
   ph: 'pH',
   ec: 'Leitfähigkeit',

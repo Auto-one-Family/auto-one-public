@@ -213,7 +213,8 @@ class RateLimiter:
 
                 if daily_count >= rule_max_per_day:
                     logger.warning(
-                        f"Rule {rule_id} daily limit exceeded: " f"{daily_count}/{rule_max_per_day}"
+                        f"Rule {rule_id} daily limit exceeded: "
+                        f"{daily_count}/{rule_max_per_day}"
                     )
                     return {
                         "allowed": False,

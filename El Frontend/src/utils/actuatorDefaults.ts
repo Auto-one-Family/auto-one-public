@@ -210,14 +210,19 @@ export function getActuatorLabel(type: string): string {
   return ACTUATOR_TYPE_CONFIG[type]?.label || type
 }
 
+/** Canonical actuator tokens the device processes (AUT-1558). Extra labels stay display-only. */
+const ADD_ACTUATOR_TOKENS = new Set(['pump', 'valve', 'pwm', 'relay'])
+
 /**
  * Get actuator type options for dropdowns
  */
 export function getActuatorTypeOptions(): Array<{ value: string; label: string }> {
-  return Object.entries(ACTUATOR_TYPE_CONFIG).map(([value, config]) => ({
-    value,
-    label: config.label,
-  }))
+  return Object.entries(ACTUATOR_TYPE_CONFIG)
+    .filter(([value]) => ADD_ACTUATOR_TOKENS.has(value))
+    .map(([value, config]) => ({
+      value,
+      label: config.label,
+    }))
 }
 
 /**

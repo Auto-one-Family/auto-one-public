@@ -304,9 +304,7 @@ class ClaudeDebugAgent:
         if not api_key:
             api_key = os.environ.get("ANTHROPIC_API_KEY")
         if not api_key:
-            raise RuntimeError(
-                "No Anthropic API key configured (DB plugin 'claude' or ANTHROPIC_API_KEY env var)"
-            )
+            raise RuntimeError("No Anthropic API key configured (DB plugin 'claude' or ANTHROPIC_API_KEY env var)")
 
         self._anthropic = AsyncAnthropic(api_key=api_key)
         return self._anthropic
@@ -324,9 +322,7 @@ class ClaudeDebugAgent:
             logger.warning("Tool %s failed: %s", tool_name, exc)
             return json.dumps({"error": str(exc), "tool": tool_name})
 
-    async def _dispatch_tool(
-        self, tool_name: str, tool_input: dict[str, Any]
-    ) -> Any:  # noqa: PLR0911,PLR0912
+    async def _dispatch_tool(self, tool_name: str, tool_input: dict[str, Any]) -> Any:  # noqa: PLR0911,PLR0912
         """Execute the named tool and return the raw result."""
         client = self._client
 
@@ -453,7 +449,9 @@ class ClaudeDebugAgent:
                 for block in response.content:
                     if getattr(block, "type", None) == "tool_use":
                         result_content = await self._execute_tool(block.name, block.input)
-                        tool_results.append(self._build_tool_result_block(block.id, result_content))
+                        tool_results.append(
+                            self._build_tool_result_block(block.id, result_content)
+                        )
                 messages.append({"role": "assistant", "content": response.content})
                 messages.append({"role": "user", "content": tool_results})
             else:
@@ -576,7 +574,9 @@ class ClaudeDebugAgent:
                 for block in response.content:
                     if getattr(block, "type", None) == "tool_use":
                         result_content = await self._execute_tool(block.name, block.input)
-                        tool_results.append(self._build_tool_result_block(block.id, result_content))
+                        tool_results.append(
+                            self._build_tool_result_block(block.id, result_content)
+                        )
                 messages.append({"role": "assistant", "content": response.content})
                 messages.append({"role": "user", "content": tool_results})
             else:
@@ -613,19 +613,11 @@ async def _gather_esp_state(
     sensors_task = asyncio.create_task(client.list_sensors(esp_id=esp_id))
     actuators_task = asyncio.create_task(client.list_actuators(esp_id=esp_id))
 
-    results = await asyncio.gather(
-        device_task, sensors_task, actuators_task, return_exceptions=True
-    )
+    results = await asyncio.gather(device_task, sensors_task, actuators_task, return_exceptions=True)
 
-    device: dict[str, Any] = (
-        results[0] if not isinstance(results[0], Exception) else {"error": str(results[0])}
-    )
-    sensors: dict[str, Any] = (
-        results[1] if not isinstance(results[1], Exception) else {"error": str(results[1])}
-    )
-    actuators: dict[str, Any] = (
-        results[2] if not isinstance(results[2], Exception) else {"error": str(results[2])}
-    )
+    device: dict[str, Any] = results[0] if not isinstance(results[0], Exception) else {"error": str(results[0])}
+    sensors: dict[str, Any] = results[1] if not isinstance(results[1], Exception) else {"error": str(results[1])}
+    actuators: dict[str, Any] = results[2] if not isinstance(results[2], Exception) else {"error": str(results[2])}
     return device, sensors, actuators
 
 

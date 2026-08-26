@@ -163,8 +163,7 @@ export const useActuatorStore = defineStore('actuator', () => {
       return user ? `manuell (${user})` : 'manuell'
     }
     if (source.startsWith('logic:')) {
-      const id = source.slice(6).trim()
-      return id ? `Automationsregel (${id})` : 'Automationsregel'
+      return 'Automationsregel'
     }
     if (source.startsWith('logic_engine')) return 'Automationsregel'
     if (source.startsWith('system:')) return source.replace('system:', 'system/')
@@ -1104,7 +1103,7 @@ export const useActuatorStore = defineStore('actuator', () => {
         return
       }
       toast.error(
-        `${formatActorName(deviceName, espId)}: Befehl fehlgeschlagen${errorCode ? ` (${errorCode})` : ''}${msg ? ` — ${msg}` : ''}${!errorCode && !msg ? ` — ${CONTRACT_OPERATOR_ACTION}` : ''} (Quelle: ${formatIssuedBy(issuedBy)})${buildHandleSuffix(correlationId, requestId)}`,
+        `${formatActorName(deviceName, espId)}: Befehl fehlgeschlagen${errorCode ? ` (${errorCode})` : ''}${msg ? ` — ${msg}` : ''}${!errorCode && !msg ? ` — ${CONTRACT_OPERATOR_ACTION}` : ''}`,
         {
           persistent: true,
           dedupeKey: buildActuatorTerminalToastKey(subjectId, correlationId, requestId),
@@ -1282,7 +1281,7 @@ export const useActuatorStore = defineStore('actuator', () => {
     const toast = useToast()
     const deviceName = devices.find(d => getDeviceId(d) === espId)?.name || espId
     toast.error(
-      `${formatActorName(deviceName, espId)}: Befehl fehlgeschlagen — ${error} (Quelle: ${formatIssuedBy(issuedBy)})${buildHandleSuffix(correlationId, requestId)}`,
+      `${formatActorName(deviceName, espId)}: Befehl fehlgeschlagen — ${error}`,
       {
         persistent: true,
         dedupeKey: buildActuatorTerminalToastKey(subjectId, correlationId, requestId),

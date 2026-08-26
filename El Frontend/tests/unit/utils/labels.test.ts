@@ -15,6 +15,7 @@ import {
   DEVICE_TYPE_LABELS,
   ACTION_LABELS,
   MESSAGE_LABELS,
+  NOTIFICATION_SEVERITY_LABELS,
   getQualityInfo,
   getStateInfo,
   getActuatorTypeInfo,
@@ -23,6 +24,7 @@ import {
   getUnitExplanation,
   getLabel,
   getQualityLabel,
+  getNotificationSeverityLabel,
   getStateLabel,
   getActuatorTypeLabel,
   getConnectionLabel,
@@ -42,6 +44,19 @@ describe('QUALITY_LABELS', () => {
     expect(QUALITY_LABELS.poor).toBe('Schlecht')
     expect(QUALITY_LABELS.stale).toBe('Veraltet')
     expect(QUALITY_LABELS.unknown).toBe('Unbekannt')
+  })
+
+  it('should not use Inbox-Kritisch for quality bad (AUT-1564)', () => {
+    expect(QUALITY_LABELS.bad).not.toBe('Kritisch')
+    expect(getQualityLabel('bad')).not.toBe('Kritisch')
+    expect(getQualityInfo('bad').label).not.toBe('Kritisch')
+  })
+})
+
+describe('NOTIFICATION_SEVERITY_LABELS', () => {
+  it('should keep Inbox Kritisch as Schwellenwert (AUT-1564)', () => {
+    expect(NOTIFICATION_SEVERITY_LABELS.critical).toBe('Kritisch')
+    expect(getNotificationSeverityLabel('critical')).toBe('Kritisch')
   })
 })
 

@@ -28,12 +28,11 @@ from src.services.flash.secrets_service import (
 # Helpers
 # ---------------------------------------------------------------------------
 
-
 def _make_secrets(**overrides) -> NvsSecretsCreate:
     defaults = dict(
         ssid="TestSSID",
         password="wifi-pass",
-        server_address="192.168.1.100",
+        server_address="192.168.0.2",
         mqtt_port=1883,
         mqtt_username="esp_user",
         mqtt_password="mqtt-pass",
@@ -172,15 +171,7 @@ class TestWriteSecrets:
             path = write_secrets("dev-local", secrets)
 
         content = path.read_text()
-        for key in (
-            "ssid",
-            "password",
-            "server_address",
-            "mqtt_port",
-            "mqtt_username",
-            "mqtt_password",
-            "configured",
-        ):
+        for key in ("ssid", "password", "server_address", "mqtt_port", "mqtt_username", "mqtt_password", "configured"):
             assert key in content, f"Key '{key}' missing from CSV"
 
     def test_writes_correct_ssid_value(self, tmp_path: Path) -> None:
@@ -246,9 +237,7 @@ class TestBuildNvsBinary:
             mock_result.returncode = 0
             bin_path.write_bytes(b"\x00" * 128)  # simulate generated binary
 
-            with patch(
-                "src.services.flash.secrets_service.subprocess.run", return_value=mock_result
-            ) as mock_run:
+            with patch("src.services.flash.secrets_service.subprocess.run", return_value=mock_result) as mock_run:
                 build_nvs_binary("dev-local")
 
         call_args = mock_run.call_args[0][0]
@@ -269,9 +258,7 @@ class TestBuildNvsBinary:
             mock_result = MagicMock()
             mock_result.returncode = 0
 
-            with patch(
-                "src.services.flash.secrets_service.subprocess.run", return_value=mock_result
-            ):
+            with patch("src.services.flash.secrets_service.subprocess.run", return_value=mock_result):
                 response = build_nvs_binary("dev-local")
 
         assert response.success is True
@@ -289,9 +276,7 @@ class TestBuildNvsBinary:
             mock_result.stderr = "partition gen error"
             mock_result.stdout = ""
 
-            with patch(
-                "src.services.flash.secrets_service.subprocess.run", return_value=mock_result
-            ):
+            with patch("src.services.flash.secrets_service.subprocess.run", return_value=mock_result):
                 with pytest.raises(RuntimeError, match="nvs_partition_gen failed"):
                     build_nvs_binary("dev-local")
 

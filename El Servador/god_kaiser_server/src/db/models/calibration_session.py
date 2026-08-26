@@ -158,7 +158,7 @@ class CalibrationSession(Base, TimestampMixin):
         JSONBCompat,
         nullable=True,
         default=None,
-        doc="Session-level metadata: calibration_temperature (°C for EC ATC), etc.",
+        doc="Session-level metadata: calibration_temperature (°C for EC ATC), optional valid_until (ISO, AUT-1576 transport), etc.",
     )
 
     # ── Terminal Metadata ──────────────────────────────────────────────────

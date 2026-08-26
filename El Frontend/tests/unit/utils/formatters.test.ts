@@ -10,6 +10,7 @@ import {
   formatInteger,
   formatSensorValue,
   unitFromChartLabel,
+  formatMountChartSuffix,
   isFirstTooltipItemForDataset,
   formatPercent,
   formatUptime,
@@ -26,7 +27,8 @@ import {
   formatCount,
   formatDateTime,
   formatDate,
-  formatTime
+  formatTime,
+  qualityToStatus
 } from '@/utils/formatters'
 
 // =============================================================================
@@ -142,6 +144,62 @@ describe('unitFromChartLabel', () => {
     expect(unitFromChartLabel('Substrat (%) · Z1')).toBe('%')
     expect(unitFromChartLabel('Substrat (%) · Z1 / SZ-A')).toBe('%')
     expect(unitFromChartLabel('Temp&Hum (Luftfeuchte) (°C) · Haus A')).toBe('°C')
+  })
+
+  it('should keep the unit when AUT-1557 appends mount after zone', () => {
+    expect(unitFromChartLabel('Substrat (%) · Z1 / SZ-A · 30cm canopy')).toBe('%')
+  })
+})
+
+describe('formatMountChartSuffix (AUT-1557)', () => {
+  it('should append height and medium when the loaded config has them', () => {
+    expect(formatMountChartSuffix({
+      mount_height_cm: 30,
+      mount_medium: 'canopy',
+    })).toBe(' · 30cm canopy')
+  })
+
+  it('should include angle when present and stay empty without mount fields', () => {
+    expect(formatMountChartSuffix({
+      mount_height_cm: 30,
+      mount_medium: 'canopy',
+      mount_angle_deg: 45,
+    })).toBe(' · 30cm canopy 45°')
+    expect(formatMountChartSuffix({})).toBe('')
+    expect(formatMountChartSuffix(null)).toBe('')
+  })
+
+  it('should keep 0° as 0 and not emit an empty · when mount is unset', () => {
+    expect(formatMountChartSuffix({ mount_angle_deg: 0 })).toBe(' · 0°')
+    expect(formatMountChartSuffix({
+      mount_height_cm: null,
+      mount_medium: null,
+      mount_angle_deg: null,
+    })).toBe('')
+    expect(formatMountChartSuffix({ mount_medium: '' })).toBe('')
+  })
+
+  it('should compose the Monitor-L3 label example without inventing mount on the name', () => {
+    const location = ' · Z1 / SZ-A'
+    const mount = formatMountChartSuffix({
+      mount_height_cm: 30,
+      mount_medium: 'canopy',
+    })
+    const overlayMount = formatMountChartSuffix({
+      mount_height_cm: 30,
+      mount_medium: 'canopy',
+    })
+    expect(`Substrat (%)${location}${mount}`).toBe('Substrat (%) · Z1 / SZ-A · 30cm canopy')
+    expect(overlayMount).toBe(mount)
+    expect(`Substrat (%)${location}${formatMountChartSuffix({})}`).toBe('Substrat (%) · Z1 / SZ-A')
+  })
+})
+
+describe('getSensorDisplayName stays out of mount (AUT-1557)', () => {
+  it('should not invent a mount suffix from type or name', async () => {
+    const { getSensorDisplayName } = await import('@/utils/sensorDefaults')
+    expect(getSensorDisplayName({ sensor_type: 'moisture', name: 'Substrat' })).toBe('Substrat')
+    expect(getSensorDisplayName({ sensor_type: 'moisture', name: 'Substrat' })).not.toMatch(/cm|canopy|°/)
   })
 })
 
@@ -442,5 +500,23 @@ describe('formatTime', () => {
 
   it('returns dash for invalid input', () => {
     expect(formatTime(null)).toBe('-')
+  })
+})
+
+describe('qualityToStatus (AUT-1564)', () => {
+  it('should map ESP quality error/bad/poor to alarm', () => {
+    expect(qualityToStatus('error')).toBe('alarm')
+    expect(qualityToStatus('bad')).toBe('alarm')
+    expect(qualityToStatus('poor')).toBe('alarm')
+  })
+
+  it('should map leftover quality critical to alarm, not good', () => {
+    expect(qualityToStatus('critical')).toBe('alarm')
+    expect(qualityToStatus('critical')).not.toBe('good')
+  })
+
+  it('should keep good/excellent as good', () => {
+    expect(qualityToStatus('good')).toBe('good')
+    expect(qualityToStatus('excellent')).toBe('good')
   })
 })

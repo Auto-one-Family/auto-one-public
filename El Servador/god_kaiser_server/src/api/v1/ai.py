@@ -87,9 +87,7 @@ class AIChatRequest(BaseModel):
 
     message: str = Field(..., min_length=1, description="User message for the debug agent")
     session_id: str = Field(..., min_length=1, description="Conversation session identifier")
-    esp_id: Optional[str] = Field(
-        default=None, description="Optional ESP device ID for focused analysis"
-    )
+    esp_id: Optional[str] = Field(default=None, description="Optional ESP device ID for focused analysis")
     context: Optional[dict] = Field(default=None, description="Optional extra context dict")
 
 

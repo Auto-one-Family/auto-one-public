@@ -157,7 +157,9 @@ class TestPumpConcentrationSsotAut1355:
         act = MagicMock()
         act.concentration = 10.0  # pump SSOT — doubles divisor vs dose_config 5.0
 
-        with (pytest.MonkeyPatch.context() as mp,):
+        with (
+            pytest.MonkeyPatch.context() as mp,
+        ):
             # Patch repositories used inside _compute_chemistry_dose_ml
             from src.services import logic_engine as le_mod
 

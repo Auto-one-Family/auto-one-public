@@ -217,6 +217,7 @@
   --z-prompt:         78;  /* ConfirmDialog — above other BaseModals (e.g. ConfigWizardModal at 65) */
   --z-toast:          80;  /* toasts — above modals and prompts */
   --z-safety:         85;  /* EmergencyStop — highest interactive priority */
+  --safety-control-height: 3.25rem; /* bottom dock so floating NOT-AUS does not cover content */
 
   /* ═══════════════════════════════════════════════════════════════════════════
      BACKDROP / OVERLAY

@@ -11,6 +11,7 @@ import type {
   SensorDiffCondition,
   NotificationAction,
   NotRunningCondition,
+  SequenceAction,
 } from '@/types/logic'
 import { getSensorLabel, getSensorUnit } from '@/utils/sensorDefaults'
 
@@ -107,7 +108,12 @@ function formatActionBrief(action: LogicAction): string {
     return `Notification (${na.channel})`
   }
   if (action.type === 'delay') return `Delay ${action.seconds}s`
-  if (action.type === 'sequence') return 'Sequenz'
+  if (action.type === 'sequence') {
+    const sa = action as SequenceAction
+    const n = sa.steps?.length ?? 0
+    const stepLabel = n === 1 ? 'Schritt' : 'Schritte'
+    return sa.description ? `Sequenz: ${sa.description} (${n} ${stepLabel})` : `Sequenz (${n} ${stepLabel})`
+  }
   if (action.type === 'plugin' || action.type === 'autoops_trigger') return 'Plugin'
   if (action.type === 'run_diagnostic') return 'Diagnose'
   return 'Aktion'
@@ -166,6 +172,21 @@ function buildReadableText(rule: LogicRule): string {
     if (hc) {
       const unit = hc.sensor_type ? getSensorUnit(hc.sensor_type) : ''
       const unitStr = unit && unit !== 'raw' ? ` ${unit}` : ''
+
+      // AUT: Sequence-Action ersetzt den direkten Aktor-Ein/Aus-Befehl — die Hysterese-Schwelle
+      // ist dann nur noch der Ausloeser fuer die Sequenz, nicht mehr "Einschalten/Ausschalten".
+      const seqAction = rule.actions.find(a => a.type === 'sequence') as SequenceAction | undefined
+      if (seqAction) {
+        const triggerLabel =
+          hc.activate_below != null
+            ? `unter ${hc.activate_below}${unitStr}`
+            : hc.activate_above != null
+              ? `über ${hc.activate_above}${unitStr}`
+              : null
+        const seqLabel = formatActionBrief(seqAction)
+        return triggerLabel ? `${seqLabel} — Auslöser ${triggerLabel}` : seqLabel
+      }
+
       if (hc.activate_above != null && hc.deactivate_below != null) {
         return `Einschalten ab ${hc.activate_above}${unitStr}, Ausschalten ab ${hc.deactivate_below}${unitStr}${actionSuffix}`
       }
@@ -176,9 +197,12 @@ function buildReadableText(rule: LogicRule): string {
       return `${hysteresisLabel} Hysterese${actionSuffix}`
     }
 
-    const tc = rule.conditions.find(c => c.type === 'time_window' || c.type === 'time') as TimeCondition | undefined
-    if (tc) {
-      return `${formatTimeRange(tc)}${actionSuffix}`
+    const timeConditions = rule.conditions.filter(
+      c => c.type === 'time_window' || c.type === 'time'
+    ) as TimeCondition[]
+    if (timeConditions.length > 0) {
+      const join = rule.logic_operator === 'OR' ? ' oder ' : ' und '
+      return `${timeConditions.map(formatTimeRange).join(join)}${actionSuffix}`
     }
 
     const dc = rule.conditions.find(c => c.type === 'sensor_diff') as SensorDiffCondition | undefined

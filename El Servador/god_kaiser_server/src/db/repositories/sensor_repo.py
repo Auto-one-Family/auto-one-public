@@ -691,7 +691,9 @@ class SensorRepository(BaseRepository[SensorConfig]):
         else:
             # AUT-723 E3: warming_up is quality-only, not a numeric chart Y.
             # Explicit ?quality=warming_up still returns those rows.
-            filters.append(or_(SensorData.quality.is_(None), SensorData.quality != "warming_up"))
+            filters.append(
+                or_(SensorData.quality.is_(None), SensorData.quality != "warming_up")
+            )
         if data_source:
             filters.append(SensorData.data_source == data_source.value)
         if zone_id is not None:

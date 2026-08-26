@@ -68,7 +68,9 @@ class PlanSegmentRepository(BaseRepository[PlanSegment]):
         if measure is not None:
             conditions.append(PlanSegment.measure == measure)
         if from_ts is not None:
-            conditions.append(or_(PlanSegment.to_ts.is_(None), PlanSegment.to_ts > from_ts))
+            conditions.append(
+                or_(PlanSegment.to_ts.is_(None), PlanSegment.to_ts > from_ts)
+            )
         if to_ts is not None:
             conditions.append(PlanSegment.from_ts < to_ts)
         if subzone_config_id is not None:
@@ -80,7 +82,9 @@ class PlanSegmentRepository(BaseRepository[PlanSegment]):
                 .where(PlanSegmentSubzoneAssignment.plan_segment_id == PlanSegment.id)
                 .exists()
             )
-            conditions.append(or_(PlanSegment.id.in_(assigned_ids), ~has_any_assignment))
+            conditions.append(
+                or_(PlanSegment.id.in_(assigned_ids), ~has_any_assignment)
+            )
 
         stmt = select(PlanSegment).order_by(PlanSegment.from_ts.asc())
         if conditions:
@@ -127,8 +131,11 @@ class PlanSegmentRepository(BaseRepository[PlanSegment]):
             )
         else:
             # Zone-wide (no assignments) OR assigned to this subzone.
-            assigned_ids = select(PlanSegmentSubzoneAssignment.plan_segment_id).where(
-                PlanSegmentSubzoneAssignment.subzone_config_id == subzone_config_id
+            assigned_ids = (
+                select(PlanSegmentSubzoneAssignment.plan_segment_id)
+                .where(
+                    PlanSegmentSubzoneAssignment.subzone_config_id == subzone_config_id
+                )
             )
             has_any_assignment = (
                 select(PlanSegmentSubzoneAssignment.id)
@@ -154,7 +161,9 @@ class PlanSegmentRepository(BaseRepository[PlanSegment]):
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
 
-    async def get_subzone_assignment_ids(self, plan_segment_id: uuid.UUID) -> List[uuid.UUID]:
+    async def get_subzone_assignment_ids(
+        self, plan_segment_id: uuid.UUID
+    ) -> List[uuid.UUID]:
         """
         Return the subzone_config_ids a segment is explicitly assigned to.
 

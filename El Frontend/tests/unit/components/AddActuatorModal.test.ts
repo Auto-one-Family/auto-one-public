@@ -150,6 +150,11 @@ describe('AddActuatorModal', () => {
       expect(labels).toContain('Pumpe')
       expect(labels).toContain('Ventil')
       expect(labels).toContain('PWM')
+      const values = options.map(o => (o.element as HTMLOptionElement).value)
+      expect(values.sort()).toEqual(['pump', 'pwm', 'relay', 'valve'])
+      for (const extra of ['fan', 'heater', 'light', 'motor', 'servo']) {
+        expect(values).not.toContain(extra)
+      }
     })
 
     it('shows name input field', () => {

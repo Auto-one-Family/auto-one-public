@@ -28,6 +28,17 @@ interface Props {
   width?: 'sm' | 'md' | 'lg'
   /** Elevation for stacked modals: 'default' | 'high' (z-index +10 when opened over another SlideOver) */
   elevation?: 'default' | 'high'
+  /**
+   * AUT-1510 / AUT-1524: hits pass through the inset-0 backdrop (Focus+Context).
+   * Backdrop does not capture clicks; the panel stays interactive.
+   */
+  allowBackgroundInteraction?: boolean
+  /**
+   * Ignore pointer/keyboard input on the panel (HTML inert).
+   * Used when a narrower higher-elevation SlideOver is stacked on top
+   * so the uncovered strip of this sheet is not hit-testable.
+   */
+  inert?: boolean
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -35,6 +46,8 @@ const props = withDefaults(defineProps<Props>(), {
   subtitle: '',
   width: 'md',
   elevation: 'default',
+  allowBackgroundInteraction: false,
+  inert: false,
 })
 
 const emit = defineEmits<{
@@ -84,7 +97,13 @@ onUnmounted(() => {
     <Transition name="slide-over-fade">
       <div
         v-if="open"
-        :class="['slide-over-backdrop', { 'slide-over-backdrop--high': elevation === 'high' }]"
+        :class="[
+          'slide-over-backdrop',
+          {
+            'slide-over-backdrop--high': elevation === 'high',
+            'slide-over-backdrop--pass-through': allowBackgroundInteraction,
+          },
+        ]"
         @click="handleBackdropClick"
       >
         <Transition name="slide-over-panel" appear>
@@ -94,6 +113,7 @@ onUnmounted(() => {
             role="dialog"
             aria-modal="true"
             aria-labelledby="sheet-title"
+            :inert="inert ? true : undefined"
           >
             <!-- Header -->
             <header class="slide-over__header">
@@ -148,6 +168,15 @@ onUnmounted(() => {
 
 .slide-over-backdrop--high {
   z-index: calc(var(--z-modal) + 10);
+}
+
+/* AUT-1510: Inbox Focus+Context — backdrop does not eat Satellite hits */
+.slide-over-backdrop--pass-through {
+  pointer-events: none;
+}
+
+.slide-over-backdrop--pass-through .slide-over {
+  pointer-events: auto;
 }
 
 /* Backdrop fade transition */
@@ -239,8 +268,10 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  min-height: 44px;
   border: none;
   background: transparent;
   color: var(--color-text-secondary);

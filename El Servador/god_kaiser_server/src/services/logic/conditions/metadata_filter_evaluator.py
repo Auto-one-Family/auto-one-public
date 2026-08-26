@@ -86,7 +86,9 @@ class MetadataFilterEvaluator(BaseConditionEvaluator):
         operator = condition.get("operator")
 
         if not field or not isinstance(field, str):
-            logger.warning("MetadataFilterEvaluator: missing or invalid 'field' in condition")
+            logger.warning(
+                "MetadataFilterEvaluator: missing or invalid 'field' in condition"
+            )
             return False
 
         if operator not in _SUPPORTED_OPERATORS:
@@ -133,7 +135,8 @@ class MetadataFilterEvaluator(BaseConditionEvaluator):
             if operator == "in":
                 if not isinstance(expected_value, (list, tuple, set, frozenset)):
                     logger.warning(
-                        "MetadataFilterEvaluator: operator 'in' requires list value, " "got %s",
+                        "MetadataFilterEvaluator: operator 'in' requires list value, "
+                        "got %s",
                         type(expected_value).__name__,
                     )
                     return False
@@ -179,9 +182,9 @@ class MetadataFilterEvaluator(BaseConditionEvaluator):
         are coerced to float so that ``1 == 1.0`` evaluates to True.
         Otherwise, Python's standard equality is used.
         """
-        if MetadataFilterEvaluator._is_numeric(field_value) and MetadataFilterEvaluator._is_numeric(
-            expected_value
-        ):
+        if MetadataFilterEvaluator._is_numeric(
+            field_value
+        ) and MetadataFilterEvaluator._is_numeric(expected_value):
             try:
                 return float(field_value) == float(expected_value)
             except (TypeError, ValueError):

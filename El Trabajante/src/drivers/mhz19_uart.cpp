@@ -23,7 +23,7 @@ static const uint8_t MHZ19_CMD_READ_PPM[9] = {
 };
 
 // ABC (Auto-Baseline-Calibration) disable command — send once after first successful read.
-// Required in greenhouse and indoor horticulture climate: ABC would re-calibrate 800-1500 ppm CO2 as 400 ppm.
+// Required for cannabis grow / greenhouse: ABC would re-calibrate 800-1500 ppm CO2 as 400 ppm.
 static const uint8_t MHZ19_CMD_ABC_OFF[9] = {
     0xFF, 0x01, 0x79, 0x00, 0x00, 0x00, 0x00, 0x00, 0x86
 };
@@ -176,7 +176,7 @@ bool Mhz19UartReader::readRawPpm(uint16_t& ppm_out) {
     }
 
     // Disable ABC once after first successful read (idempotent: sensor stores in flash).
-    // ABC re-calibrates the lowest measured CO2 as 400 ppm — wrong in elevated-CO2 environments.
+    // ABC re-calibrates the lowest measured CO2 as 400 ppm — wrong in grow environments.
     if (!abc_disabled_) {
         Serial2.write(MHZ19_CMD_ABC_OFF, sizeof(MHZ19_CMD_ABC_OFF));
         Serial2.flush();

@@ -113,8 +113,7 @@ async def test_route_fingerprint_dedup(
     assert result1.id is not None
 
     result2 = await router.route(notification)
-    assert result2 is not None
-    assert result2.id == result1.id
+    assert result2 is None
 
 
 # =============================================================================

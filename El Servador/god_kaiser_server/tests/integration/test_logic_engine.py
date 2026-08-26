@@ -1149,7 +1149,7 @@ class TestBumplessTransfer:
         cooldown_seconds/settle_seconds/max_executions_per_hour changed, no actual
         condition/action change) must NOT bypass a currently running cooldown —
         the previous behavior reset the cooldown on every save, which let a pH-Minus
-        dosing rule re-fire immediately after an operator merely lowered cooldown_seconds
+        dosing rule re-fire immediately after Robin merely lowered cooldown_seconds
         (AUT-1135 live incident)."""
         from datetime import timedelta
 

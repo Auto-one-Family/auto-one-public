@@ -41,7 +41,6 @@ async def test_t1_config_response_unknown_contract_visible_and_stable():
     contract_repo.upsert_terminal_event_authority = AsyncMock(
         return_value=(SimpleNamespace(), False)
     )
-    contract_repo.list_open_intents_for_esp = AsyncMock(return_value=[])
     audit_repo = MagicMock()
     audit_repo.log_config_response = AsyncMock()
 
@@ -203,7 +202,6 @@ async def test_t4_lwt_unknown_reason_visible_and_terminal_authority_kept():
 
     session = MagicMock()
     session.commit = AsyncMock()
-    session.flush = AsyncMock()
     esp_device = SimpleNamespace(
         id="esp-uuid",
         device_id="ESP_T4",
@@ -218,7 +216,6 @@ async def test_t4_lwt_unknown_reason_visible_and_terminal_authority_kept():
     contract_repo.upsert_terminal_event_authority = AsyncMock(
         return_value=(SimpleNamespace(), False)
     )
-    contract_repo.list_open_intents_for_esp = AsyncMock(return_value=[])
     actuator_repo = MagicMock()
     actuator_repo.get_active_actuators_for_device = AsyncMock(return_value=[])
     actuator_repo.reset_states_for_device = AsyncMock(return_value=0)
@@ -239,7 +236,6 @@ async def test_t4_lwt_unknown_reason_visible_and_terminal_authority_kept():
             return_value=SimpleNamespace(clear_cycle=AsyncMock()),
         ),
         patch("src.websocket.manager.WebSocketManager.get_instance", AsyncMock(return_value=ws)),
-        patch("src.mqtt.handlers.lwt_handler.flag_modified"),
     ):
         result = await handler.handle_lwt(topic, payload)
 

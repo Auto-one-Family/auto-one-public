@@ -81,8 +81,8 @@ struct SensorConfig {
   // AUT-555: QoS level used when publishing sensor readings to the MQTT broker.
   //
   // Background: AUT-54 switched ALL sensor publishes to QoS-0 because the IDF OUTBOX
-  // would fill up under WiFi jitter, causing write-timeout disconnects (especially
-  // with simultaneous actuator traffic). QoS-0 = fire-and-forget, no PUBACK
+  // would fill up under WiFi jitter, causing write-timeout disconnects (esp. ESP_EA5484
+  // on pi-elbherb with simultaneous actuator traffic). QoS-0 = fire-and-forget, no PUBACK
   // required, so stalled OUTBOX no longer blocks the send path.
   //
   // Problem: sensors referenced in a cross_esp_logic rule MUST deliver their reading for

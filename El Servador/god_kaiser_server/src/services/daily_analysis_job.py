@@ -246,9 +246,7 @@ class DailyAnalysisJob:
             return
 
         date_str = run_date.strftime("%Y-%m-%d")
-        subject = (
-            f"[AutomationOne] Daily Stack Report {date_str} ({slot}, {findings_count} findings)"
-        )
+        subject = f"[AutomationOne] Daily Stack Report {date_str} ({slot}, {findings_count} findings)"
         await self._email_service.send_email(
             to=notif.email_daily_report_recipient,
             subject=subject,

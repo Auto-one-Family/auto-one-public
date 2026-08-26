@@ -60,7 +60,7 @@ from .ledger_ec_units import (
 )
 from .tank_volume_truth import resolve_v_real
 
-# AUT-1377: Flow path is refill inflow only (GPIO14) — never invent DtW subtraction.
+# AUT-1377 / AUT-1563: outflow/DtW is not subtracted from typed volume_l.
 VOLUME_LIMITATION_DRAIN_NOT_IN_FLOW = "drain_not_in_flow"
 
 logger = get_logger(__name__)
@@ -118,7 +118,9 @@ class TankService:
         )
         return TankResponse.model_validate(tank)
 
-    async def update_tank(self, tank_id: uuid.UUID, data: TankUpdate) -> TankResponse:
+    async def update_tank(
+        self, tank_id: uuid.UUID, data: TankUpdate
+    ) -> TankResponse:
         """
         Partial update of tank attributes (AUT-1381).
 
@@ -178,7 +180,8 @@ class TankService:
         )
         if existing is not None:
             raise ValueError(
-                f"Tank '{tank_id}' is already assigned to " f"subzone_config '{subzone_config_id}'"
+                f"Tank '{tank_id}' is already assigned to "
+                f"subzone_config '{subzone_config_id}'"
             )
 
         row = await self.assignment_repo.assign(
@@ -379,7 +382,8 @@ class TankService:
             prior_ec_ms_cm=prior_ec_ms_cm,
         )
         logger.info(
-            "Ledger entry created: id=%s tank_id=%s entry_type=%s " "prior_volume_l=%s warnings=%d",
+            "Ledger entry created: id=%s tank_id=%s entry_type=%s "
+            "prior_volume_l=%s warnings=%d",
             row.id,
             tank_id,
             row.entry_type,
@@ -526,7 +530,9 @@ class TankService:
             notes=notes,
         )
 
-    async def read_ledger_prior_ec_us_cm(self, tank_id: uuid.UUID) -> Optional[float]:
+    async def read_ledger_prior_ec_us_cm(
+        self, tank_id: uuid.UUID
+    ) -> Optional[float]:
         """
         AUT-1350: Assist/composition **read** boundary.
 
@@ -643,7 +649,7 @@ class TankService:
         if override is not None and override > 0:
             return override, "manual_override", notes
 
-        # AUT-1377 / AUT-1381: running volume before ledger/nominal guesswork.
+        # AUT-1377 / AUT-1563: typed volume_l before ledger/nominal guesswork.
         truth = await resolve_v_real(self.session, tank_id)
         if truth is not None and truth.volume_l is not None and truth.volume_l > 0:
             notes.append(f"V_real via {truth.source}")
@@ -709,11 +715,11 @@ class TankService:
 
     async def get_volume_truth(self, tank_id: uuid.UUID) -> TankVolumeResponse:
         """
-        AUT-1377: running tank volume for display (Anker ± Flow-Delta).
+        AUT-1377 / AUT-1563: running tank volume for display (typed volume_l).
 
         Reuses ``resolve_v_real`` (same helper as K2 auto-cal). Fail-closed:
         ``volume_l=None`` when unresolved. Always advertises
-        ``drain_not_in_flow`` — outflow/DtW is not on the GPIO14 flow path.
+        ``drain_not_in_flow`` — outflow/DtW is not subtracted.
 
         Raises:
             ValueError: If tank does not exist
@@ -783,7 +789,9 @@ class TankService:
                 at=now,
                 subzone_config_id=subzone_config_id,
             )
-            targets.append(await self._to_measure_target(measure, segment, subzone_config_id))
+            targets.append(
+                await self._to_measure_target(measure, segment, subzone_config_id)
+            )
 
         devices = await self.esp_repo.get_by_tank_id(tank_id)
         return TankTargetsResponse(
@@ -796,9 +804,13 @@ class TankService:
             assigned_device_ids=[d.device_id for d in devices],
         )
 
-    async def _pick_subzone_for_targets(self, tank_id: uuid.UUID) -> Optional[uuid.UUID]:
+    async def _pick_subzone_for_targets(
+        self, tank_id: uuid.UUID
+    ) -> Optional[uuid.UUID]:
         """Deterministically pick one subzone assignment (assigned_at asc, id asc)."""
-        assignments: List[TankSubzoneAssignment] = await self.assignment_repo.get_by_tank(tank_id)
+        assignments: List[TankSubzoneAssignment] = await self.assignment_repo.get_by_tank(
+            tank_id
+        )
         if not assignments:
             return None
         first = min(assignments, key=lambda a: (a.assigned_at, str(a.id)))
@@ -824,7 +836,9 @@ class TankService:
 
         resolved_via = "zone"
         if subzone_config_id is not None:
-            assigned_ids = await self.plan_segment_repo.get_subzone_assignment_ids(segment.id)
+            assigned_ids = await self.plan_segment_repo.get_subzone_assignment_ids(
+                segment.id
+            )
             if subzone_config_id in assigned_ids:
                 resolved_via = "subzone"
 
@@ -839,10 +853,14 @@ class TankService:
         )
 
     async def _get_zone(self, zone_id: str) -> Optional[Zone]:
-        result = await self.session.execute(select(Zone).where(Zone.zone_id == zone_id))
+        result = await self.session.execute(
+            select(Zone).where(Zone.zone_id == zone_id)
+        )
         return result.scalar_one_or_none()
 
-    async def _get_subzone_config(self, subzone_config_id: uuid.UUID) -> Optional[SubzoneConfig]:
+    async def _get_subzone_config(
+        self, subzone_config_id: uuid.UUID
+    ) -> Optional[SubzoneConfig]:
         result = await self.session.execute(
             select(SubzoneConfig).where(SubzoneConfig.id == subzone_config_id)
         )

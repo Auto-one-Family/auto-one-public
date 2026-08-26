@@ -7,7 +7,7 @@
  * - Title (bold when unread) + body (1 line truncated)
  * - Relative time (right)
  * - Expandable details (source, ESP, zone, deep-links)
- * - Action buttons: mark read, navigate to sensor/rule/grafana
+ * - Zeile = Expand; Buttons = Bestätigen / Erledigen (kein Mute, kein Timeout)
  */
 
 import { ref, computed } from 'vue'
@@ -592,8 +592,10 @@ function navigateToCorrelation(): void {
 
 .item__title-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2);
+  min-width: 0;
 }
 
 /* Source Badge (Alert-Basis 3) */
@@ -676,9 +678,12 @@ function navigateToCorrelation(): void {
 }
 
 .item__title {
+  flex: 1 1 8rem;
+  min-width: 0;
   font-size: var(--text-sm);
   color: var(--color-text-secondary);
   line-height: 1.4;
+  overflow-wrap: anywhere;
 }
 
 .item__title--unread {
@@ -897,8 +902,11 @@ function navigateToCorrelation(): void {
 .item__action {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: var(--space-1);
-  padding: 3px var(--space-2);
+  min-height: 44px;
+  min-width: 44px;
+  padding: var(--space-2) var(--space-3);
   font-size: var(--text-xs);
   font-weight: 500;
   color: var(--color-text-secondary);
@@ -960,6 +968,6 @@ function navigateToCorrelation(): void {
 .expand-enter-to,
 .expand-leave-from {
   opacity: 1;
-  max-height: 200px;
+  max-height: 80rem;
 }
 </style>

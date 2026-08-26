@@ -219,6 +219,14 @@ describe('getActuatorTypeOptions', () => {
     expect(pwm).toBeDefined()
     expect(pwm?.label).toBe('PWM')
   })
+
+  it('offers only canonical tokens pump/valve/pwm/relay (AUT-1558)', () => {
+    const values = getActuatorTypeOptions().map(opt => opt.value)
+    expect(values.sort()).toEqual(['pump', 'pwm', 'relay', 'valve'])
+    for (const extra of ['fan', 'heater', 'light', 'motor', 'servo']) {
+      expect(values).not.toContain(extra)
+    }
+  })
 })
 
 // =============================================================================

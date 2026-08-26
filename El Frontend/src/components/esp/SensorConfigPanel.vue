@@ -18,7 +18,7 @@ import { useUiStore } from '@/shared/stores/ui.store'
 import { useToast } from '@/composables/useToast'
 import { inferInterfaceType } from '@/utils/sensorDefaults'
 import { roundToDecimals } from '@/utils/formatters'
-import { SENSOR_TYPE_CONFIG, getSensorUnit, getSensorConfig, getMultiValueDeviceConfigBySensorType } from '@/utils/sensorDefaults'
+import { getSensorUnit, getSensorConfig, getSensorDisplayName, getMultiValueDeviceConfigBySensorType, buildAtcSourceOptions } from '@/utils/sensorDefaults'
 import { AccordionSection, type TabItem } from '@/shared/design/primitives'
 import RangeSlider from '@/shared/design/primitives/RangeSlider.vue'
 import AlertConfigSection from '@/components/devices/AlertConfigSection.vue'
@@ -39,7 +39,6 @@ import { useZoneStore } from '@/shared/stores/zone.store'
 import { useActuatorStore } from '@/shared/stores/actuator.store'
 import { createLogger } from '@/utils/logger'
 import { useAlertCenterStore } from '@/shared/stores/alert-center.store'
-import { useSensorStore } from '@/shared/stores/sensor.store'
 import type { DeviceScope } from '@/types'
 import type { DeviceMetadata } from '@/types/device-metadata'
 import { parseDeviceMetadata, mergeDeviceMetadata } from '@/types/device-metadata'
@@ -132,6 +131,30 @@ const DEVICE_SCOPE_OPTIONS: ReadonlyArray<{ value: DeviceScope; label: string }>
   { value: 'mobile', label: 'Mobil' },
 ]
 
+// AUT-1556: Montage an bestehendem Grundlagen-Tab (A1-Felder, nullable).
+const MOUNT_MEDIUM_OPTIONS = [
+  { value: 'air', label: 'Luft' },
+  { value: 'canopy', label: 'Blattwerk' },
+  { value: 'substrate', label: 'Substrat' },
+  { value: 'solution', label: 'Lösung' },
+] as const
+type MountMedium = (typeof MOUNT_MEDIUM_OPTIONS)[number]['value']
+const mountHeightCm = ref<number | null>(null)
+const mountMedium = ref<MountMedium | null>(null)
+const mountAngleDeg = ref<number | null>(null)
+
+function toOptionalNumber(value: unknown): number | null {
+  if (value === '' || value == null) return null
+  const parsed = typeof value === 'number' ? value : Number(value)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function parseMountMedium(value: unknown): MountMedium | null {
+  return MOUNT_MEDIUM_OPTIONS.some((opt) => opt.value === value)
+    ? (value as MountMedium)
+    : null
+}
+
 // Operating mode (Block C: Phase 2B)
 const operatingMode = ref<'continuous' | 'on_demand' | 'scheduled' | 'paused'>('continuous')
 const timeoutSeconds = ref(0)
@@ -211,7 +234,6 @@ const namePlaceholder = computed(() => {
   }
 })
 
-const gpioPin = ref(props.gpio)
 const i2cAddress = ref('0x44')
 const i2cBus = ref(0)
 const measureRangeMin = ref(0)
@@ -282,7 +304,7 @@ const metadata = ref<DeviceMetadata>({})
 // Computed
 // =============================================================================
 
-const sensorConfig = computed(() => SENSOR_TYPE_CONFIG[props.sensorType])
+const sensorConfig = computed(() => getSensorConfig(props.sensorType))
 
 // AUT-873 UX-04: leeres/NULL operating_mode = "Typ-Default" — aus Registry aufloesen statt hart 'continuous'
 function resolveOperatingMode(value: unknown): 'continuous' | 'on_demand' | 'scheduled' | 'paused' {
@@ -311,21 +333,12 @@ const calibrationHelpText = computed((): string => {
   return 'Feuchtesensoren können nach einigen Monaten im Substrat driften. Regelmäßige Überprüfung empfohlen (Standardintervall: 90 Tage).'
 })
 
-// AUT-686 S4: ATC status + mode warning + calibration health
-const sensorStore = useSensorStore()
+// AUT-686 S4: mode warning + calibration health
 const calGuideVisible = ref(false)
 
 const showModeWarning = computed(() =>
   ['ph', 'ec'].includes(props.sensorType.toLowerCase()) && operatingMode.value === 'continuous'
 )
-
-const atcStatus = computed((): 'not_applicable' | 'no_link' | 'fallback' | 'ok' => {
-  if (!isAtcCapable.value) return 'not_applicable'
-  if (!tempSensorConfigId.value) return 'no_link'
-  const degradedTs = sensorStore.getAtcDegradedTimestamp(props.espId, props.gpio, props.sensorType)
-  if (degradedTs && Date.now() - degradedTs < 10 * 60 * 1000) return 'fallback'
-  return 'ok'
-})
 
 const calibrationHealthState = computed((): {
   state: 'uncalibrated' | 'healthy' | 'drifting' | 'critical'
@@ -354,25 +367,20 @@ const CALIBRATION_GUIDES: Record<string, string> = {
   ec: '1. 1413 µS/cm KCl-Lösung bei bekannter Temperatur → Sensor eintauchen → warten bis stabil → Wert erfassen. → Kalibrierung starten',
 }
 
-/** AUT-299: All temperature sensors across all ESPs for ATC dropdown */
+/** AUT-299 / AUT-1511 / AUT-1514: ATC sources — human title, config_id value, no gpio/chip/URL. */
 const temperatureSensorOptions = computed<Array<{ value: string; label: string }>>(() => {
-  const TEMP_TYPES = new Set(['temperature', 'ds18b20', 'sht31_temp', 'sht31', 'bme280_temp'])
-  const options: Array<{ value: string; label: string }> = []
+  const sensors: Array<{
+    sensor_type?: string | null
+    name?: string | null
+    config_id?: string | null
+    id?: string | null
+  }> = []
   for (const device of espStore.devices) {
-    const espDeviceId = espStore.getDeviceId(device)
-    for (const sensor of (device.sensors ?? []) as Array<{ sensor_type: string; gpio: number; name?: string | null; config_id?: string; id?: string }>) {
-      const sType = String(sensor.sensor_type ?? '').toLowerCase()
-      if (!TEMP_TYPES.has(sType)) continue
-      const configId: string | null = sensor.config_id ?? sensor.id ?? null
-      if (!configId) continue
-      const sensorName = sensor.name || sType
-      options.push({
-        value: configId,
-        label: `${sensorName} (${espDeviceId}, GPIO ${sensor.gpio})`,
-      })
+    for (const sensor of (device.sensors ?? []) as typeof sensors) {
+      sensors.push(sensor)
     }
   }
-  return options
+  return buildAtcSourceOptions(sensors)
 })
 
 // =============================================================================
@@ -527,7 +535,6 @@ const {
   layout: boardLayout,
   isKnownBoard,
   i2cDefaultLabel,
-  isReserved,
 } = useBoardLayout(deviceHardwareType)
 const contextSensor = computed(() => {
   const normalizedType = String(props.sensorType || '').toLowerCase()
@@ -818,6 +825,11 @@ onMounted(async () => {
       localScope.value = (configExt.device_scope as DeviceScope) ?? 'zone_local'
       localAssignedZones.value = (configExt.assigned_zones as string[]) ?? []
 
+      // AUT-1556: Montage — First-Class an SensorConfigResponse, nicht metadata
+      mountHeightCm.value = toOptionalNumber(config.mount_height_cm)
+      mountMedium.value = parseMountMedium(config.mount_medium)
+      mountAngleDeg.value = toOptionalNumber(config.mount_angle_deg)
+
       // AUT-299: ATC linked temperature sensor
       tempSensorConfigId.value = (configExt.temp_sensor_config_id as string | null) ?? null
     }
@@ -1040,6 +1052,11 @@ async function handleSave() {
     config.device_scope = localScope.value
     config.assigned_zones = localScope.value === 'zone_local' ? [] : localAssignedZones.value
 
+    // AUT-1556: Montage über bestehenden createOrUpdate — leer bleibt null
+    config.mount_height_cm = toOptionalNumber(mountHeightCm.value)
+    config.mount_medium = mountMedium.value
+    config.mount_angle_deg = toOptionalNumber(mountAngleDeg.value)
+
     // AUT-299: ATC temperature sensor link (null = remove link)
     config.temp_sensor_config_id = tempSensorConfigId.value ?? null
 
@@ -1133,11 +1150,10 @@ defineExpose({ tabs, handleSave, confirmAndDelete, saving, deleting, loading })
     <div v-if="loading" class="sensor-config__loading">Lade Konfiguration...</div>
 
     <template v-else>
-      <!-- Settings-Kontextpfad: Zone -> Subzone -> ESP -> GPIO (AUT-251) -->
+      <!-- Settings-Kontextpfad: Zone -> Subzone (AUT-1514: keine GPIO/ESP/URL-Adresse) -->
       <SettingsBreadcrumb
         :zone="zoneContextLabel"
         :subzone="subzoneContextLabel"
-        :esp-id="espId"
       />
 
       <!-- AUT-911/912: Sub-Wert-Umschalter fuer Multi-Value-Sensoren (SHT31, BME280, ...).
@@ -1185,7 +1201,7 @@ defineExpose({ tabs, handleSave, confirmAndDelete, saving, deleting, loading })
         <!-- AUT-251: Zone gehoert zum Geraet, NICHT zum Sensor — "im Geraet aendern" oeffnet ESP-Settings -->
         <div class="sensor-config__zone-header">
           <span class="sensor-config__zone-label">Geraet:</span>
-          <span class="sensor-config__zone-value">{{ contextDevice?.name || espId }}</span>
+          <span class="sensor-config__zone-value">{{ contextDevice?.name || 'Gerät' }}</span>
           <span class="sensor-config__zone-hint">(vom Geraet vererbt)</span>
         </div>
         <div class="sensor-config__zone-header">
@@ -1228,7 +1244,7 @@ defineExpose({ tabs, handleSave, confirmAndDelete, saving, deleting, loading })
           </div>
           <div class="sensor-config__field sensor-config__field--half">
             <label class="sensor-config__label">Sensor-Typ</label>
-            <input :value="sensorConfig?.label ?? sensorType" type="text" class="sensor-config__input" disabled :title="sensorType" />
+            <input :value="sensorConfig?.label ?? getSensorDisplayName({ sensor_type: sensorType })" type="text" class="sensor-config__input" disabled />
           </div>
         </div>
 
@@ -1299,6 +1315,54 @@ defineExpose({ tabs, handleSave, confirmAndDelete, saving, deleting, loading })
           </label>
           <span v-if="scopeZoneOptions.length === 0" class="sensor-config__helper">
             Keine aktiven Zonen vorhanden
+          </span>
+        </div>
+
+        <!-- AUT-1556: Montage (A1-Felder) neben Subzone + Zonen-Reichweite. Leer = gültig. -->
+        <div class="sensor-config__row">
+          <div class="sensor-config__field sensor-config__field--half">
+            <label class="sensor-config__label" for="sensor-mount-height">Höhe (cm)</label>
+            <input
+              id="sensor-mount-height"
+              v-model.number="mountHeightCm"
+              type="number"
+              step="any"
+              class="sensor-config__input"
+              placeholder="leer = nicht gesetzt"
+              aria-label="Montagehöhe in Zentimetern"
+              data-testid="sensor-config-mount-height"
+            />
+          </div>
+          <div class="sensor-config__field sensor-config__field--half">
+            <label class="sensor-config__label" for="sensor-mount-angle">Winkel (°)</label>
+            <input
+              id="sensor-mount-angle"
+              v-model.number="mountAngleDeg"
+              type="number"
+              step="any"
+              class="sensor-config__input"
+              placeholder="leer = nicht gesetzt"
+              aria-label="Montagewinkel in Grad"
+              data-testid="sensor-config-mount-angle"
+            />
+          </div>
+        </div>
+        <div class="sensor-config__field" data-testid="sensor-config-mount-medium">
+          <label class="sensor-config__label" for="sensor-mount-medium">Medium</label>
+          <select
+            id="sensor-mount-medium"
+            v-model="mountMedium"
+            class="sensor-config__select"
+            aria-label="Montagemedium"
+            data-testid="sensor-config-mount-medium-select"
+          >
+            <option :value="null">Nicht gesetzt</option>
+            <option v-for="opt in MOUNT_MEDIUM_OPTIONS" :key="opt.value" :value="opt.value">
+              {{ opt.label }}
+            </option>
+          </select>
+          <span class="sensor-config__helper">
+            Wo die Sonde sitzt — Luft, Blattwerk, Substrat oder Lösung. Leer bleibt gültig.
           </span>
         </div>
 
@@ -1375,10 +1439,16 @@ defineExpose({ tabs, handleSave, confirmAndDelete, saving, deleting, loading })
           />
           <span class="sensor-config__helper">Nach dieser Zeit gilt ein Messwert als veraltet</span>
         </div>
-        <!-- AUT-299: ATC Temperaturkompensation (nur für pH und EC) -->
-        <div v-if="isAtcCapable" class="sensor-config__field">
-          <label class="sensor-config__label">Temperaturkompensation — Quelle</label>
-          <select v-model="tempSensorConfigId" class="sensor-config__select">
+        <!-- AUT-299 / AUT-1511: eine Temp-Zeile, Satellite-Maß, kein Overlay. -->
+        <div v-if="isAtcCapable" class="sensor-config__field sensor-config__field--atc">
+          <label class="sensor-config__label" for="sensor-atc-source">Temperaturkompensation — Quelle</label>
+          <select
+            id="sensor-atc-source"
+            v-model="tempSensorConfigId"
+            class="sensor-config__select sensor-config__select--atc"
+            aria-label="Temperaturkompensation Quelle"
+            data-testid="sensor-config-atc-source"
+          >
             <option :value="null">Keiner (Standardwert 25 °C)</option>
             <option
               v-for="opt in temperatureSensorOptions"
@@ -1388,19 +1458,6 @@ defineExpose({ tabs, handleSave, confirmAndDelete, saving, deleting, loading })
               {{ opt.label }}
             </option>
           </select>
-          <!-- AUT-686 S4: ATC status indicator -->
-          <div class="sensor-config__atc-status">
-            <span v-if="atcStatus === 'no_link'" class="sensor-config__atc-badge sensor-config__atc-badge--gray">
-              Kein Sensor verknüpft — 25 °C Standardwert aktiv
-            </span>
-            <span v-else-if="atcStatus === 'fallback'" class="sensor-config__atc-badge sensor-config__atc-badge--warning">
-              <AlertTriangle :size="12" aria-hidden="true" />
-              ATC-Fallback — Temperatursensor antwortet nicht
-            </span>
-            <span v-else class="sensor-config__atc-badge sensor-config__atc-badge--ok">
-              Temperaturkompensation aktiv
-            </span>
-          </div>
         </div>
 
         <!-- AUT-252: Pflanzen-Kontext (nur wenn Subzone eine Pflanze hat). Verschoben
@@ -1489,20 +1546,14 @@ defineExpose({ tabs, handleSave, confirmAndDelete, saving, deleting, loading })
         </div>
 
         <div v-if="!isKnownBoard" class="sensor-config__info-box sensor-config__info-box--warning">
-          Board-Typ unbekannt — manuelle Pin-Pruefung noetig. GPIO-Defaults koennen abweichen.
+          Board-Typ unbekannt — manuelle Pin-Pruefung noetig. Pin-Defaults koennen abweichen.
         </div>
         <div v-else-if="boardLayout" class="sensor-config__info-box">
           Board: {{ boardLayout.label }}
-          <span v-if="isReserved(gpioPin)" class="sensor-config__reserved-badge">GPIO reserviert</span>
         </div>
 
-        <!-- ANALOG: GPIO (ADC1 only) + Range -->
+        <!-- ANALOG: Range + ADC (Pin wird bei der Anlage gesetzt, keine zweite GPIO-Adresse) -->
         <template v-if="isAnalog">
-          <div class="sensor-config__field">
-            <label class="sensor-config__label">GPIO Pin (nur ADC1)</label>
-            <input :value="`GPIO ${props.gpio}`" disabled class="sensor-config__input sensor-config__input--disabled" />
-            <span class="sensor-config__helper">GPIO kann nach Sensor-Anlage nicht geändert werden</span>
-          </div>
           <div class="sensor-config__row">
             <div class="sensor-config__field sensor-config__field--half">
               <label class="sensor-config__label">Messbereich Min</label>
@@ -1534,7 +1585,7 @@ defineExpose({ tabs, handleSave, confirmAndDelete, saving, deleting, loading })
 
           <template v-if="useAds1115">
             <div class="sensor-config__info-box">
-              ADS1115 am I2C-Bus &mdash; der ESP32-ADC-Pin wird nicht genutzt (gpio=0).
+              ADS1115 am I2C-Bus &mdash; der ESP32-ADC-Pin wird nicht genutzt.
               Versorgung und Kalibrierung muessen mit derselben Spannung erfolgen.
             </div>
             <div class="sensor-config__row">
@@ -1573,7 +1624,7 @@ defineExpose({ tabs, handleSave, confirmAndDelete, saving, deleting, loading })
         <!-- I2C: Address + Bus (NO GPIO!) -->
         <template v-else-if="isI2C">
           <div class="sensor-config__info-box">
-            I2C-Sensoren teilen sich den Bus &mdash; kein GPIO-Pin noetig.
+            I2C-Sensoren teilen sich den Bus &mdash; kein eigener Daten-Pin noetig.
             <template v-if="i2cDefaultLabel">
               Standard: {{ i2cDefaultLabel }}.
             </template>
@@ -1597,25 +1648,15 @@ defineExpose({ tabs, handleSave, confirmAndDelete, saving, deleting, loading })
           </div>
         </template>
 
-        <!-- OneWire: GPIO + Address -->
+        <!-- OneWire: Bus-Hinweis (Pin bei der Anlage, keine zweite GPIO-Adresse) -->
         <template v-else-if="isOneWire">
-          <div class="sensor-config__field">
-            <label class="sensor-config__label">GPIO Pin</label>
-            <input :value="`GPIO ${props.gpio}`" disabled class="sensor-config__input sensor-config__input--disabled" />
-            <span class="sensor-config__helper">GPIO kann nach Sensor-Anlage nicht geändert werden</span>
-          </div>
           <div class="sensor-config__info-box">
-            OneWire-Sensoren werden automatisch erkannt. Mehrere DS18B20 koennen denselben GPIO teilen.
+            OneWire-Sensoren werden automatisch erkannt. Mehrere DS18B20 koennen denselben Bus teilen.
           </div>
         </template>
 
-        <!-- Digital: GPIO + Pulses -->
+        <!-- Digital: Pulses -->
         <template v-else-if="isDigital">
-          <div class="sensor-config__field">
-            <label class="sensor-config__label">GPIO Pin</label>
-            <input :value="`GPIO ${props.gpio}`" disabled class="sensor-config__input sensor-config__input--disabled" />
-            <span class="sensor-config__helper">GPIO kann nach Sensor-Anlage nicht geändert werden</span>
-          </div>
           <div class="sensor-config__field">
             <label class="sensor-config__label">Impulse pro Liter</label>
             <input
@@ -1631,13 +1672,8 @@ defineExpose({ tabs, handleSave, confirmAndDelete, saving, deleting, loading })
           </div>
         </template>
 
-        <!-- Liquid Level: GPIO + Polarity -->
+        <!-- Liquid Level: Polarity (Pin bei der Anlage) -->
         <template v-else-if="props.sensorType.toLowerCase() === 'liquid_level'">
-          <div class="sensor-config__field">
-            <label class="sensor-config__label">GPIO Pin</label>
-            <input :value="`GPIO ${props.gpio}`" disabled class="sensor-config__input sensor-config__input--disabled" />
-            <span class="sensor-config__helper">GPIO kann nach Sensor-Anlage nicht geändert werden</span>
-          </div>
           <div class="sensor-config__field">
             <label class="sensor-config__label" for="polarity-select">Signalpolarität</label>
             <select
@@ -1919,7 +1955,7 @@ defineExpose({ tabs, handleSave, confirmAndDelete, saving, deleting, loading })
           <div v-if="hasDatasheet && sensorConfig" class="sensor-config__datasheet">
             <div class="sensor-config__datasheet-row">
               <span class="sensor-config__datasheet-label">Typ</span>
-              <span class="sensor-config__datasheet-value">{{ sensorConfig.label }} ({{ sensorType }})</span>
+              <span class="sensor-config__datasheet-value">{{ sensorConfig.label }}</span>
             </div>
             <div v-if="sensorConfig.manufacturer" class="sensor-config__datasheet-row">
               <span class="sensor-config__datasheet-label">Hersteller</span>
@@ -2227,6 +2263,17 @@ defineExpose({ tabs, handleSave, confirmAndDelete, saving, deleting, loading })
   justify-content: space-between;
 }
 
+/* AUT-1511: same measure as SensorSatellite — one bar, Fitts ≥ 44px, no overlay class. */
+.sensor-config__field--atc {
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+}
+
+.sensor-config__select--atc {
+  min-height: var(--touch-min-target);
+  white-space: nowrap;
+}
+
 .sensor-config__row {
   display: flex;
   gap: var(--space-3);
@@ -2415,16 +2462,6 @@ defineExpose({ tabs, handleSave, confirmAndDelete, saving, deleting, loading })
   background: rgba(251, 191, 36, 0.08);
   border-color: rgba(251, 191, 36, 0.25);
   color: var(--color-warning);
-}
-
-.sensor-config__reserved-badge {
-  margin-left: var(--space-2);
-  padding: 0 var(--space-1);
-  border-radius: var(--radius-sm);
-  background: rgba(239, 68, 68, 0.15);
-  color: var(--color-danger);
-  font-size: var(--text-xs);
-  font-weight: 600;
 }
 
 .sensor-config__interface-badge-row {
@@ -3107,34 +3144,6 @@ defineExpose({ tabs, handleSave, confirmAndDelete, saving, deleting, loading })
   flex-shrink: 0;
   margin-top: 1px;
   color: var(--color-warning);
-}
-
-.sensor-config__atc-status {
-  margin-top: var(--space-1);
-}
-
-.sensor-config__atc-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  font-size: var(--text-xs);
-  padding: 2px var(--space-2);
-  border-radius: var(--radius-sm);
-}
-
-.sensor-config__atc-badge--gray {
-  color: var(--color-text-muted);
-  background: color-mix(in srgb, var(--color-text-muted) 10%, transparent);
-}
-
-.sensor-config__atc-badge--warning {
-  color: var(--color-warning);
-  background: color-mix(in srgb, var(--color-warning) 12%, transparent);
-}
-
-.sensor-config__atc-badge--ok {
-  color: var(--color-success);
-  background: color-mix(in srgb, var(--color-success) 12%, transparent);
 }
 
 .sensor-config__cal-badge {

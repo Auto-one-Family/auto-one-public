@@ -125,9 +125,9 @@ async def get_tank_targets(
     responses={404: {"description": "Tank not found"}},
     summary="Get Tank Running Volume (Ist)",
     description=(
-        "Running volume = last '20 Liter' liquid_level anchor ± FlowVolumeService "
-        "delta on GPIO14 (same resolve_v_real as K2). Read-only display facade — "
-        "does not invent drain/DtW subtraction (limitation drain_not_in_flow). "
+        "Running volume from persisted dose_config.volume_l (same resolve_v_real "
+        "as K2 / AUT-1563). Read-only display facade — does not parse sensor "
+        "names and does not treat GPIO14 as volume truth. "
         "nominal_volume_l is returned separately and is NOT the Ist (AUT-1377)."
     ),
 )

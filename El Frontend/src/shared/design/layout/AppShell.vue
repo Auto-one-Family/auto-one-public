@@ -161,7 +161,6 @@ onUnmounted(() => {
       :open="showAddWidgetDialog"
       :default-zone-id="(route.params.zoneId as string) || undefined"
       :default-widget-type="addWidgetDefaultType"
-      :tile-context="false"
       @update:open="showAddWidgetDialog = $event"
       @close="showAddWidgetDialog = false"
     />
@@ -232,18 +231,24 @@ onUnmounted(() => {
   pointer-events: none;
 }
 
-/* AUT-1521: one global E-Stop above overlays (tokens --z-safety) */
+/* AUT-1521: global E-Stop floats in the bottom-left content dock.
+   FAB stays bottom-right. No reserved right column on every tab. */
 .shell__safety {
   position: fixed;
-  top: 6px;
-  right: var(--space-3);
+  left: var(--space-3);
+  bottom: var(--space-3);
   z-index: var(--z-safety);
+  pointer-events: none;
+}
+
+.shell__safety :deep(.emergency-btn) {
+  pointer-events: auto;
 }
 
 @media (min-width: 768px) {
   .shell__safety {
-    top: var(--space-4);
-    right: var(--space-4);
+    left: calc(var(--sidebar-width) + var(--space-4));
+    bottom: var(--space-4);
   }
 }
 
@@ -274,10 +279,11 @@ onUnmounted(() => {
   overflow: hidden;
 }
 
-/* Scrollable page content */
+/* Scrollable page content — bottom dock keeps the floating NOT-AUS clear */
 .shell__content {
   height: 100%;
-  padding: var(--space-4) var(--space-4);
+  padding: var(--space-4);
+  padding-bottom: calc(var(--space-4) + var(--safety-control-height));
   overflow-y: auto;
   min-height: 0;
   /* Touch: native "grab & pull" scrolling (Pi 7" Touch-Kiosk) */
@@ -290,6 +296,7 @@ onUnmounted(() => {
   .shell__content {
     margin-left: var(--sidebar-width);
     padding: var(--space-6);
+    padding-bottom: calc(var(--space-6) + var(--safety-control-height));
   }
 }
 

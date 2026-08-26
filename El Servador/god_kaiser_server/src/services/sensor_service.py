@@ -608,9 +608,7 @@ class SensorService:
         command_params: dict[str, Any] = {}
         if resolved_sensor_type in ("ec", "ph"):
             command_params["sample_count"] = sample_count if sample_count is not None else 30
-            command_params["sample_delay_ms"] = (
-                sample_delay_ms if sample_delay_ms is not None else 100
-            )
+            command_params["sample_delay_ms"] = sample_delay_ms if sample_delay_ms is not None else 100
             command_params["timeout_ms"] = timeout_ms if timeout_ms is not None else 15000
         else:
             if sample_count is not None:

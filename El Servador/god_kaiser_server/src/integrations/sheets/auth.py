@@ -81,7 +81,8 @@ def _check_credentials_path(path_value: Optional[str]) -> Path:
     path = Path(path_value).expanduser()
     if not path.is_absolute():
         raise SheetsAuthError(
-            "SHEETS_SA_CREDENTIALS_PATH must be an absolute path, " f"received: {path_value!r}.",
+            "SHEETS_SA_CREDENTIALS_PATH must be an absolute path, "
+            f"received: {path_value!r}.",
             numeric_code=ConfigErrorCode.SHEETS_CREDENTIALS_FILE_NOT_FOUND,
             details={"path": str(path)},
         )
@@ -141,7 +142,8 @@ def _load_and_validate_json(path: Path) -> Dict[str, Any]:
 
     if not isinstance(data, dict):
         raise SheetsAuthError(
-            f"Service-Account JSON at {path} must be an object, " f"got {type(data).__name__}.",
+            f"Service-Account JSON at {path} must be an object, "
+            f"got {type(data).__name__}.",
             numeric_code=ConfigErrorCode.SHEETS_CREDENTIALS_FILE_INVALID,
             details={"path": str(path)},
         )

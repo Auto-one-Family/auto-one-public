@@ -83,9 +83,9 @@ class TestZoneKPIServiceDomainFilter:
         # Two calls: temp types + humidity types
         assert mock_helper.await_count == 2
         for c in mock_helper.await_args_list:
-            assert (
-                c.kwargs.get("domain") == "luft"
-            ), "domain='luft' must be forwarded to _get_latest_sensor_value"
+            assert c.kwargs.get("domain") == "luft", (
+                "domain='luft' must be forwarded to _get_latest_sensor_value"
+            )
 
     @pytest.mark.asyncio
     async def test_calculate_vpd_no_domain_passes_none_to_helper(self):
@@ -101,52 +101,23 @@ class TestZoneKPIServiceDomainFilter:
             assert c.kwargs.get("domain") is None
 
     @pytest.mark.asyncio
-    async def test_calculate_dli_forwards_domain_to_helper(self):
-        """calculate_dli(domain='wasser') passes domain to _get_sensor_readings_24h."""
-        service, _ = _make_kpi_service()
-
-        with patch.object(
-            service, "_get_sensor_readings_24h", new=AsyncMock(return_value=[])
-        ) as mock_helper:
-            await service.calculate_dli("zone_luft", domain="wasser")
-
-        mock_helper.assert_called_once_with("zone_luft", ["light", "par", "lux"], domain="wasser")
-
-    @pytest.mark.asyncio
-    async def test_calculate_dli_no_domain_passes_none_to_helper(self):
-        """calculate_dli() without domain forwards None to helper."""
-        service, _ = _make_kpi_service()
-
-        with patch.object(
-            service, "_get_sensor_readings_24h", new=AsyncMock(return_value=[])
-        ) as mock_helper:
-            await service.calculate_dli("zone_test")
-
-        mock_helper.assert_called_once_with("zone_test", ["light", "par", "lux"], domain=None)
-
-    @pytest.mark.asyncio
-    async def test_get_all_kpis_forwards_domain_to_vpd_and_dli_only(self):
-        """get_all_kpis(domain='luft') passes domain to vpd+dli but NOT health/growth."""
+    async def test_get_all_kpis_forwards_domain_to_vpd_only(self):
+        """get_all_kpis(domain='luft') passes domain to vpd but NOT health/growth."""
         service, _ = _make_kpi_service()
 
         with (
             patch.object(service, "calculate_vpd", new=AsyncMock(return_value=None)) as m_vpd,
-            patch.object(service, "calculate_dli", new=AsyncMock(return_value=None)) as m_dli,
-            patch.object(
-                service, "calculate_growth_progress", new=AsyncMock(return_value=None)
-            ) as m_growth,
-            patch.object(
-                service, "get_zone_health_score", new=AsyncMock(return_value=None)
-            ) as m_health,
+            patch.object(service, "calculate_growth_progress", new=AsyncMock(return_value=None)) as m_growth,
+            patch.object(service, "get_zone_health_score", new=AsyncMock(return_value=None)) as m_health,
         ):
             result = await service.get_all_kpis("zone_luft", domain="luft")
 
         m_vpd.assert_called_once_with("zone_luft", domain="luft")
-        m_dli.assert_called_once_with("zone_luft", domain="luft")
         # Growth and health are intentionally zone-wide (AUT-1087 explicit exclusion)
         m_growth.assert_called_once_with("zone_luft")
         m_health.assert_called_once_with("zone_luft")
         assert result["zone_id"] == "zone_luft"
+        assert result["dli"] is None
 
     @pytest.mark.asyncio
     async def test_get_all_kpis_no_domain_is_backward_compatible(self):
@@ -157,7 +128,6 @@ class TestZoneKPIServiceDomainFilter:
             patch.object(
                 service, "calculate_vpd", new=AsyncMock(return_value={"vpd_kpa": 1.2})
             ) as m_vpd,
-            patch.object(service, "calculate_dli", new=AsyncMock(return_value=None)),
             patch.object(service, "calculate_growth_progress", new=AsyncMock(return_value=None)),
             patch.object(service, "get_zone_health_score", new=AsyncMock(return_value=None)),
         ):
@@ -166,6 +136,7 @@ class TestZoneKPIServiceDomainFilter:
         # domain=None must be forwarded explicitly (not omitted)
         m_vpd.assert_called_once_with("zone_test", domain=None)
         assert result["vpd"] == {"vpd_kpa": 1.2}
+        assert result["dli"] is None
 
     @pytest.mark.asyncio
     async def test_get_latest_sensor_value_returns_none_for_empty_domain(self):
@@ -173,19 +144,11 @@ class TestZoneKPIServiceDomainFilter:
         service, session = _make_kpi_service()
         session.execute.return_value = _scalar_one_or_none_result(None)
 
-        result = await service._get_latest_sensor_value("zone_test", ["sht31_temp"], domain="boden")
+        result = await service._get_latest_sensor_value(
+            "zone_test", ["sht31_temp"], domain="boden"
+        )
 
         assert result is None
-
-    @pytest.mark.asyncio
-    async def test_get_sensor_readings_24h_returns_empty_list_for_empty_domain(self):
-        """_get_sensor_readings_24h with domain='boden' and no data returns [], no exception."""
-        service, session = _make_kpi_service()
-        session.execute.return_value = _scalars_result([])
-
-        result = await service._get_sensor_readings_24h("zone_test", ["light"], domain="boden")
-
-        assert result == []
 
 
 # =============================================================================
@@ -296,9 +259,7 @@ def _make_monitor_service(esps, subzone_cfgs, sensor_rows, actuator_rows, actuat
 # =============================================================================
 
 
-def _fake_subzone_cfg_nm(
-    esp_id: str, subzone_id: str, subzone_name: str, pk_uuid, assigned_gpios=None
-):
+def _fake_subzone_cfg_nm(esp_id: str, subzone_id: str, subzone_name: str, pk_uuid, assigned_gpios=None):
     """SimpleNamespace mimicking SubzoneConfig for n:m test scenarios."""
     return SimpleNamespace(
         id=pk_uuid,
@@ -622,9 +583,9 @@ class TestMonitorDataServiceNmAssignments:
 
         # Must NOT appear under "Keine Subzone" (None key)
         keine_subzone_sensors = subzone_map.get(None, [])
-        assert (
-            "ph" not in keine_subzone_sensors
-        ), "ph sensor must not fall back to 'Keine Subzone' when n:m assignments exist"
+        assert "ph" not in keine_subzone_sensors, (
+            "ph sensor must not fall back to 'Keine Subzone' when n:m assignments exist"
+        )
 
     @pytest.mark.asyncio
     async def test_gpio_sensor_unaffected_by_nm_extension(self):
@@ -670,9 +631,9 @@ class TestMonitorDataServiceNmAssignments:
         assert "moisture" in subzone_map["subzone_gpio"], "moisture sensor must be in subzone_gpio"
 
         keine_subzone_sensors = subzone_map.get(None, [])
-        assert (
-            "moisture" not in keine_subzone_sensors
-        ), "GPIO-assigned sensor must not appear under 'Keine Subzone'"
+        assert "moisture" not in keine_subzone_sensors, (
+            "GPIO-assigned sensor must not appear under 'Keine Subzone'"
+        )
 
     @pytest.mark.asyncio
     async def test_sensor_nm_and_gpio_same_subzone_deduplicated(self):
@@ -768,7 +729,9 @@ class TestMonitorDataServiceActuatorNmAssignments:
         )
 
         with patch("src.db.repositories.sensor_repo.SensorRepository") as MockRepo:
-            MockRepo.return_value.get_latest_readings_batch_by_config = AsyncMock(return_value={})
+            MockRepo.return_value.get_latest_readings_batch_by_config = AsyncMock(
+                return_value={}
+            )
             result = await service.get_zone_monitor_data("zone_test")
 
         subzone_map = {

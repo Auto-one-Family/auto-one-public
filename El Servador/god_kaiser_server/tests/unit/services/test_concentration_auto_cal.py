@@ -64,7 +64,8 @@ def test_seed_steps_use_bounded_mix_on_no_separate_off():
     on_steps = [
         s
         for s in steps
-        if isinstance(s.get("action"), dict) and str(s["action"].get("command", "")).upper() == "ON"
+        if isinstance(s.get("action"), dict)
+        and str(s["action"].get("command", "")).upper() == "ON"
     ]
     off_steps = [
         s

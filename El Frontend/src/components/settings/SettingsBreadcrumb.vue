@@ -1,23 +1,14 @@
 <script setup lang="ts">
 /**
- * SettingsBreadcrumb — Context path for settings panels
+ * SettingsBreadcrumb — Context path for settings panels (AUT-1514)
  *
- * Displays the hierarchical path Zone -> Subzone -> ESP -> GPIO
- * as a non-intrusive breadcrumb at the top of settings panels.
- *
- * Zone and Subzone are clickable (emit events). ESP and GPIO are
- * read-only context indicators.
- *
- * Used in SensorConfigPanel and ActuatorConfigPanel to make the
- * Zone vs. Subzone hierarchy visible without offering misleading
- * inline edit controls.
+ * Zone → Subzone. GPIO, ESP-ID, Chip und URL sind keine Messpunkt-Adresse
+ * und stehen nicht in diesem Pfad.
  */
 
 interface Props {
   zone?: string | null
   subzone?: string | null
-  espId?: string | null
-  gpio?: number | null
 }
 
 defineProps<Props>()
@@ -45,10 +36,6 @@ const emit = defineEmits<{
     >
       {{ subzone }}
     </span>
-    <span v-if="(zone || subzone) && espId" class="settings-breadcrumb__sep">›</span>
-    <span v-if="espId" class="settings-breadcrumb__segment">{{ espId }}</span>
-    <span v-if="espId && gpio != null" class="settings-breadcrumb__sep">›</span>
-    <span v-if="gpio != null" class="settings-breadcrumb__segment">GPIO {{ gpio }}</span>
   </nav>
 </template>
 

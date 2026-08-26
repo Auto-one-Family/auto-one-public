@@ -31,6 +31,13 @@ describe('useExportCsv (AUT-1546)', () => {
     expect(csv.split('\n')[0]).toBe('timestamp,processed_value,unit,quality,sensor_type')
   })
 
+  it('should not add mount columns — export rows are SensorData, not sensor_configs', () => {
+    const header = SENSOR_EXPORT_DEFAULT_COLUMNS.join(',')
+    expect(header).not.toContain('mount_height_cm')
+    expect(header).not.toContain('mount_medium')
+    expect(header).not.toContain('mount_angle_deg')
+  })
+
   it('should keep quality and write processed_value, not raw_value', () => {
     const csv = readingsToCsv([reading({ raw_value: 512, processed_value: 6.4, quality: 'warning' })])
     const row = csv.split('\n')[1]

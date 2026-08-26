@@ -366,7 +366,9 @@ class PlantCannabisExtension(Base, TimestampMixin):
 
     __tablename__ = "plants_cannabis_extension"
 
-    __table_args__ = (UniqueConstraint("plant_id", name="uq_cannabis_extension_plant_id"),)
+    __table_args__ = (
+        UniqueConstraint("plant_id", name="uq_cannabis_extension_plant_id"),
+    )
 
     extension_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
@@ -549,5 +551,6 @@ class PlantLifecycleEvent(Base):
 
     def __repr__(self) -> str:
         return (
-            f"<PlantLifecycleEvent(plant_id='{self.plant_id}', " f"event_type='{self.event_type}')>"
+            f"<PlantLifecycleEvent(plant_id='{self.plant_id}', "
+            f"event_type='{self.event_type}')>"
         )

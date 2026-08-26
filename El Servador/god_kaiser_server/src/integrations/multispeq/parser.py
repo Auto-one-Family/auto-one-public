@@ -110,7 +110,9 @@ def validate_calibration(parsed: dict[str, float]) -> list[str]:
             continue
         value = parsed[sensor_type]
         if value < lower or value > upper:
-            warnings.append(f"{sensor_type}={value} outside plausible range [{lower}, {upper}]")
+            warnings.append(
+                f"{sensor_type}={value} outside plausible range [{lower}, {upper}]"
+            )
     return warnings
 
 

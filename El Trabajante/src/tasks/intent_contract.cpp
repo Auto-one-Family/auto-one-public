@@ -1108,31 +1108,47 @@ IntentMetadata extractIntentMetadataFromPayloadNoCorrelationFallback(const char*
     return extractIntentMetadataFromPayloadInternal(payload, fallback_prefix, false);
 }
 
+// Locates "key" in payload and copies the following quoted string value into dest.
+// Tolerates optional whitespace around ':' (e.g. Python's json.dumps default
+// `"key": "value"`) — a fixed `"key":"value"` needle previously missed every
+// server-generated payload, making this wire fallback a no-op in practice.
 static bool copyQuotedJsonField(const char* payload, const char* key, char* dest, size_t dest_len) {
     if (payload == nullptr || key == nullptr || dest == nullptr || dest_len < 2) {
         return false;
     }
     char needle[80];
-    const int needle_len = snprintf(needle, sizeof(needle), "\"%s\":\"", key);
+    const int needle_len = snprintf(needle, sizeof(needle), "\"%s\"", key);
     if (needle_len <= 0 || static_cast<size_t>(needle_len) >= sizeof(needle)) {
         return false;
     }
-    const char* value_start = strstr(payload, needle);
-    if (value_start == nullptr) {
-        return false;
+    const char* cursor = payload;
+    while ((cursor = strstr(cursor, needle)) != nullptr) {
+        const char* after_key = cursor + needle_len;
+        while (*after_key == ' ' || *after_key == '\t') after_key++;
+        if (*after_key != ':') {
+            cursor = after_key;
+            continue;
+        }
+        after_key++;
+        while (*after_key == ' ' || *after_key == '\t') after_key++;
+        if (*after_key != '"') {
+            cursor = after_key;
+            continue;
+        }
+        const char* value_start = after_key + 1;
+        const char* value_end = strchr(value_start, '"');
+        if (value_end == nullptr || value_end <= value_start) {
+            return false;
+        }
+        size_t value_len = static_cast<size_t>(value_end - value_start);
+        if (value_len >= dest_len) {
+            value_len = dest_len - 1;
+        }
+        memcpy(dest, value_start, value_len);
+        dest[value_len] = '\0';
+        return value_len > 0;
     }
-    value_start += static_cast<size_t>(needle_len);
-    const char* value_end = strchr(value_start, '"');
-    if (value_end == nullptr || value_end <= value_start) {
-        return false;
-    }
-    size_t value_len = static_cast<size_t>(value_end - value_start);
-    if (value_len >= dest_len) {
-        value_len = dest_len - 1;
-    }
-    memcpy(dest, value_start, value_len);
-    dest[value_len] = '\0';
-    return value_len > 0;
+    return false;
 }
 
 void tryWireFillIntentCorrelation(IntentMetadata* metadata, const char* payload) {

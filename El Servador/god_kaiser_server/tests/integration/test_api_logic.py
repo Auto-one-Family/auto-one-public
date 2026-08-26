@@ -245,7 +245,6 @@ class TestUpdateRule:
         assert data["name"] == "Updated Rule Name"
         assert data["priority"] == 90
 
-
 class TestRuleMetadataRoundTrip:
     """AUT-1113: rule_metadata set via API -> read back -> identical."""
 

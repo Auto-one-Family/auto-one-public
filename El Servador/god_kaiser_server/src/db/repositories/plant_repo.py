@@ -43,7 +43,6 @@ class ZonePhaseHistograms(NamedTuple):
     light_growth: dict[str, int]
     nutrient: dict[str, int]
 
-
 # AUT-981 — Late-Binding plant-subzone occupancy. Events of these types mark
 # entry/exit of a plant's *current* subzone; see ``_plant_occupies_at``.
 _OCCUPANCY_OPEN_EVENT_TYPES = frozenset({"transplanted", "subzone_moved"})
@@ -97,7 +96,9 @@ class PlantRepository(BaseRepository[Plant]):
         Same COALESCE semantics without a SQL join — uses the eagerly
         loaded ``plant.subzone`` relationship when present.
         """
-        subzone_parent = plant.subzone.parent_zone_id if plant.subzone is not None else None
+        subzone_parent = (
+            plant.subzone.parent_zone_id if plant.subzone is not None else None
+        )
         if subzone_parent is not None:
             return subzone_parent
         return plant.zone_id
@@ -118,7 +119,11 @@ class PlantRepository(BaseRepository[Plant]):
         Returns:
             ``Plant`` instance or ``None`` if not found.
         """
-        stmt = select(Plant).options(selectinload(Plant.subzone)).where(Plant.plant_id == plant_id)
+        stmt = (
+            select(Plant)
+            .options(selectinload(Plant.subzone))
+            .where(Plant.plant_id == plant_id)
+        )
         if not include_deleted:
             stmt = stmt.where(self._not_deleted())
         result = await self.session.execute(stmt)
@@ -202,7 +207,9 @@ class PlantRepository(BaseRepository[Plant]):
         # OUTER JOIN so plants with only plants.zone_id (no Ortseinheit)
         # still match the effective-zone filter (AUT-1073).
         if zone_id is not None:
-            stmt = stmt.outerjoin(SubzoneConfig, SubzoneConfig.id == Plant.subzone_id)
+            stmt = stmt.outerjoin(
+                SubzoneConfig, SubzoneConfig.id == Plant.subzone_id
+            )
             conditions.append(self.effective_zone_id_expr() == zone_id)
 
         stmt = (
@@ -305,7 +312,9 @@ class PlantRepository(BaseRepository[Plant]):
             .group_by(Plant.phase)
         )
         light_result = await self.session.execute(light_stmt)
-        light_growth: dict[str, int] = {phase: int(count) for phase, count in light_result.all()}
+        light_growth: dict[str, int] = {
+            phase: int(count) for phase, count in light_result.all()
+        }
 
         # ── Nutrient/fertilizer axis (Plant.nutrient_phase — nullable, AUT-1183) ──
         # Only plants with an explicitly set nutrient_phase are counted; plants
@@ -324,7 +333,9 @@ class PlantRepository(BaseRepository[Plant]):
             .group_by(Plant.nutrient_phase)
         )
         nutrient_result = await self.session.execute(nutrient_stmt)
-        nutrient: dict[str, int] = {phase: int(count) for phase, count in nutrient_result.all()}
+        nutrient: dict[str, int] = {
+            phase: int(count) for phase, count in nutrient_result.all()
+        }
 
         return ZonePhaseHistograms(light_growth=light_growth, nutrient=nutrient)
 
@@ -408,7 +419,9 @@ class PlantRepository(BaseRepository[Plant]):
         ]
         if not any(is_open for _, is_open in boundaries):
             if plant.planting_date is not None:
-                start = datetime.combine(plant.planting_date, time.min, tzinfo=timezone.utc)
+                start = datetime.combine(
+                    plant.planting_date, time.min, tzinfo=timezone.utc
+                )
                 boundaries.insert(0, (start, True))
         boundaries.sort(key=lambda boundary: boundary[0])
 
@@ -448,7 +461,9 @@ class PlantRepository(BaseRepository[Plant]):
         result = await self.session.execute(stmt)
         candidates = result.scalars().all()
 
-        matches = [plant for plant in candidates if self._plant_occupies_at(plant, measurement_ts)]
+        matches = [
+            plant for plant in candidates if self._plant_occupies_at(plant, measurement_ts)
+        ]
         if len(matches) != 1:
             return None
         return matches[0]

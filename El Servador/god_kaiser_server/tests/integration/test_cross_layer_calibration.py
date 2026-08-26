@@ -187,9 +187,8 @@ async def test_cross_layer_calibration_happy_path(
         assert result is not None
         assert result.get("method") == "linear_2point"
         derived = result.get("derived", {})
-        assert derived.get("type") == "moisture_2point"
-        assert "dry_value" in derived
-        assert "wet_value" in derived
+        assert "slope" in derived
+        assert "offset" in derived
 
         # Step 5: Apply calibration (persist to sensor config)
         apply_response = await client.post(

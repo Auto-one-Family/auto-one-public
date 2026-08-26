@@ -172,7 +172,9 @@ class SensorExportBatcher:
         for r in rows:
             cfg = _pick_config(r, config_lookup)
             sensor_data_id = uuid.UUID(str(r.id))
-            value = r.processed_value if r.processed_value is not None else r.raw_value
+            value = (
+                r.processed_value if r.processed_value is not None else r.raw_value
+            )
             timestamp = _ensure_aware(r.timestamp)
             batch.rows.append(
                 SensorRow(
@@ -183,7 +185,9 @@ class SensorExportBatcher:
                     sensor_type=str(r.sensor_type),
                     sensor_label=str(cfg.sensor_name) if cfg is not None else "",
                     onewire_address=(
-                        str(cfg.onewire_address) if cfg is not None and cfg.onewire_address else ""
+                        str(cfg.onewire_address)
+                        if cfg is not None and cfg.onewire_address
+                        else ""
                     ),
                     i2c_address=(
                         f"0x{int(cfg.i2c_address):02X}"

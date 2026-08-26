@@ -7,7 +7,6 @@ Both endpoints require a valid user session (JWT, any role).
 When CAMERA_ENABLED is false or the camera service is unreachable, the endpoints
 respond with structured errors — no stack-trace logging for expected offline states.
 """
-
 import os
 from typing import Any
 
@@ -21,7 +20,9 @@ logger = get_logger(__name__)
 
 router = APIRouter(prefix="/v1/camera", tags=["camera"])
 
-_CAMERA_SERVICE_URL: str = os.environ.get("CAMERA_SERVICE_URL", "http://automationone-camera:8080")
+_CAMERA_SERVICE_URL: str = os.environ.get(
+    "CAMERA_SERVICE_URL", "http://automationone-camera:8080"
+)
 _PROXY_TIMEOUT: float = 5.0
 
 

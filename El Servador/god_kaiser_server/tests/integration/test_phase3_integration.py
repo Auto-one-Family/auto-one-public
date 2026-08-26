@@ -482,9 +482,6 @@ class TestNetworkPartitionRecovery:
                     mock_contract_class.return_value.upsert_terminal_event_authority = AsyncMock(
                         return_value=(MagicMock(), False)
                     )
-                    mock_contract_class.return_value.list_open_intents_for_esp = AsyncMock(
-                        return_value=[]
-                    )
 
                     with patch(
                         "src.mqtt.handlers.lwt_handler.AuditLogRepository"
@@ -733,9 +730,6 @@ class TestNetworkPartitionRecovery:
                     mock_contract_class.return_value.upsert_terminal_event_authority = AsyncMock(
                         return_value=(MagicMock(), False)
                     )
-                    mock_contract_class.return_value.list_open_intents_for_esp = AsyncMock(
-                        return_value=[]
-                    )
 
                     with patch(
                         "src.mqtt.handlers.lwt_handler.AuditLogRepository"
@@ -971,9 +965,6 @@ class TestCrossHandlerInteraction:
                     ) as mock_contract_class:
                         mock_contract_class.return_value.upsert_terminal_event_authority = (
                             AsyncMock(return_value=(None, False))
-                        )
-                        mock_contract_class.return_value.list_open_intents_for_esp = AsyncMock(
-                            return_value=[]
                         )
 
                         with patch("src.websocket.manager.WebSocketManager") as mock_ws_class:

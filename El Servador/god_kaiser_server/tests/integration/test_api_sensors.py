@@ -5,6 +5,8 @@ Phase: 5 (Week 9-10) - API Layer
 Tests: Sensor endpoints (config CRUD, data query)
 """
 
+import csv
+
 import pytest
 from datetime import datetime, timedelta, timezone
 from httpx import AsyncClient, ASGITransport
@@ -15,6 +17,7 @@ from src.db.models.sensor import SensorConfig, SensorData
 from src.db.models.esp import ESPDevice
 from src.db.models.subzone import SubzoneConfig
 from src.db.models.user import User
+from src.db.models.zone import Zone
 from src.db.repositories.subzone_repo import SubzoneRepository
 from src.main import app
 
@@ -329,10 +332,7 @@ class TestQueryData:
         assert data["success"] is True
         qualities = [r.get("quality") for r in data["readings"]]
         assert "warming_up" not in qualities
-        assert all(
-            r.get("raw_value") != 0.0 or r.get("processed_value") is not None
-            for r in data["readings"]
-        )
+        assert all(r.get("raw_value") != 0.0 or r.get("processed_value") is not None for r in data["readings"])
         assert any(r.get("processed_value") == 6.8 for r in data["readings"])
 
     @pytest.mark.asyncio
@@ -634,3 +634,481 @@ class TestMeasurementRole:
         sensor = await sensor_repo.get_by_id(_uuid.UUID(sensor_id))
         assert sensor is not None
         assert sensor.sensor_metadata.get("measurement_role") == "inflow"
+
+
+class TestMountGeometry:
+    """AUT-1555: mount_* first-class columns on existing sensor_configs write."""
+
+    @pytest.mark.asyncio
+    async def test_create_sensor_with_mount_fields(
+        self, auth_headers: dict, test_esp: ESPDevice, db_session: AsyncSession
+    ):
+        """Create persists mount columns and does not write them into sensor_metadata."""
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                f"/api/v1/sensors/{test_esp.device_id}/33",
+                json={
+                    "esp_id": test_esp.device_id,
+                    "gpio": 33,
+                    "sensor_type": "temperature",
+                    "name": "Canopy Temp",
+                    "enabled": True,
+                    "interval_ms": 30000,
+                    "processing_mode": "pi_enhanced",
+                    "mount_height_cm": 120.5,
+                    "mount_medium": "canopy",
+                    "mount_angle_deg": 45.0,
+                },
+                headers=auth_headers,
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["mount_height_cm"] == 120.5
+        assert data["mount_medium"] == "canopy"
+        assert data["mount_angle_deg"] == 45.0
+
+        import uuid as _uuid
+        from src.db.repositories import SensorRepository
+
+        sensor = await SensorRepository(db_session).get_by_id(_uuid.UUID(data["id"]))
+        assert sensor is not None
+        assert sensor.mount_height_cm == 120.5
+        assert sensor.mount_medium == "canopy"
+        assert sensor.mount_angle_deg == 45.0
+        assert "mount_height_cm" not in (sensor.sensor_metadata or {})
+        assert "mount_medium" not in (sensor.sensor_metadata or {})
+        assert "mount_angle_deg" not in (sensor.sensor_metadata or {})
+
+    @pytest.mark.asyncio
+    async def test_create_sensor_without_mount_fields_stays_null(
+        self, auth_headers: dict, test_sensor: SensorConfig, test_esp: ESPDevice
+    ):
+        """Old / omitted rows stay valid: mount fields are null."""
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get(
+                f"/api/v1/sensors/{test_esp.device_id}/{test_sensor.gpio}",
+                headers=auth_headers,
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["mount_height_cm"] is None
+        assert data["mount_medium"] is None
+        assert data["mount_angle_deg"] is None
+
+    @pytest.mark.asyncio
+    async def test_update_sensor_mount_fields(
+        self, auth_headers: dict, test_sensor: SensorConfig, test_esp: ESPDevice
+    ):
+        """Existing create/update POST stores mount fields on the same row."""
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                f"/api/v1/sensors/{test_esp.device_id}/{test_sensor.gpio}",
+                json={
+                    "esp_id": test_esp.device_id,
+                    "gpio": test_sensor.gpio,
+                    "sensor_type": "ph",
+                    "name": "Test pH Sensor",
+                    "enabled": True,
+                    "interval_ms": 30000,
+                    "processing_mode": "pi_enhanced",
+                    "mount_height_cm": 15.0,
+                    "mount_medium": "solution",
+                    "mount_angle_deg": 0.0,
+                },
+                headers=auth_headers,
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["mount_height_cm"] == 15.0
+        assert data["mount_medium"] == "solution"
+        assert data["mount_angle_deg"] == 0.0
+
+    @pytest.mark.asyncio
+    async def test_update_without_mount_fields_does_not_clobber(
+        self, auth_headers: dict, test_esp: ESPDevice
+    ):
+        """Omitting mount fields on a later POST must not wipe stored values."""
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            created = await client.post(
+                f"/api/v1/sensors/{test_esp.device_id}/33",
+                json={
+                    "esp_id": test_esp.device_id,
+                    "gpio": 33,
+                    "sensor_type": "humidity",
+                    "name": "Air Humidity",
+                    "enabled": True,
+                    "interval_ms": 30000,
+                    "processing_mode": "pi_enhanced",
+                    "mount_height_cm": 80.0,
+                    "mount_medium": "air",
+                    "mount_angle_deg": 90.0,
+                },
+                headers=auth_headers,
+            )
+            assert created.status_code == 200
+
+            updated = await client.post(
+                f"/api/v1/sensors/{test_esp.device_id}/33",
+                json={
+                    "esp_id": test_esp.device_id,
+                    "gpio": 33,
+                    "sensor_type": "humidity",
+                    "name": "Air Humidity",
+                    "enabled": True,
+                    "interval_ms": 30000,
+                    "processing_mode": "pi_enhanced",
+                },
+                headers=auth_headers,
+            )
+
+        assert updated.status_code == 200
+        data = updated.json()
+        assert data["mount_height_cm"] == 80.0
+        assert data["mount_medium"] == "air"
+        assert data["mount_angle_deg"] == 90.0
+
+    @pytest.mark.asyncio
+    async def test_invalid_mount_medium_rejected(self, auth_headers: dict, test_esp: ESPDevice):
+        """Medium catalog is exactly air|canopy|substrate|solution."""
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                f"/api/v1/sensors/{test_esp.device_id}/33",
+                json={
+                    "esp_id": test_esp.device_id,
+                    "gpio": 33,
+                    "sensor_type": "moisture",
+                    "name": "Soil Probe",
+                    "enabled": True,
+                    "interval_ms": 30000,
+                    "processing_mode": "pi_enhanced",
+                    "mount_medium": "soil",
+                },
+                headers=auth_headers,
+            )
+
+        assert response.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_create_then_get_reads_back_mount_fields(
+        self, auth_headers: dict, test_esp: ESPDevice
+    ):
+        """Create with all three fields, then GET the same GPIO returns them."""
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            created = await client.post(
+                f"/api/v1/sensors/{test_esp.device_id}/33",
+                json={
+                    "esp_id": test_esp.device_id,
+                    "gpio": 33,
+                    "sensor_type": "moisture",
+                    "name": "Substrate Probe",
+                    "enabled": True,
+                    "interval_ms": 30000,
+                    "processing_mode": "pi_enhanced",
+                    "mount_height_cm": 30.0,
+                    "mount_medium": "substrate",
+                    "mount_angle_deg": 0.0,
+                },
+                headers=auth_headers,
+            )
+            assert created.status_code == 200
+
+            response = await client.get(
+                f"/api/v1/sensors/{test_esp.device_id}/33",
+                headers=auth_headers,
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["mount_height_cm"] == 30.0
+        assert data["mount_medium"] == "substrate"
+        assert data["mount_angle_deg"] == 0.0
+
+    @pytest.mark.asyncio
+    async def test_update_one_mount_field_leaves_others(
+        self, auth_headers: dict, test_esp: ESPDevice
+    ):
+        """Updating only height must leave stored medium and angle."""
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            created = await client.post(
+                f"/api/v1/sensors/{test_esp.device_id}/33",
+                json={
+                    "esp_id": test_esp.device_id,
+                    "gpio": 33,
+                    "sensor_type": "temperature",
+                    "name": "Canopy Temp",
+                    "enabled": True,
+                    "interval_ms": 30000,
+                    "processing_mode": "pi_enhanced",
+                    "mount_height_cm": 120.0,
+                    "mount_medium": "canopy",
+                    "mount_angle_deg": 45.0,
+                },
+                headers=auth_headers,
+            )
+            assert created.status_code == 200
+
+            updated = await client.post(
+                f"/api/v1/sensors/{test_esp.device_id}/33",
+                json={
+                    "esp_id": test_esp.device_id,
+                    "gpio": 33,
+                    "sensor_type": "temperature",
+                    "name": "Canopy Temp",
+                    "enabled": True,
+                    "interval_ms": 30000,
+                    "processing_mode": "pi_enhanced",
+                    "mount_height_cm": 90.0,
+                },
+                headers=auth_headers,
+            )
+
+        assert updated.status_code == 200
+        data = updated.json()
+        assert data["mount_height_cm"] == 90.0
+        assert data["mount_medium"] == "canopy"
+        assert data["mount_angle_deg"] == 45.0
+
+    @pytest.mark.asyncio
+    async def test_explicit_null_on_update_does_not_clobber(
+        self, auth_headers: dict, test_esp: ESPDevice
+    ):
+        """Explicit JSON null is indistinguishable from omit — stored mount stays."""
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            created = await client.post(
+                f"/api/v1/sensors/{test_esp.device_id}/33",
+                json={
+                    "esp_id": test_esp.device_id,
+                    "gpio": 33,
+                    "sensor_type": "humidity",
+                    "name": "Air Humidity",
+                    "enabled": True,
+                    "interval_ms": 30000,
+                    "processing_mode": "pi_enhanced",
+                    "mount_height_cm": 80.0,
+                    "mount_medium": "air",
+                    "mount_angle_deg": 90.0,
+                },
+                headers=auth_headers,
+            )
+            assert created.status_code == 200
+
+            updated = await client.post(
+                f"/api/v1/sensors/{test_esp.device_id}/33",
+                json={
+                    "esp_id": test_esp.device_id,
+                    "gpio": 33,
+                    "sensor_type": "humidity",
+                    "name": "Air Humidity",
+                    "enabled": True,
+                    "interval_ms": 30000,
+                    "processing_mode": "pi_enhanced",
+                    "mount_height_cm": None,
+                    "mount_medium": None,
+                    "mount_angle_deg": None,
+                },
+                headers=auth_headers,
+            )
+
+        assert updated.status_code == 200
+        data = updated.json()
+        assert data["mount_height_cm"] == 80.0
+        assert data["mount_medium"] == "air"
+        assert data["mount_angle_deg"] == 90.0
+
+    @pytest.mark.asyncio
+    async def test_export_default_header_includes_schema_columns(
+        self, auth_headers: dict, test_esp: ESPDevice
+    ):
+        """GET /sensors/export default header is the honest AUT-1577 schema head."""
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get(
+                "/api/v1/sensors/export",
+                params={"esp_id": test_esp.device_id},
+                headers=auth_headers,
+            )
+
+        assert response.status_code == 200
+        header = (response.text.splitlines()[0] if response.text else "").lstrip("\ufeff")
+        assert header == (
+            "timestamp,processed_value,unit,quality,sensor_type,timezone,"
+            "esp_id,zone_id,subzone_id,sample_interval_ms,mount_height_cm,"
+            "mount_medium,mount_angle_deg,calibrated_at,site_id"
+        )
+
+
+class TestExportSchemaHead:
+    """AUT-1577: honest CSV head on the existing export endpoint."""
+
+    @pytest.mark.asyncio
+    async def test_export_two_zones_canopy_and_empty_calibrated_at(
+        self,
+        auth_headers: dict,
+        db_session: AsyncSession,
+    ):
+        """Two sensors / two zones; canopy medium present; missing cal stays empty cell."""
+        zone_a = Zone(zone_id="haus_a", name="Haus A")
+        zone_b = Zone(zone_id="haus_b", name="Haus B")
+        db_session.add_all([zone_a, zone_b])
+        await db_session.flush()
+
+        esp_a = ESPDevice(
+            device_id="ESP_A1577001",
+            name="Export ESP A",
+            ip_address="192.168.1.201",
+            mac_address="AA:BB:CC:DD:EE:A1",
+            firmware_version="2.0.0",
+            hardware_type="ESP32_WROOM",
+            status="online",
+            zone_id="haus_a",
+            metadata={},
+        )
+        esp_b = ESPDevice(
+            device_id="ESP_B1577002",
+            name="Export ESP B",
+            ip_address="192.168.1.202",
+            mac_address="AA:BB:CC:DD:EE:B2",
+            firmware_version="2.0.0",
+            hardware_type="ESP32_WROOM",
+            status="online",
+            zone_id="haus_b",
+            metadata={},
+        )
+        db_session.add_all([esp_a, esp_b])
+        await db_session.flush()
+
+        sensor_a = SensorConfig(
+            esp_id=esp_a.id,
+            gpio=34,
+            sensor_type="temperature",
+            sensor_name="Canopy A",
+            interface_type="ANALOG",
+            enabled=True,
+            sample_interval_ms=15000,
+            pi_enhanced=True,
+            mount_height_cm=120.0,
+            mount_medium="canopy",
+            mount_angle_deg=45.0,
+            calibration_data={"derived": {"calibrated_at": "2026-08-01T12:00:00+00:00"}},
+            sensor_metadata={},
+        )
+        sensor_b = SensorConfig(
+            esp_id=esp_b.id,
+            gpio=35,
+            sensor_type="temperature",
+            sensor_name="Air B",
+            interface_type="ANALOG",
+            enabled=True,
+            sample_interval_ms=30000,
+            pi_enhanced=True,
+            mount_medium="air",
+            calibration_data={},
+            sensor_metadata={},
+        )
+        db_session.add_all([sensor_a, sensor_b])
+
+        ts_a = datetime(2026, 8, 26, 14, 0, tzinfo=timezone.utc)
+        ts_b = datetime(2026, 8, 26, 14, 1, tzinfo=timezone.utc)
+        db_session.add_all(
+            [
+                SensorData(
+                    esp_id=esp_a.id,
+                    gpio=34,
+                    sensor_type="temperature",
+                    raw_value=2100.0,
+                    processed_value=26.5,
+                    unit="°C",
+                    processing_mode="pi_enhanced",
+                    quality="good",
+                    timestamp=ts_a,
+                    zone_id="haus_a",
+                    subzone_id="canopy_1",
+                ),
+                SensorData(
+                    esp_id=esp_b.id,
+                    gpio=35,
+                    sensor_type="temperature",
+                    raw_value=2048.0,
+                    processed_value=24.0,
+                    unit="°C",
+                    processing_mode="pi_enhanced",
+                    quality="good",
+                    timestamp=ts_b,
+                    zone_id="haus_b",
+                    subzone_id="room",
+                ),
+            ]
+        )
+        await db_session.commit()
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response_a = await client.get(
+                "/api/v1/sensors/export",
+                params={"esp_id": esp_a.device_id},
+                headers=auth_headers,
+            )
+            response_b = await client.get(
+                "/api/v1/sensors/export",
+                params={"esp_id": esp_b.device_id},
+                headers=auth_headers,
+            )
+
+        assert response_a.status_code == 200
+        assert response_b.status_code == 200
+
+        header_a = response_a.text.splitlines()[0].lstrip("\ufeff")
+        header_b = response_b.text.splitlines()[0].lstrip("\ufeff")
+        expected = (
+            "timestamp,processed_value,unit,quality,sensor_type,timezone,"
+            "esp_id,zone_id,subzone_id,sample_interval_ms,mount_height_cm,"
+            "mount_medium,mount_angle_deg,calibrated_at,site_id"
+        )
+        assert header_a == expected
+        assert header_b == expected
+
+        cols = expected.split(",")
+        row_a = dict(zip(cols, next(csv.reader([response_a.text.splitlines()[1]])), strict=True))
+        row_b = dict(zip(cols, next(csv.reader([response_b.text.splitlines()[1]])), strict=True))
+
+        assert row_a["unit"] == "°C"
+        assert row_a["timezone"] == "UTC"
+        assert row_a["zone_id"] == "haus_a"
+        assert row_a["mount_medium"] == "canopy"
+        assert row_a["esp_id"] == "ESP_A1577001"
+        assert row_a["calibrated_at"] == "2026-08-01T12:00:00+00:00"
+        assert row_a["site_id"] == ""
+        assert row_a["sample_interval_ms"] == "15000"
+
+        assert row_b["unit"] == "°C"
+        assert row_b["timezone"] == "UTC"
+        assert row_b["zone_id"] == "haus_b"
+        assert row_b["mount_medium"] == "air"
+        assert row_b["esp_id"] == "ESP_B1577002"
+        assert row_b["calibrated_at"] == ""
+        assert row_b["site_id"] == ""
+        assert "calibrated_at" in header_b
+
+    @pytest.mark.asyncio
+    async def test_export_old_five_columns_query_still_has_schema_head(
+        self, auth_headers: dict, test_esp: ESPDevice
+    ):
+        """columns= AUT-1546 five still yields the AUT-1577 Pflicht-Spalten."""
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get(
+                "/api/v1/sensors/export",
+                params={
+                    "esp_id": test_esp.device_id,
+                    "columns": "timestamp,processed_value,unit,quality,sensor_type",
+                },
+                headers=auth_headers,
+            )
+
+        assert response.status_code == 200
+        header = response.text.splitlines()[0].lstrip("\ufeff")
+        assert header == (
+            "timestamp,processed_value,unit,quality,sensor_type,timezone,"
+            "esp_id,zone_id,subzone_id,sample_interval_ms,mount_height_cm,"
+            "mount_medium,mount_angle_deg,calibrated_at,site_id"
+        )

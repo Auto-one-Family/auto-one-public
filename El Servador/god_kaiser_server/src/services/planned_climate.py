@@ -144,7 +144,9 @@ def derive_vpd_band_from_planned(
     )
 
 
-def _resolved_via(segment: Optional[PlanSegment], subzone_config_id: Optional[UUID]) -> str:
+def _resolved_via(
+    segment: Optional[PlanSegment], subzone_config_id: Optional[UUID]
+) -> str:
     if segment is None:
         return "none"
     if subzone_config_id is not None:

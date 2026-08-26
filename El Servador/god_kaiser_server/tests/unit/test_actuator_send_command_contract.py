@@ -504,7 +504,7 @@ async def test_send_command_serializes_manual_and_logic_on_same_gpio(
                 esp.device_id,
                 5,
                 "ON",
-                issued_by="user:operator",
+                issued_by="user:robin",
             )
         )
         await asyncio.wait_for(first_started.wait(), timeout=2.0)
@@ -517,9 +517,9 @@ async def test_send_command_serializes_manual_and_logic_on_same_gpio(
             )
         )
         await asyncio.sleep(0.05)
-        assert publish_trace == [
-            "enter"
-        ], f"expected single in-flight publish, got trace={publish_trace}"
+        assert publish_trace == ["enter"], (
+            f"expected single in-flight publish, got trace={publish_trace}"
+        )
         second_may_finish.set()
         await asyncio.gather(task_manual, task_logic)
 

@@ -3,8 +3,8 @@
  * QuickAlertPanel — Top-5 active alerts shown as sub-panel in the FAB.
  *
  * Data source: notification-inbox.store.ts (no own fetch).
- * Actions: Ack/Resolve, Navigate (deep-link), Details (expand).
- * Mute: Calls sensorsApi.updateAlertConfig() to suppress alerts per sensor.
+ * Actions: Ack/Resolve remain the inbox chain. Navigate (deep-link), Details (expand).
+ * Mute (Direct-API sensorsApi.updateAlertConfig): "keine neuen" — open inbox row stays.
  * Footer: "Alle Alerts anzeigen" opens the full NotificationDrawer.
  */
 
@@ -225,10 +225,10 @@ async function handleSnooze(
       await sensorsApi.updateAlertConfig(sensorId, {
         alerts_enabled: false,
         suppression_reason: 'custom',
-        suppression_note: 'Permanent stummgeschaltet via Quick Alert Panel',
+        suppression_note: 'Keine neuen Alerts via Quick Alert Panel',
       })
       suppressionMap.value.set(sensorId, null)
-      success('Sensor-Alerts permanent stummgeschaltet')
+      success('Keine neuen Alerts (permanent) — offene Zeile bleibt')
     } else {
       const until = new Date(Date.now() + preset.ms).toISOString()
       await sensorsApi.updateAlertConfig(sensorId, {
@@ -238,11 +238,10 @@ async function handleSnooze(
         suppression_note: `Snooze ${preset.label} via Quick Alert Panel`,
       })
       suppressionMap.value.set(sensorId, until)
-      success(`Sensor-Alerts für ${preset.label} stummgeschaltet`)
+      success(`Keine neuen Alerts für ${preset.label} — offene Zeile bleibt`)
     }
-    await handleAck(notification.id)
   } catch (e) {
-    error(e instanceof Error ? e.message : 'Fehler beim Stummschalten')
+    error(e instanceof Error ? e.message : 'Fehler: keine neuen Alerts setzen')
   } finally {
     mutingId.value = null
   }
@@ -430,6 +429,7 @@ function handleShowAll(): void {
             </button>
             <button
               class="alert-item__action"
+              :data-testid="`quick-alert-expand-${alert.id}`"
               title="Details"
               @click.stop="handleExpandAndLoad(alert.id, alert)"
             >
@@ -500,11 +500,12 @@ function handleShowAll(): void {
                 class="alert-item__mute"
                 :class="{ 'alert-item__mute--active': alert.metadata?.sensor_config_id }"
                 :disabled="!alert.metadata?.sensor_config_id || mutingId === alert.id"
-                :title="alert.metadata?.sensor_config_id ? 'Sensor-Alerts stummschalten' : 'Sensor-ID nicht verfügbar'"
+                :data-testid="`quick-alert-mute-${alert.id}`"
+                :title="alert.metadata?.sensor_config_id ? 'Keine neuen Alerts — offene Inbox-Zeile bleibt' : 'Sensor-ID nicht verfügbar'"
                 @click.stop="toggleSnoozeDropdown(alert.id)"
               >
                 <BellOff class="alert-item__mute-icon" />
-                <span>{{ mutingId === alert.id ? 'Wird stummgeschaltet...' : 'Stummschalten' }}</span>
+                <span>{{ mutingId === alert.id ? 'Wird unterdrückt...' : 'Keine neuen' }}</span>
                 <ChevronDown v-if="snoozeOpenId !== alert.id" class="alert-item__mute-icon" />
                 <ChevronUp v-else class="alert-item__mute-icon" />
               </button>
@@ -515,6 +516,7 @@ function handleShowAll(): void {
                     v-for="preset in SNOOZE_PRESETS"
                     :key="preset.key"
                     class="alert-item__snooze-option"
+                    :data-testid="`quick-alert-mute-preset-${preset.key}`"
                     @click.stop="handleSnooze(alert, preset)"
                   >
                     {{ preset.label }}

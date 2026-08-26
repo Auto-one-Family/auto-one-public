@@ -43,9 +43,7 @@ async def test_oversize_auto_push_notifies_on_first_block() -> None:
 
     with (
         patch("src.mqtt.handlers.heartbeat_handler.ESPRepository", return_value=mock_repo),
-        patch(
-            "src.mqtt.handlers.heartbeat_handler.AuditLogRepository", return_value=mock_audit_repo
-        ),
+        patch("src.mqtt.handlers.heartbeat_handler.AuditLogRepository", return_value=mock_audit_repo),
         patch(
             "src.websocket.manager.WebSocketManager.get_instance",
             new_callable=AsyncMock,
@@ -68,10 +66,9 @@ async def test_oversize_auto_push_notifies_on_first_block() -> None:
     mock_audit_repo.create.assert_awaited_once()
     mock_ws.broadcast.assert_awaited_once()
     assert "config_push_oversize_blocked_at" in mock_dev.device_metadata
-    assert (
-        "config_push_sent_at" not in mock_dev.device_metadata
-        or mock_dev.device_metadata.get("config_push_sent_at") is None
-    )
+    assert "config_push_sent_at" not in mock_dev.device_metadata or mock_dev.device_metadata.get(
+        "config_push_sent_at"
+    ) is None
 
 
 @pytest.mark.asyncio
@@ -127,9 +124,7 @@ async def test_oversize_auto_push_renotifies_after_cooldown_expired() -> None:
 
     with (
         patch("src.mqtt.handlers.heartbeat_handler.ESPRepository", return_value=mock_repo),
-        patch(
-            "src.mqtt.handlers.heartbeat_handler.AuditLogRepository", return_value=mock_audit_repo
-        ),
+        patch("src.mqtt.handlers.heartbeat_handler.AuditLogRepository", return_value=mock_audit_repo),
         patch("src.mqtt.handlers.heartbeat_handler.logger") as mock_logger,
         patch(
             "src.websocket.manager.WebSocketManager.get_instance",

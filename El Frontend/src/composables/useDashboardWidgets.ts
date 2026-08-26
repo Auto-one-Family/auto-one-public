@@ -456,7 +456,7 @@ export function useDashboardWidgets(options: UseDashboardWidgetsOptions = {}): U
     // espId prop for widgets that support device-scoped context (e.g. ClaudeChatWidget)
     if (config.espId) props.espId = config.espId
 
-    // readOnly prop for actuator widgets (monitor context = no toggle)
+    // AUT-1528: readOnly only for DashboardViewer/Editor widgets — not Monitor L2 ActuatorCard (AUT-1513 A)
     if (readOnly && type === 'actuator-card') {
       props.readOnly = true
     }

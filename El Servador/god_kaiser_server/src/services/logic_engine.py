@@ -433,7 +433,9 @@ class LogicEngine:
 
                         # Check if conditions are met (Phase 1 — now with sensor context)
                         conditions = rule.trigger_conditions
-                        conditions_met = await self._check_conditions(conditions, context)
+                        conditions_met = await self._check_conditions(
+                            conditions, context, logic_operator=rule.logic_operator
+                        )
 
                         # Prepare trigger data for timer-based execution
                         trigger_data = {
@@ -472,9 +474,7 @@ class LogicEngine:
                                             rule.id,
                                             rule.rule_name,
                                             rule.priority,
-                                            rule_is_critical=bool(
-                                                getattr(rule, "is_critical", False)
-                                            ),
+                                            rule_is_critical=bool(getattr(rule, "is_critical", False)),
                                             session=session,
                                             batch_locks=batch_locks,
                                         )
@@ -513,9 +513,7 @@ class LogicEngine:
                                             rule.id,
                                             rule.rule_name,
                                             rule.priority,
-                                            rule_is_critical=bool(
-                                                getattr(rule, "is_critical", False)
-                                            ),
+                                            rule_is_critical=bool(getattr(rule, "is_critical", False)),
                                             session=session,
                                             batch_locks=batch_locks,
                                         )
@@ -871,7 +869,9 @@ class LogicEngine:
                     if time_since_last.total_seconds() <= rule.cooldown_seconds:
                         remaining = int(rule.cooldown_seconds - time_since_last.total_seconds())
                         safety_off_actions = [
-                            a for a in actions_to_run if self._is_safety_critical_routed_off(a)
+                            a
+                            for a in actions_to_run
+                            if self._is_safety_critical_routed_off(a)
                         ]
                         if safety_off_actions:
                             logger.info(
@@ -917,7 +917,9 @@ class LogicEngine:
                     rule.settle_after_rule_id
                 )
                 if settle_last_execution:
-                    time_since_settle = datetime.now(timezone.utc) - settle_last_execution.timestamp
+                    time_since_settle = (
+                        datetime.now(timezone.utc) - settle_last_execution.timestamp
+                    )
                     if time_since_settle.total_seconds() <= rule.settle_seconds:
                         settle_remaining = int(
                             rule.settle_seconds - time_since_settle.total_seconds()
@@ -973,7 +975,9 @@ class LogicEngine:
                 return
 
             # Execute actions (AUT-1317: gated subset; flat = all under global gate)
-            logger.info(f"Rule {rule.rule_name} triggered: executing {len(actions_to_run)} actions")
+            logger.info(
+                f"Rule {rule.rule_name} triggered: executing {len(actions_to_run)} actions"
+            )
 
             # AUT-1112: chemistry feedforward (no-op unless rule_metadata.dose_config is set)
             # AUT-1233: resolved_setpoint (None for non-subscribing rules) overrides
@@ -1067,9 +1071,7 @@ class LogicEngine:
             if blocked_by_conflict:
                 error_message = conflict_message
             elif has_dose_failure:
-                error_message = (
-                    "One or more actions skipped: flow_rate_ml_s missing or uncalibrated"
-                )
+                error_message = "One or more actions skipped: flow_rate_ml_s missing or uncalibrated"
             else:
                 error_message = None
 
@@ -1221,7 +1223,9 @@ class LogicEngine:
             return False
         return action.get("command") == "OFF"
 
-    async def _evaluate_individual_conditions(self, conditions, context: dict) -> List[bool]:
+    async def _evaluate_individual_conditions(
+        self, conditions, context: dict
+    ) -> List[bool]:
         """
         Evaluate each top-level condition once; return per-index results (AUT-1317).
 
@@ -1555,7 +1559,9 @@ class LogicEngine:
         pair_count = min(len(actuator_slots), len(working_components))
         for i in range(pair_count):
             _kind, _idx, act = actuator_slots[i]
-            working_components[i] = await _resolve_concentration(act, working_components[i])
+            working_components[i] = await _resolve_concentration(
+                act, working_components[i]
+            )
         if working_components:
             try:
                 ratio_shares = compute_ratio_shares_from_volume(working_components)
@@ -1586,10 +1592,7 @@ class LogicEngine:
             except Exception as e:
                 logger.warning(
                     "Chemistry dose_ml computation skipped for rule %s on %s:GPIO%s — %s",
-                    rule.rule_name,
-                    action.get("esp_id"),
-                    action.get("gpio"),
-                    e,
+                    rule.rule_name, action.get("esp_id"), action.get("gpio"), e,
                 )
                 return action
 
@@ -1614,7 +1617,9 @@ class LogicEngine:
                         "actuator_command",
                         "actuator",
                     ):
-                        new_steps.append({**step, "action": await _apply_next(step_action)})
+                        new_steps.append(
+                            {**step, "action": await _apply_next(step_action)}
+                        )
                     else:
                         new_steps.append(step)
                 result.append({**action, "steps": new_steps})
@@ -1677,16 +1682,16 @@ class LogicEngine:
             if esp_uuid and gpio_raw is not None:
                 act = await actuator_repo.get_by_esp_and_gpio(esp_uuid, int(gpio_raw))
                 if act:
-                    flow_rate = (
-                        act.flow_rate_ml_s
-                    )  # dedizierte Spalte (AO-1), NICHT actuator_metadata
+                    flow_rate = act.flow_rate_ml_s  # dedizierte Spalte (AO-1), NICHT actuator_metadata
 
             if not flow_rate or flow_rate <= 0:
                 # AUT-1384: Behälterwechsel / uncalibrated pump — duration fallback.
                 existing_duration = action.get("duration_seconds")
                 try:
                     duration_fallback = (
-                        float(existing_duration) if existing_duration is not None else 0.0
+                        float(existing_duration)
+                        if existing_duration is not None
+                        else 0.0
                     )
                 except (TypeError, ValueError):
                     duration_fallback = 0.0
@@ -1703,9 +1708,7 @@ class LogicEngine:
                     return {**action, "duration_seconds": duration_fallback}
                 logger.warning(
                     "dose_ml=%.2f on %s:GPIO%s — flow_rate_ml_s missing or uncalibrated, dosing skipped",
-                    dose_ml,
-                    esp_id_str,
-                    gpio_raw,
+                    dose_ml, esp_id_str, gpio_raw
                 )
                 return None
 
@@ -1832,7 +1835,8 @@ class LogicEngine:
                     )
                 except Exception as err:
                     logger.error(
-                        "AUT-1352: sequence ledger write (already completed) failed " "for %s: %s",
+                        "AUT-1352: sequence ledger write (already completed) failed "
+                        "for %s: %s",
                         sequence_id,
                         err,
                         exc_info=True,

@@ -224,6 +224,22 @@ const measurePlantOptions = computed(() =>
   })),
 )
 
+const phaseStartMsByPlantId = computed(() => {
+  const out: Record<string, number> = {}
+  for (const [plantId, events] of eventsByPlantId.value) {
+    let latest = 0
+    for (const event of events) {
+      if (event.event_type !== 'phase_changed' || event.event_status !== 'occurred') {
+        continue
+      }
+      const ts = Date.parse(event.event_timestamp)
+      if (!Number.isNaN(ts) && ts > latest) latest = ts
+    }
+    if (latest > 0) out[plantId] = latest
+  }
+  return out
+})
+
 async function onCreateMeasure(payload: PlanMeasureCreatePayload): Promise<void> {
   try {
     await plantsStore.addLifecycleEvent(payload.plantId, {
@@ -500,6 +516,7 @@ watch(
             :window="timelineWindow"
             :plant-id="measurePlantId"
             :plants="measurePlantOptions"
+            :phase-start-ms-by-plant-id="phaseStartMsByPlantId"
             :disabled="zonePlants.length === 0"
             @create="onCreateMeasure"
             @select="onSelectMeasure"

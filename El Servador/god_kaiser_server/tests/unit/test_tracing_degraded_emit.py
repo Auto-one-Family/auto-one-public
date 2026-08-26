@@ -9,7 +9,9 @@ from src.mqtt.handlers.tracing_degraded_emit import emit_tracing_degraded
 
 def test_emit_always_increments_metric_rate_limits_logs() -> None:
     with (
-        patch("src.mqtt.handlers.tracing_degraded_emit.increment_intent_tracing_degraded") as inc,
+        patch(
+            "src.mqtt.handlers.tracing_degraded_emit.increment_intent_tracing_degraded"
+        ) as inc,
         patch("src.mqtt.handlers.tracing_degraded_emit.logger") as log,
     ):
         emit_tracing_degraded("ESP_A", "reason_x", "msg %s", "a")

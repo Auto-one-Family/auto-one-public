@@ -81,5 +81,6 @@ describe('DeviceStatusPanel — identity chrome (AUT-1523)', () => {
     await flushPromises()
     expect(wrapper.find('.status-panel__meta').exists()).toBe(false)
     expect(wrapper.text()).not.toContain('GPIO')
+    expect(wrapper.text()).not.toContain('ESP_AEAE64')
   })
 })

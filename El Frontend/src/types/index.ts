@@ -337,6 +337,12 @@ export interface MockSensor {
   temp_sensor_config_id?: string | null
   /** Last measurement metadata (e.g. temp_source, temp_compensation_value for EC/pH sensors) */
   metadata?: Record<string, unknown> | null
+  /** AUT-1555: Mount height in cm. Null = unset. */
+  mount_height_cm?: number | null
+  /** AUT-1555: Mount medium catalog air|canopy|substrate|solution. Null = unset. */
+  mount_medium?: 'air' | 'canopy' | 'substrate' | 'solution' | null
+  /** AUT-1555: Mount angle in degrees. Null = unset. */
+  mount_angle_deg?: number | null
 }
 
 export interface MockActuator {
@@ -814,6 +820,12 @@ export interface SensorConfigCreate {
   sensor_kind?: SensorKind
   /** AUT-299: UUID of the linked temperature sensor config for ATC. Null = no sensor linked. */
   temp_sensor_config_id?: string | null
+  /** AUT-1556: Mount height in cm. Null = unset (A1 column, not metadata). */
+  mount_height_cm?: number | null
+  /** AUT-1556: Mount medium catalog air|canopy|substrate|solution. Null = unset. */
+  mount_medium?: 'air' | 'canopy' | 'substrate' | 'solution' | null
+  /** AUT-1556: Mount angle in degrees. Null = unset. */
+  mount_angle_deg?: number | null
 }
 
 /** Custom alert threshold overrides for a sensor (Phase 4A.7 alert_config.custom_thresholds). */
@@ -886,6 +898,12 @@ export interface SensorConfigResponse {
   correlation_id?: string | null
   /** AUT-299: UUID of the linked temperature sensor config for ATC (Automatic Temperature Compensation). Null = no sensor linked. */
   temp_sensor_config_id?: string | null
+  /** AUT-1555: Mount height in cm. Null = unset (A1 column, not metadata). */
+  mount_height_cm?: number | null
+  /** AUT-1555: Mount medium catalog air|canopy|substrate|solution. Null = unset. */
+  mount_medium?: 'air' | 'canopy' | 'substrate' | 'solution' | null
+  /** AUT-1555: Mount angle in degrees. Null = unset. */
+  mount_angle_deg?: number | null
 }
 
 // =============================================================================
@@ -1459,7 +1477,7 @@ export interface SafeModeResponse {
 
 /**
  * Plant lifecycle phase (15 + archived states).
- * Mirrors the backend `plants.phase` enum (nursery and growth stages).
+ * Mirrors the backend `plants.phase` enum (cannabis nursery + grow stages).
  */
 export type PlantPhase =
   | 'invitro_donor'

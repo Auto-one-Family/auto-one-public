@@ -103,10 +103,14 @@ class TabRotationManager:
         return self._known_tabs
 
     def current_sensor_tab(self, when: Optional[datetime] = None) -> str:
-        return build_tab_name(prefix=SENSOR_PREFIX, when=when, granularity=self._granularity)
+        return build_tab_name(
+            prefix=SENSOR_PREFIX, when=when, granularity=self._granularity
+        )
 
     def current_actuator_tab(self, when: Optional[datetime] = None) -> str:
-        return build_tab_name(prefix=ACTUATOR_PREFIX, when=when, granularity=self._granularity)
+        return build_tab_name(
+            prefix=ACTUATOR_PREFIX, when=when, granularity=self._granularity
+        )
 
     async def ensure(
         self,

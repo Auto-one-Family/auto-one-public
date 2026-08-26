@@ -108,7 +108,9 @@ async def read_live_sensor_for_measure(
         )
 
     display_value = (
-        reading.processed_value if reading.processed_value is not None else reading.raw_value
+        reading.processed_value
+        if reading.processed_value is not None
+        else reading.raw_value
     )
     if display_value is None:
         return MeasureReadFailure(
@@ -130,7 +132,9 @@ async def read_live_sensor_for_measure(
         freshness_hours = getattr(sensor_config, "measurement_freshness_hours", None)
 
     resolved_type = sensor_type or reading.sensor_type
-    sensor_key = f"{esp_id}:{gpio}:{resolved_type}" if resolved_type else f"{esp_id}:{gpio}"
+    sensor_key = (
+        f"{esp_id}:{gpio}:{resolved_type}" if resolved_type else f"{esp_id}:{gpio}"
+    )
     entry = {
         "value": display_value,
         "sensor_type": resolved_type,

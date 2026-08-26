@@ -4,9 +4,11 @@ import {
   findIstSensorValue,
   formatDelta,
   formatIstSollValue,
+  isLikelyDryEcReading,
   measureKeyFromTarget,
   measureLabel,
   resolvedViaLabel,
+  resolveIstSensorReading,
   TANK_DETAIL_QUERY_KEY,
   TANK_DETAIL_ROUTE,
   tankDetailHref,
@@ -172,6 +174,73 @@ describe('tankIstSollFormat', () => {
         },
       ]
       expect(findIstSensorValue(devices, ['ESP_1'], 'temperature')).toBeNull()
+    })
+
+    it('should ignore stale last_read so assist/delta never use a 3-day-old EC', () => {
+      const devices = [
+        {
+          device_id: 'ESP_1',
+          sensors: [{
+            sensor_type: 'ec',
+            raw_value: 1411.4,
+            quality: 'good',
+            last_read: '2026-08-22T18:24:51+00:00',
+          }],
+        },
+      ]
+      expect(findIstSensorValue(devices, ['ESP_1'], 'ec')).toBeNull()
+    })
+
+    it('should ignore quality=error so a processor 0.0 is not live Ist', () => {
+      const devices = [
+        {
+          device_id: 'ESP_1',
+          sensors: [{
+            sensor_type: 'ec',
+            processed_value: 0,
+            quality: 'error',
+            last_read: new Date().toISOString(),
+          }],
+        },
+      ]
+      expect(findIstSensorValue(devices, ['ESP_1'], 'ec')).toBeNull()
+    })
+  })
+
+  describe('resolveIstSensorReading', () => {
+    it('should keep lastKnownValue when the sample is stale', () => {
+      const devices = [
+        {
+          device_id: 'ESP_1',
+          sensors: [{
+            sensor_type: 'ec',
+            processed_value: 1411.4,
+            quality: 'fair',
+            last_read: '2026-08-22T18:24:51+00:00',
+          }],
+        },
+      ]
+      const reading = resolveIstSensorReading(devices, ['ESP_1'], 'ec')
+      expect(reading.trust).toBe('stale')
+      expect(reading.value).toBeNull()
+      expect(reading.lastKnownValue).toBe(1411.4)
+    })
+
+    it('should mark a live but very low EC as dry-probe hint', () => {
+      const devices = [
+        {
+          device_id: 'ESP_1',
+          sensors: [{
+            sensor_type: 'ec',
+            processed_value: 40,
+            quality: 'poor',
+            last_read: new Date().toISOString(),
+          }],
+        },
+      ]
+      const reading = resolveIstSensorReading(devices, ['ESP_1'], 'ec')
+      expect(reading.trust).toBe('live')
+      expect(isLikelyDryEcReading('ec', reading)).toBe(true)
     })
   })
 

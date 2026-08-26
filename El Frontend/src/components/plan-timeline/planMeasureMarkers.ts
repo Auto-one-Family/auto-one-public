@@ -31,6 +31,27 @@ export const PLAN_PLANT_MEASURE_EVENT_TYPES = [
 
 export type PlanPlantMeasureEventType = (typeof PLAN_PLANT_MEASURE_EVENT_TYPES)[number]
 
+const DEFAULT_EXECUTED_WINDOW_MS = 60 * 60 * 1000
+const MIN_EXECUTED_WINDOW_MS = 60 * 1000
+
+/**
+ * Default Von for Eintragen: last hour, clamped to the current light-phase
+ * start so a fresh phase change is not stamped on the prior band.
+ */
+export function defaultExecutedMeasureWindowStartMs(
+  nowMs: number,
+  phaseStartMs?: number | null,
+): number {
+  let start = nowMs - DEFAULT_EXECUTED_WINDOW_MS
+  if (phaseStartMs != null) {
+    start = Math.max(start, phaseStartMs)
+  }
+  if (start >= nowMs) {
+    start = nowMs - MIN_EXECUTED_WINDOW_MS
+  }
+  return start
+}
+
 export const PLAN_PLANT_MEASURE_OPTIONS: {
   value: PlanPlantMeasureEventType
   label: string

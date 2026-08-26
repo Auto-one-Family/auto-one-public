@@ -30,7 +30,9 @@ APPLIED_SETPOINT_ORIGINS: tuple[str, ...] = (
     "static_fallback",
 )
 
-_ORIGIN_CHECK = f"origin IN ({', '.join(repr(o) for o in APPLIED_SETPOINT_ORIGINS)})"
+_ORIGIN_CHECK = (
+    f"origin IN ({', '.join(repr(o) for o in APPLIED_SETPOINT_ORIGINS)})"
+)
 _DOMAIN_CHECK = f"domain IN ({', '.join(repr(d) for d in PLAN_DOMAINS)})"
 _MEASURE_CHECK = f"measure IN ({', '.join(repr(m) for m in PLAN_MEASURES)})"
 

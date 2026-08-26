@@ -13,7 +13,9 @@ _GPIO_FROM_MESSAGE_RE = re.compile(r"GPIO\s+(\d+)", re.IGNORECASE)
 
 
 def is_missing_correlation_actuator(correlation_id: Optional[str]) -> bool:
-    return bool(correlation_id and str(correlation_id).startswith(MISSING_CORR_ACTUATOR_PREFIX))
+    return bool(
+        correlation_id and str(correlation_id).startswith(MISSING_CORR_ACTUATOR_PREFIX)
+    )
 
 
 def parse_gpio_from_actuator_error_message(message: Optional[str]) -> Optional[int]:
@@ -56,9 +58,7 @@ def should_suppress_actuator_not_found_error_broadcast(
 ) -> bool:
     if error_code != ERROR_ACTUATOR_NOT_FOUND or has_actuator_config:
         return False
-    gpio = (
-        context_gpio
-        if context_gpio is not None
-        else parse_gpio_from_actuator_error_message(message)
+    gpio = context_gpio if context_gpio is not None else parse_gpio_from_actuator_error_message(
+        message
     )
     return gpio is not None

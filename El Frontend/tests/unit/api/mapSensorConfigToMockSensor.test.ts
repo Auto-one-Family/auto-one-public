@@ -53,5 +53,30 @@ describe('mapSensorConfigToMockSensor', () => {
     expect(mapped.calibration).toBeNull()
     expect(mapped.temp_sensor_config_id).toBeNull()
     expect(mapped.calibration_interval_days).toBeNull()
+    expect(mapped.mount_height_cm).toBeNull()
+    expect(mapped.mount_medium).toBeNull()
+    expect(mapped.mount_angle_deg).toBeNull()
+  })
+
+  it('should pass AUT-1555 mount fields through from the loaded config', () => {
+    const mapped = mapSensorConfigToMockSensor(baseConfig({
+      mount_height_cm: 30,
+      mount_medium: 'canopy',
+      mount_angle_deg: 45,
+    }))
+
+    expect(mapped.mount_height_cm).toBe(30)
+    expect(mapped.mount_medium).toBe('canopy')
+    expect(mapped.mount_angle_deg).toBe(45)
+  })
+
+  it('should not invent ATC provenance on the card mapper (AUT-1561)', () => {
+    const mapped = mapSensorConfigToMockSensor(baseConfig({
+      temp_sensor_config_id: 'temp-cfg-9',
+      metadata: { temp_source: 'default_25', temp_compensation_value: 25 },
+    }))
+
+    expect(mapped.temp_sensor_config_id).toBe('temp-cfg-9')
+    expect(mapped.metadata).toBeUndefined()
   })
 })

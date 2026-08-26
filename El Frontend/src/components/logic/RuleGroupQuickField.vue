@@ -354,32 +354,32 @@ async function handleApply(): Promise<void> {
           <BaseInput
             :model-value="startHourDraft"
             type="number"
-            :min="0"
-            :max="23"
+            min="0"
+            max="23"
             label="Von (Stunde)"
             @update:model-value="(v) => onTimeFieldChange('startHour', v)"
           />
           <BaseInput
             :model-value="startMinuteDraft"
             type="number"
-            :min="0"
-            :max="59"
+            min="0"
+            max="59"
             label="Von (Minute)"
             @update:model-value="(v) => onTimeFieldChange('startMinute', v)"
           />
           <BaseInput
             :model-value="endHourDraft"
             type="number"
-            :min="0"
-            :max="24"
+            min="0"
+            max="24"
             label="Bis (Stunde)"
             @update:model-value="(v) => onTimeFieldChange('endHour', v)"
           />
           <BaseInput
             :model-value="endMinuteDraft"
             type="number"
-            :min="0"
-            :max="59"
+            min="0"
+            max="59"
             label="Bis (Minute)"
             @update:model-value="(v) => onTimeFieldChange('endMinute', v)"
           />

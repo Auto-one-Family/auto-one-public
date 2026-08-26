@@ -2,9 +2,9 @@
 /**
  * ActuatorCard — Unified actuator card for config and monitor views
  *
- * Config mode: Name, type, ESP-ID, GPIO, state badge, toggle, settings hint
- * Monitor mode: State badge (read-only), PWM value for PWM actuators, no toggle,
- *               linked rules with status dots, last execution with trigger reason
+ * Config mode: Name, type, ESP-ID, GPIO, state badge, toggle, settings hint (B1-Werkstatt)
+ * Monitor mode: Lagekarte + Schalten ohne Confirm (AUT-1513 A), PWM, linked rules,
+ *               last execution. Config öffnet nicht von dieser Karte.
  */
 import { computed, ref, watch, onUnmounted } from 'vue'
 import {
@@ -406,11 +406,12 @@ async function confirmDose(event: Event) {
       <span v-if="mode === 'monitor' && actuator.actuator_type === 'pwm' && !pwmPercent" class="actuator-card__pwm">
         PWM: 0%
       </span>
+      <!-- AUT-1513 A: Toggle auch auf Monitor L2 — Nutzung, kein Confirm, kein B1-Config -->
       <button
-        v-if="mode !== 'monitor'"
         class="btn-secondary btn-sm flex-shrink-0 touch-target"
         :disabled="actuator.emergency_stopped || isEspOffline || isStale || commandToggleBlocked"
         :title="commandIsPending ? 'Befehl wird ausgeführt...' : isEspOffline ? 'ESP ist offline' : isStale ? 'Status veraltet' : ''"
+        :aria-label="actuator.state ? 'Ausschalten' : 'Einschalten'"
         @click="handleToggle"
       >
         {{ commandIsPending ? 'Wird ausgeführt...' : (actuator.state ? 'Ausschalten' : 'Einschalten') }}

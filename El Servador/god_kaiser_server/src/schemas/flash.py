@@ -58,7 +58,9 @@ class NvsSecretsCreate(BaseModel):
     """
 
     ssid: str = Field(..., min_length=1, max_length=32, description="WiFi SSID")
-    password: Optional[str] = Field(None, description="WiFi password — omit/null to keep existing")
+    password: Optional[str] = Field(
+        None, description="WiFi password — omit/null to keep existing"
+    )
     server_address: str = Field(..., min_length=1, description="MQTT broker host")
     mqtt_port: int = Field(..., ge=1, le=65535, description="MQTT broker port")
     mqtt_username: str = Field(..., min_length=1, description="MQTT username")

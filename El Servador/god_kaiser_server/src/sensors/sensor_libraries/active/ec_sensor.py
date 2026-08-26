@@ -176,7 +176,9 @@ class ECSensorProcessor(BaseSensorProcessor):
 
         if adc_source == ADC_SOURCE_ADS1115:
             # Single normalization for the external 16-bit ADC.
-            voltage = raw_to_voltage(raw_value, adc_source=ADC_SOURCE_ADS1115, pga_gain=pga_gain)
+            voltage = raw_to_voltage(
+                raw_value, adc_source=ADC_SOURCE_ADS1115, pga_gain=pga_gain
+            )
         else:
             # Internal ADC (default) or legacy adc_type='16bit' backward-compat path.
             voltage = self._adc_to_voltage(raw_value, adc_type)
@@ -408,9 +410,7 @@ class ECSensorProcessor(BaseSensorProcessor):
         """
         # nicht im Produktiv-Pfad / reine Konsolidierung auf adc_normalization
         if adc_type == "16bit":
-            return raw_to_voltage(
-                adc_value, adc_source=ADC_SOURCE_ADS1115, pga_gain=DEFAULT_PGA_GAIN
-            )
+            return raw_to_voltage(adc_value, adc_source=ADC_SOURCE_ADS1115, pga_gain=DEFAULT_PGA_GAIN)
         return raw_to_voltage(adc_value, adc_source=ADC_SOURCE_INTERNAL)
 
     def _voltage_to_ec_calibrated(self, voltage: float, slope: float, offset: float) -> float:

@@ -59,7 +59,8 @@ def model_to_response(
         plant_age_days=ctx.plant_age_days,
         days_to_harvest=ctx.days_to_harvest,
         resolved_growth_phase=resolved_growth_phase or stored,
-        growth_phase_source=growth_phase_source or ("zone_context" if stored else None),
+        growth_phase_source=growth_phase_source
+        or ("zone_context" if stored else None),
         active_plant_id=active_plant_id,
     )
 
@@ -116,7 +117,9 @@ class ZoneContextService:
             await self.session.flush()
         return phase
 
-    def _prepare_write(self, data: Dict[str, Any], *, plant_phase: Optional[str]) -> Dict[str, Any]:
+    def _prepare_write(
+        self, data: Dict[str, Any], *, plant_phase: Optional[str]
+    ) -> Dict[str, Any]:
         """Keep spatial/context writes on ZoneContext; phase SSOT is the plant."""
         prepared = dict(data)
         if "growth_phase" in prepared:

@@ -140,9 +140,13 @@ class TestListDashboardsVisibility:
     """GET /dashboards reflects ownership, sharing, and assignment."""
 
     @pytest.mark.asyncio
-    async def test_owner_sees_own_dashboard(self, owner_user: User, test_dashboard: Dashboard):
+    async def test_owner_sees_own_dashboard(
+        self, owner_user: User, test_dashboard: Dashboard
+    ):
         """Owner always sees their own dashboard in the list."""
-        async with AsyncClient(transport=ASGITransport(app=app), base_url=BASE_URL) as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url=BASE_URL
+        ) as client:
             resp = await client.get(API_PREFIX, headers=_token(owner_user))
 
         assert resp.status_code == 200
@@ -154,7 +158,9 @@ class TestListDashboardsVisibility:
         self, other_user: User, test_dashboard: Dashboard
     ):
         """other_user has no assignment and dashboard is not shared → not visible."""
-        async with AsyncClient(transport=ASGITransport(app=app), base_url=BASE_URL) as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url=BASE_URL
+        ) as client:
             resp = await client.get(API_PREFIX, headers=_token(other_user))
 
         assert resp.status_code == 200
@@ -166,7 +172,9 @@ class TestListDashboardsVisibility:
         self, other_user: User, shared_dashboard: Dashboard
     ):
         """is_shared=True dashboards appear for every authenticated user."""
-        async with AsyncClient(transport=ASGITransport(app=app), base_url=BASE_URL) as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url=BASE_URL
+        ) as client:
             resp = await client.get(API_PREFIX, headers=_token(other_user))
 
         assert resp.status_code == 200
@@ -178,7 +186,9 @@ class TestListDashboardsVisibility:
         self, owner_user: User, other_user: User, test_dashboard: Dashboard
     ):
         """After assignment, other_user sees the private dashboard in the list."""
-        async with AsyncClient(transport=ASGITransport(app=app), base_url=BASE_URL) as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url=BASE_URL
+        ) as client:
             # Assign other_user via operator (owner)
             assign_resp = await client.post(
                 f"{API_PREFIX}/{test_dashboard.id}/assignments",
@@ -204,9 +214,15 @@ class TestGetDashboardAccess:
     """GET /dashboards/{id} respects ownership, sharing, and assignment."""
 
     @pytest.mark.asyncio
-    async def test_owner_can_get_own_dashboard(self, owner_user: User, test_dashboard: Dashboard):
-        async with AsyncClient(transport=ASGITransport(app=app), base_url=BASE_URL) as client:
-            resp = await client.get(f"{API_PREFIX}/{test_dashboard.id}", headers=_token(owner_user))
+    async def test_owner_can_get_own_dashboard(
+        self, owner_user: User, test_dashboard: Dashboard
+    ):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url=BASE_URL
+        ) as client:
+            resp = await client.get(
+                f"{API_PREFIX}/{test_dashboard.id}", headers=_token(owner_user)
+            )
         assert resp.status_code == 200
         assert resp.json()["data"]["id"] == str(test_dashboard.id)
 
@@ -214,21 +230,29 @@ class TestGetDashboardAccess:
     async def test_unassigned_user_cannot_get_private_dashboard(
         self, other_user: User, test_dashboard: Dashboard
     ):
-        async with AsyncClient(transport=ASGITransport(app=app), base_url=BASE_URL) as client:
-            resp = await client.get(f"{API_PREFIX}/{test_dashboard.id}", headers=_token(other_user))
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url=BASE_URL
+        ) as client:
+            resp = await client.get(
+                f"{API_PREFIX}/{test_dashboard.id}", headers=_token(other_user)
+            )
         assert resp.status_code == 404
 
     @pytest.mark.asyncio
     async def test_assigned_user_can_get_dashboard_by_id(
         self, owner_user: User, other_user: User, test_dashboard: Dashboard
     ):
-        async with AsyncClient(transport=ASGITransport(app=app), base_url=BASE_URL) as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url=BASE_URL
+        ) as client:
             await client.post(
                 f"{API_PREFIX}/{test_dashboard.id}/assignments",
                 json={"user_id": other_user.id},
                 headers=_token(owner_user),
             )
-            resp = await client.get(f"{API_PREFIX}/{test_dashboard.id}", headers=_token(other_user))
+            resp = await client.get(
+                f"{API_PREFIX}/{test_dashboard.id}", headers=_token(other_user)
+            )
         assert resp.status_code == 200
         assert resp.json()["data"]["id"] == str(test_dashboard.id)
 
@@ -246,7 +270,9 @@ class TestDashboardAssignments:
         self, owner_user: User, other_user: User, test_dashboard: Dashboard
     ):
         """Assigning a user returns 201 with the assignment data."""
-        async with AsyncClient(transport=ASGITransport(app=app), base_url=BASE_URL) as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url=BASE_URL
+        ) as client:
             resp = await client.post(
                 f"{API_PREFIX}/{test_dashboard.id}/assignments",
                 json={"user_id": other_user.id},
@@ -265,7 +291,9 @@ class TestDashboardAssignments:
         self, owner_user: User, other_user: User, test_dashboard: Dashboard
     ):
         """Assigning the same user twice returns HTTP 409 (not 500)."""
-        async with AsyncClient(transport=ASGITransport(app=app), base_url=BASE_URL) as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url=BASE_URL
+        ) as client:
             await client.post(
                 f"{API_PREFIX}/{test_dashboard.id}/assignments",
                 json={"user_id": other_user.id},
@@ -283,7 +311,9 @@ class TestDashboardAssignments:
         self, owner_user: User, other_user: User, test_dashboard: Dashboard
     ):
         """GET /assignments lists all assigned users for a dashboard."""
-        async with AsyncClient(transport=ASGITransport(app=app), base_url=BASE_URL) as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url=BASE_URL
+        ) as client:
             await client.post(
                 f"{API_PREFIX}/{test_dashboard.id}/assignments",
                 json={"user_id": other_user.id},
@@ -304,7 +334,9 @@ class TestDashboardAssignments:
         self, owner_user: User, other_user: User, test_dashboard: Dashboard
     ):
         """After unassignment, user can no longer access the dashboard."""
-        async with AsyncClient(transport=ASGITransport(app=app), base_url=BASE_URL) as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url=BASE_URL
+        ) as client:
             # Assign
             await client.post(
                 f"{API_PREFIX}/{test_dashboard.id}/assignments",
@@ -330,7 +362,9 @@ class TestDashboardAssignments:
     ):
         """Unassigning a user who was never assigned returns 404."""
         nonexistent_user_id = 99999
-        async with AsyncClient(transport=ASGITransport(app=app), base_url=BASE_URL) as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url=BASE_URL
+        ) as client:
             resp = await client.delete(
                 f"{API_PREFIX}/{test_dashboard.id}/assignments/{nonexistent_user_id}",
                 headers=_token(owner_user),
@@ -343,7 +377,9 @@ class TestDashboardAssignments:
     ):
         """Assigning to a non-existent dashboard returns 404."""
         nonexistent_id = uuid.uuid4()
-        async with AsyncClient(transport=ASGITransport(app=app), base_url=BASE_URL) as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url=BASE_URL
+        ) as client:
             resp = await client.post(
                 f"{API_PREFIX}/{nonexistent_id}/assignments",
                 json={"user_id": other_user.id},
@@ -356,7 +392,9 @@ class TestDashboardAssignments:
         self, viewer_user: User, other_user: User, test_dashboard: Dashboard
     ):
         """Viewers are not allowed to create assignments (403)."""
-        async with AsyncClient(transport=ASGITransport(app=app), base_url=BASE_URL) as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url=BASE_URL
+        ) as client:
             resp = await client.post(
                 f"{API_PREFIX}/{test_dashboard.id}/assignments",
                 json={"user_id": other_user.id},
@@ -382,7 +420,9 @@ class TestAssignmentInvariant:
         WHEN  other_user is assigned and then unassigned
         THEN  owner_id and is_shared on the dashboard are unmodified
         """
-        async with AsyncClient(transport=ASGITransport(app=app), base_url=BASE_URL) as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url=BASE_URL
+        ) as client:
             # Assign
             await client.post(
                 f"{API_PREFIX}/{test_dashboard.id}/assignments",
@@ -395,7 +435,9 @@ class TestAssignmentInvariant:
                 headers=_token(owner_user),
             )
             # Check dashboard as owner
-            resp = await client.get(f"{API_PREFIX}/{test_dashboard.id}", headers=_token(owner_user))
+            resp = await client.get(
+                f"{API_PREFIX}/{test_dashboard.id}", headers=_token(owner_user)
+            )
 
         assert resp.status_code == 200
         d = resp.json()["data"]

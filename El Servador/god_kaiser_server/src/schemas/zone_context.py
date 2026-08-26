@@ -75,7 +75,6 @@ class ZoneContextUpdate(BaseModel):
                 "(e.g. veg-frueh, bluete-bulk) or a known legacy alias."
             )
         return canonical
-
     planted_date: Optional[date] = Field(
         None,
         description="Date current cycle was planted",

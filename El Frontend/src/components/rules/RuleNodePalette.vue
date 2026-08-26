@@ -19,10 +19,8 @@ import {
   Search,
   Droplets,
   Gauge,
-  Sun,
   Wind,
   Waves,
-  Leaf,
   Zap,
   Puzzle,
   Stethoscope,
@@ -68,7 +66,7 @@ const categories = [
         description: 'pH-Sensor Bedingung',
         icon: Gauge,
         category: 'condition' as const,
-        defaults: { sensorType: 'pH', operator: 'between', value: 6, min: 5.5, max: 7.0, conditionCategory: 'ph' },
+        defaults: { sensorType: 'ph', operator: 'between', value: 6, min: 5.5, max: 7.0, conditionCategory: 'ph' },
       },
       {
         type: 'sensor',
@@ -76,7 +74,7 @@ const categories = [
         description: 'Leitfähigkeit Bedingung',
         icon: Zap,
         category: 'condition' as const,
-        defaults: { sensorType: 'EC', operator: 'between', value: 1.2, min: 0.8, max: 2.0, conditionCategory: 'ec' },
+        defaults: { sensorType: 'ec', operator: 'between', value: 1.2, min: 0.8, max: 2.0, conditionCategory: 'ec' },
       },
       {
         type: 'sensor',
@@ -88,27 +86,11 @@ const categories = [
       },
       {
         type: 'sensor',
-        label: 'Licht',
-        description: 'Lichtsensor Bedingung',
-        icon: Sun,
-        category: 'condition' as const,
-        defaults: { sensorType: 'light', operator: '<', value: 500, conditionCategory: 'light' },
-      },
-      {
-        type: 'sensor',
         label: 'Bodenfeuchte',
         description: 'Bodenfeuchtigkeit Bedingung',
         icon: Waves,
         category: 'condition' as const,
         defaults: { sensorType: 'moisture', operator: '<', value: 30, conditionCategory: 'moisture' },
-      },
-      {
-        type: 'sensor',
-        label: 'Füllstand',
-        description: 'Tank-/Behälter-Füllstand',
-        icon: Leaf,
-        category: 'condition' as const,
-        defaults: { sensorType: 'level', operator: '<', value: 20, conditionCategory: 'level' },
       },
       {
         // AUT-1399: umgewidmet — einziger Mess-Bindungs-Baustein (kein zweiter Palette-Eintrag)

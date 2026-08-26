@@ -76,7 +76,9 @@ class SheetsExportService:
     ) -> None:
         self._scheduler = scheduler
         self._session_factory = session_factory
-        self._settings: SheetsExportSettings = settings or get_settings().sheets_export
+        self._settings: SheetsExportSettings = (
+            settings or get_settings().sheets_export
+        )
         self._client = client or SheetsClient(self._settings)
         self._job_results: Dict[str, Any] = {
             "last_sensor_run": None,
@@ -117,7 +119,9 @@ class SheetsExportService:
 
     def stop(self) -> int:
         """Remove the interval job. Returns 1 if removed, 0 otherwise."""
-        removed = self._scheduler.remove_jobs_by_prefix(f"{JobCategory.MAINTENANCE.value}_{JOB_ID}")
+        removed = self._scheduler.remove_jobs_by_prefix(
+            f"{JobCategory.MAINTENANCE.value}_{JOB_ID}"
+        )
         if removed:
             logger.info("[sheets_export] Interval job removed (%d jobs)", removed)
         return removed
@@ -337,7 +341,9 @@ class SheetsExportService:
             },
         )
 
-        batcher = ActuatorExportBatcher(session, correlation_window_seconds=window_seconds)
+        batcher = ActuatorExportBatcher(
+            session, correlation_window_seconds=window_seconds
+        )
         batch: ActuatorBatch = await batcher.fetch_batch(
             last_timestamp_iso=cursor_before.get("last_row_timestamp"),
             last_id=cursor_before.get("last_row_id"),

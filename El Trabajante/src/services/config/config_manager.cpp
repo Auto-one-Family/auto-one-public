@@ -126,11 +126,11 @@ bool ConfigManager::loadWiFiConfig(WiFiConfig& config) {
   #endif
 
   // ============================================
-  // ONE-SHOT MQTT-ONLY (esp32_dev + ONESHOT_MQTT_HOST_ONLY=1): SSID/Pass aus NVS, nur Broker-IP
+  // FUNKTURM MQTT-ONLY (esp32_dev + FUNKTURM_MQTT_HOST_ONLY=1): SSID/Pass aus NVS, nur Broker-IP
   // ============================================
-  #ifdef ONESHOT_UPDATE_MQTT_ONLY
+  #ifdef FUNKTURM_UPDATE_MQTT_ONLY
     if (!storageManager.beginNamespace("wifi_config", true)) {
-      LOG_E(TAG, "ConfigManager: ONESHOT_UPDATE_MQTT_ONLY — wifi_config namespace failed");
+      LOG_E(TAG, "ConfigManager: FUNKTURM_UPDATE_MQTT_ONLY — wifi_config namespace failed");
       return false;
     }
 
@@ -144,41 +144,41 @@ bool ConfigManager::loadWiFiConfig(WiFiConfig& config) {
     storageManager.endNamespace();
 
     if (!config.configured || config.ssid.length() == 0) {
-      LOG_E(TAG, "ConfigManager: ONESHOT_UPDATE_MQTT_ONLY — kein provisioniertes WiFi in NVS");
+      LOG_E(TAG, "ConfigManager: FUNKTURM_UPDATE_MQTT_ONLY — kein provisioniertes WiFi in NVS");
       return false;
     }
 
     const String old_server = config.server_address;
     const uint16_t old_port = config.mqtt_port;
-    config.server_address = ONESHOT_MQTT_HOST;
-    config.mqtt_port = ONESHOT_MQTT_PORT;
+    config.server_address = FUNKTURM_MQTT_HOST;
+    config.mqtt_port = FUNKTURM_MQTT_PORT;
 
     sanitizeMqttBrokerHostAndPort(config.server_address, &config.mqtt_port);
 
     wifi_config_loaded_ = true;
 
     if (!saveWiFiConfig(config)) {
-      LOG_W(TAG, "ConfigManager: ONESHOT_UPDATE_MQTT_ONLY — NVS persist fehlgeschlagen");
+      LOG_W(TAG, "ConfigManager: FUNKTURM_UPDATE_MQTT_ONLY — NVS persist fehlgeschlagen");
       return false;
     }
 
-    LOG_I(TAG, "ConfigManager: ONESHOT_UPDATE_MQTT_ONLY — SSID unveraendert: " + config.ssid);
-    LOG_I(TAG, "ConfigManager: ONESHOT_UPDATE_MQTT_ONLY — Broker: " + old_server + ":" +
+    LOG_I(TAG, "ConfigManager: FUNKTURM_UPDATE_MQTT_ONLY — SSID unveraendert: " + config.ssid);
+    LOG_I(TAG, "ConfigManager: FUNKTURM_UPDATE_MQTT_ONLY — Broker: " + old_server + ":" +
              String(old_port) + " -> " + config.server_address + ":" + String(config.mqtt_port));
 
     return true;
   #endif
 
   // ============================================
-  // ONE-SHOT FLASH (esp32_oneshot): Build-time WiFi + MQTT, then NVS persist
+  // FUNKTURM ONE-SHOT FLASH (esp32_funkturm): Build-time WiFi + MQTT, then NVS persist
   // ============================================
-  #ifdef ONESHOT_COMPILE_WIFI
-    LOG_I(TAG, "ConfigManager: ONESHOT_COMPILE_WIFI — SSID/MQTT aus Build-Umgebung (Test/Flash-once)");
+  #ifdef FUNKTURM_COMPILE_WIFI
+    LOG_I(TAG, "ConfigManager: FUNKTURM_COMPILE_WIFI — SSID/MQTT aus Build-Umgebung (Test/Flash-once)");
 
-    config.ssid = ONESHOT_WIFI_SSID;
-    config.password = ONESHOT_WIFI_PASSWORD;
-    config.server_address = ONESHOT_MQTT_HOST;
-    config.mqtt_port = ONESHOT_MQTT_PORT;
+    config.ssid = FUNKTURM_WIFI_SSID;
+    config.password = FUNKTURM_WIFI_PASSWORD;
+    config.server_address = FUNKTURM_MQTT_HOST;
+    config.mqtt_port = FUNKTURM_MQTT_PORT;
     config.mqtt_username = "";
     config.mqtt_password = "";
     config.configured = true;
@@ -188,7 +188,7 @@ bool ConfigManager::loadWiFiConfig(WiFiConfig& config) {
       const uint16_t port_before = config.mqtt_port;
       sanitizeMqttBrokerHostAndPort(config.server_address, &config.mqtt_port);
       if (addr_before != config.server_address || port_before != config.mqtt_port) {
-        LOG_W(TAG, "ConfigManager: ONESHOT MQTT-Adresse normalisiert: " + addr_before + ":" +
+        LOG_W(TAG, "ConfigManager: FUNKTURM MQTT-Adresse normalisiert: " + addr_before + ":" +
                     String(port_before) + " -> " + config.server_address + ":" +
                     String(config.mqtt_port));
       }
@@ -197,9 +197,9 @@ bool ConfigManager::loadWiFiConfig(WiFiConfig& config) {
     wifi_config_loaded_ = true;
 
     if (!saveWiFiConfig(config)) {
-      LOG_W(TAG, "ONESHOT_COMPILE_WIFI: NVS persist (wifi_config) fehlgeschlagen");
+      LOG_W(TAG, "FUNKTURM_COMPILE_WIFI: NVS persist (wifi_config) fehlgeschlagen");
     } else {
-      LOG_I(TAG, "ONESHOT_COMPILE_WIFI: wifi_config in NVS gespeichert — weitere Builds nutzen esp32_dev");
+      LOG_I(TAG, "FUNKTURM_COMPILE_WIFI: wifi_config in NVS gespeichert — weitere Builds nutzen esp32_dev");
     }
 
     return true;

@@ -90,7 +90,11 @@ def build_phase_sections(
     zone_id = PlantRepository.resolve_effective_zone_id(plant)
     subzone_id = plant.subzone_id
     occurred = sorted(
-        (ev for ev in events if ev.event_type == event_type and ev.event_status == "occurred"),
+        (
+            ev
+            for ev in events
+            if ev.event_type == event_type and ev.event_status == "occurred"
+        ),
         key=lambda ev: _as_utc(ev.event_timestamp),
     )
 
@@ -118,7 +122,11 @@ def build_phase_sections(
         if phase is None:
             continue
         start = _as_utc(ev.event_timestamp)
-        end = _as_utc(occurred[index + 1].event_timestamp) if index + 1 < len(occurred) else None
+        end = (
+            _as_utc(occurred[index + 1].event_timestamp)
+            if index + 1 < len(occurred)
+            else None
+        )
         sections.append(
             PhaseSection(
                 plant_id=plant.plant_id,
@@ -150,14 +158,17 @@ def section_overlapping_window(
     window_start: datetime,
     window_end: datetime,
 ) -> Optional[PhaseSection]:
-    """Prefer the section that covers window_start; else first overlap."""
-    covering = section_covering(sections, window_start)
-    if covering is not None and covering.overlaps(window_start, window_end):
-        return covering
-    for section in sections:
-        if section.overlaps(window_start, window_end):
-            return section
-    return None
+    """Prefer the latest section that overlaps the marked window.
+
+    A default Eintragen range is ``[now-1h, now]``. After a phase change
+    in that hour, ``window_start`` still sits in the closed prior band
+    while the operator is marking the current open one. Stamping from
+    ``window_start`` would silently file the action on the old phase.
+    """
+    overlapping = [s for s in sections if s.overlaps(window_start, window_end)]
+    if not overlapping:
+        return None
+    return max(overlapping, key=lambda s: s.start)
 
 
 def is_measure_event_type(event_type: str) -> bool:
@@ -183,10 +194,13 @@ def validate_action_window(
         return None, None
     if window_start is None or window_end is None:
         raise ValueError(
-            "linked_sensor_window_start and linked_sensor_window_end must " "be provided together."
+            "linked_sensor_window_start and linked_sensor_window_end must "
+            "be provided together."
         )
     start = _as_utc(window_start)
     end = _as_utc(window_end)
     if end <= start:
-        raise ValueError("linked_sensor_window_end must be after linked_sensor_window_start")
+        raise ValueError(
+            "linked_sensor_window_end must be after linked_sensor_window_start"
+        )
     return start, end

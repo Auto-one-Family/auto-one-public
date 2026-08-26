@@ -39,9 +39,9 @@ _ESPTOOL_CHIP_ARG: dict[str, str] = {
     "ESP32-C3": "esp32c3",
 }
 _CHIP_OFFSETS: dict[str, dict[str, str]] = {
-    "ESP32": {"bootloader": "0x1000", "partitions": "0x8000", "app": "0x20000"},
-    "ESP32-S3": {"bootloader": "0x0", "partitions": "0x8000", "app": "0x10000"},
-    "ESP32-C3": {"bootloader": "0x0", "partitions": "0x8000", "app": "0x20000"},
+    "ESP32":    {"bootloader": "0x1000", "partitions": "0x8000", "app": "0x20000"},
+    "ESP32-S3": {"bootloader": "0x0",    "partitions": "0x8000", "app": "0x10000"},
+    "ESP32-C3": {"bootloader": "0x0",    "partitions": "0x8000", "app": "0x20000"},
 }
 
 
@@ -250,7 +250,9 @@ def build_nvs_binary(env: str) -> SecretsBuildResponse:
         )
 
     size_bytes = bin_p.stat().st_size
-    logger.info("NVS binary ready: env=%s path=%s size_bytes=%d", env, bin_p, size_bytes)
+    logger.info(
+        "NVS binary ready: env=%s path=%s size_bytes=%d", env, bin_p, size_bytes
+    )
 
     return SecretsBuildResponse(
         env=env,
@@ -290,12 +292,9 @@ def flash_nvs_partition(env: str, port: str) -> str:
         sys.executable,
         "-m",
         "esptool",
-        "--port",
-        port,
-        "--baud",
-        _FLASH_BAUD,
-        "--after",
-        "hard_reset",
+        "--port", port,
+        "--baud", _FLASH_BAUD,
+        "--after", "hard_reset",
         "write-flash",
         _NVS_ADDR,
         str(bin_p),
@@ -317,7 +316,9 @@ def flash_nvs_partition(env: str, port: str) -> str:
             result.returncode,
             output,
         )
-        raise RuntimeError(f"esptool failed (exit {result.returncode}): {output}")
+        raise RuntimeError(
+            f"esptool failed (exit {result.returncode}): {output}"
+        )
 
     logger.info("Flash complete: env=%s port=%s", env, port)
     return output
@@ -365,7 +366,7 @@ def flash_firmware(port: str, env: str, chip_family: str, board: str) -> str:
 
     Args:
         port: Serial port, e.g. /dev/ttyUSB0
-        env: NVS env name (dev-local, lab, field)
+        env: NVS env name (pi-home, dev-local, pi-elbherb)
         chip_family: From device_scanner, e.g. "ESP32", "ESP32-S3"
         board: firmware_builds subdirectory name, e.g. "esp32_dev"
 
@@ -394,28 +395,17 @@ def flash_firmware(port: str, env: str, chip_family: str, board: str) -> str:
     _release_port_holder(port)
 
     cmd = [
-        sys.executable,
-        "-m",
-        "esptool",
-        "--chip",
-        chip_arg,
-        "--port",
-        port,
-        "--baud",
-        _FLASH_BAUD,
-        "--after",
-        "hard-reset",
+        sys.executable, "-m", "esptool",
+        "--chip", chip_arg,
+        "--port", port,
+        "--baud", _FLASH_BAUD,
+        "--after", "hard-reset",
         "write-flash",
-        "--flash-size",
-        "detect",
-        offsets["bootloader"],
-        str(paths["bootloader"]),
-        offsets["partitions"],
-        str(paths["partitions"]),
-        offsets["app"],
-        str(paths["firmware"]),
-        _NVS_ADDR,
-        str(bin_p),
+        "--flash-size", "detect",
+        offsets["bootloader"], str(paths["bootloader"]),
+        offsets["partitions"], str(paths["partitions"]),
+        offsets["app"],        str(paths["firmware"]),
+        _NVS_ADDR,             str(bin_p),
     ]
 
     logger.info(
@@ -430,10 +420,7 @@ def flash_firmware(port: str, env: str, chip_family: str, board: str) -> str:
     if result.returncode != 0:
         logger.error(
             "esptool firmware-flash failed: env=%s port=%s returncode=%d output=%s",
-            env,
-            port,
-            result.returncode,
-            output,
+            env, port, result.returncode, output,
         )
         raise RuntimeError(f"esptool failed (exit {result.returncode}): {output}")
 
@@ -466,29 +453,18 @@ def flash_full(port: str, env: str, chip_family: str, board: str) -> str:
     _release_port_holder(port)
 
     cmd = [
-        sys.executable,
-        "-m",
-        "esptool",
-        "--chip",
-        chip_arg,
-        "--port",
-        port,
-        "--baud",
-        _FLASH_BAUD,
-        "--after",
-        "hard-reset",
+        sys.executable, "-m", "esptool",
+        "--chip", chip_arg,
+        "--port", port,
+        "--baud", _FLASH_BAUD,
+        "--after", "hard-reset",
         "write-flash",
         "--erase-all",
-        "--flash-size",
-        "detect",
-        offsets["bootloader"],
-        str(paths["bootloader"]),
-        offsets["partitions"],
-        str(paths["partitions"]),
-        offsets["app"],
-        str(paths["firmware"]),
-        _NVS_ADDR,
-        str(bin_p),
+        "--flash-size", "detect",
+        offsets["bootloader"], str(paths["bootloader"]),
+        offsets["partitions"], str(paths["partitions"]),
+        offsets["app"],        str(paths["firmware"]),
+        _NVS_ADDR,             str(bin_p),
     ]
 
     logger.info(
@@ -503,10 +479,7 @@ def flash_full(port: str, env: str, chip_family: str, board: str) -> str:
     if result.returncode != 0:
         logger.error(
             "esptool full-flash failed: env=%s port=%s returncode=%d output=%s",
-            env,
-            port,
-            result.returncode,
-            output,
+            env, port, result.returncode, output,
         )
         raise RuntimeError(f"esptool failed (exit {result.returncode}): {output}")
 

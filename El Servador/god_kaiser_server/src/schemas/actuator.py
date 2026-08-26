@@ -246,7 +246,8 @@ class ActuatorConfigCreate(ActuatorConfigBase):
         None,
         pattern=DOSE_ROLE_PATTERN,
         description=(
-            "AUT-1355: Recipe role — part_a | part_b | ph_down | generic. " "NULL = unset."
+            "AUT-1355: Recipe role — part_a | part_b | ph_down | generic. "
+            "NULL = unset."
         ),
     )
     # AUT-1410 SR-1: Soft recipe identity on the pump (display/traceability only).
@@ -260,7 +261,8 @@ class ActuatorConfigCreate(ActuatorConfigBase):
     stock_prepared_at: Optional[datetime] = Field(
         None,
         description=(
-            "AUT-1410: When stock was last confirmed newly prepared. " "Display only. NULL = unset."
+            "AUT-1410: When stock was last confirmed newly prepared. "
+            "Display only. NULL = unset."
         ),
     )
     subzone_id: Optional[str] = Field(
@@ -431,7 +433,8 @@ class ActuatorConfigResponse(ActuatorConfigBase, TimestampMixin):
     stock_prepared_at: Optional[datetime] = Field(
         None,
         description=(
-            "AUT-1410: When stock was last confirmed newly prepared. " "Display only. NULL = unset."
+            "AUT-1410: When stock was last confirmed newly prepared. "
+            "Display only. NULL = unset."
         ),
     )
     # Config status from ESP32 verification

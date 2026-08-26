@@ -9,7 +9,7 @@ Test matrix (8 tests):
 2. sensor_threshold <  → heating mode (activate_below / deactivate_above)
 3. Compound AND (hysteresis + time_window) → offline_rule includes time_filter
 4. OR-compound with multiple conditions → return None + logger.info
-5. soil_moisture sensor_threshold → return None (P4-GUARD)
+5. soil_moisture sensor_threshold → exported RAW without calibration_data (AUT-1565)
 6. "between" operator → return None + logger.info
 7. Cross-ESP sensor condition (sensor on ESP_B, query for ESP_A) → return None
 8. Midnight time window 22:00–06:00 UTC → time_filter preserved correctly
@@ -238,6 +238,145 @@ class TestCompoundAndWithTimeWindow:
 
 
 # ---------------------------------------------------------------------------
+# Test 3b — AUT-1531: AND classifier (representable vs. non-representable)
+# ---------------------------------------------------------------------------
+
+
+class TestAndCompoundClassifier:
+    """AUT-1531: AND-compounds are exported only when representable in the struct."""
+
+    def test_representable_and_exports_its_own_hysteresis_not_a_list_head(self):
+        """One sensor condition + time_window → exactly one struct with that hysteresis."""
+        rule = _make_rule(
+            rule_name="daytime_cooling_single_sensor",
+            trigger_conditions=[
+                {
+                    "type": "time_window",
+                    "start_hour": 8,
+                    "end_hour": 20,
+                    "start_minute": 0,
+                    "end_minute": 0,
+                    "timezone": "UTC",
+                },
+                _hysteresis_cooling(ESP_ID_A, gpio=7, sensor_type="ds18b20"),
+            ],
+            actions=[_actuator_action(ESP_ID_A, gpio=18)],
+        )
+        rule.logic_operator = "AND"
+
+        result = _builder()._extract_offline_rule(rule, ESP_ID_A)
+
+        assert len(result) == 1
+        assert result[0]["sensor_gpio"] == 7
+        assert result[0]["sensor_value_type"] == "ds18b20"
+        assert result[0]["activate_above"] == 28.0
+        assert result[0]["deactivate_below"] == 24.0
+        assert result[0]["time_filter"]["start_hour"] == 8
+        assert result[0]["time_filter"]["end_hour"] == 20
+
+    def test_and_two_hysteresis_same_esp_not_exported(self):
+        """Sensor A AND Sensor B on the same ESP → no offline export, skip diagnostic."""
+        rule = _make_rule(
+            rule_name="and_two_sensors",
+            trigger_conditions=[
+                _hysteresis_cooling(ESP_ID_A, gpio=4, sensor_type="sht31_temp"),
+                _hysteresis_cooling(ESP_ID_A, gpio=7, sensor_type="ds18b20"),
+            ],
+            actions=[_actuator_action(ESP_ID_A, gpio=18)],
+        )
+        rule.logic_operator = "AND"
+        skip_collector: list = []
+
+        result = _builder()._extract_offline_rule(
+            rule, ESP_ID_A, skip_collector=skip_collector
+        )
+
+        assert result == []
+        assert len(skip_collector) == 1
+        assert skip_collector[0]["reason_code"] == ConfigPayloadBuilder.REASON_UNSUPPORTED_CONDITION
+        assert "2 sensor conditions" in skip_collector[0]["reason_detail"]
+        assert "resolution_hint" in skip_collector[0]
+
+    def test_and_cross_esp_sensors_does_not_export_local_condition(self):
+        """Cross-ESP AND → the local hysteresis is not exported as a lone struct."""
+        rule = _make_rule(
+            rule_name="and_cross_esp_sensors",
+            trigger_conditions=[
+                _hysteresis_cooling(ESP_ID_B, gpio=4, sensor_type="sht31_temp"),
+                _hysteresis_cooling(ESP_ID_A, gpio=7, sensor_type="ds18b20"),
+            ],
+            actions=[_actuator_action(ESP_ID_A, gpio=18)],
+        )
+        rule.logic_operator = "AND"
+
+        result = _builder()._extract_offline_rule(rule, ESP_ID_A)
+
+        assert result == []
+
+    def test_and_hysteresis_plus_threshold_not_exported(self):
+        """Mixed sensor condition types still count as two sensor conditions."""
+        rule = _make_rule(
+            rule_name="and_hysteresis_plus_threshold",
+            trigger_conditions=[
+                _hysteresis_cooling(ESP_ID_A, gpio=4, sensor_type="sht31_temp"),
+                _threshold_condition(ESP_ID_A, "ds18b20", ">", 28.0, gpio=7),
+            ],
+            actions=[_actuator_action(ESP_ID_A, gpio=18)],
+        )
+        rule.logic_operator = "AND"
+
+        result = _builder()._extract_offline_rule(rule, ESP_ID_A)
+
+        assert result == []
+
+    def test_and_with_nested_compound_not_exported(self):
+        """A nested compound hides further sensor conditions → no export."""
+        rule = _make_rule(
+            rule_name="and_nested_compound",
+            trigger_conditions=[
+                _hysteresis_cooling(ESP_ID_A, gpio=4, sensor_type="sht31_temp"),
+                {
+                    "type": "compound",
+                    "logic": "OR",
+                    "conditions": [
+                        _hysteresis_cooling(ESP_ID_A, gpio=7, sensor_type="ds18b20"),
+                    ],
+                },
+            ],
+            actions=[_actuator_action(ESP_ID_A, gpio=18)],
+        )
+        rule.logic_operator = "AND"
+
+        result = _builder()._extract_offline_rule(rule, ESP_ID_A)
+
+        assert result == []
+
+    def test_or_branch_that_is_a_nested_and_is_skipped_per_branch(self):
+        """OR-DNF is untouched: the simple branch exports, the nested AND branch does not."""
+        rule = _make_rule(
+            rule_name="or_with_nested_and_branch",
+            trigger_conditions=[
+                _hysteresis_cooling(ESP_ID_A, gpio=4, sensor_type="sht31_temp"),
+                {
+                    "type": "compound",
+                    "logic": "AND",
+                    "conditions": [
+                        _hysteresis_cooling(ESP_ID_A, gpio=7, sensor_type="ds18b20"),
+                        _hysteresis_cooling(ESP_ID_A, gpio=8, sensor_type="sht31_humidity"),
+                    ],
+                },
+            ],
+            actions=[_actuator_action(ESP_ID_A, gpio=18)],
+        )
+        rule.logic_operator = "OR"
+
+        result = _builder()._extract_offline_rule(rule, ESP_ID_A)
+
+        assert len(result) == 1
+        assert result[0]["sensor_gpio"] == 4
+
+
+# ---------------------------------------------------------------------------
 # Test 4 — OR-compound → DNF-flattened (AUT-739)
 # ---------------------------------------------------------------------------
 
@@ -265,22 +404,66 @@ class TestOrCompoundRejection:
 
 
 # ---------------------------------------------------------------------------
-# Test 5 — soil_moisture → P4-GUARD blocks
+# Test 5 — AUT-1565: soil_moisture exports RAW without calibration_data
 # ---------------------------------------------------------------------------
 
 
-class TestSoilMoistureP4Guard:
-    def test_soil_moisture_threshold_blocked_by_p4_guard(self):
-        """soil_moisture sensor_threshold → None (P4-GUARD: ADC raw value only on ESP32)."""
+class TestRawComparableOfflineExport:
+    """AUT-1565: ph / ec / moisture / soil_moisture export without calibration_data."""
+
+    def test_soil_moisture_threshold_exported_without_calibration_data(self):
+        """soil_moisture sensor_threshold → offline struct, no CALIBRATION_REQUIRED skip."""
         rule = _make_rule(
             rule_name="irrigation_trigger",
             trigger_conditions=_threshold_condition(ESP_ID_A, "soil_moisture", "<", 30.0, gpio=32),
             actions=[_actuator_action(ESP_ID_A, gpio=25)],
         )
+        skip_collector: list = []
 
-        result = _builder()._extract_offline_rule(rule, ESP_ID_A)
+        result = _builder()._extract_offline_rule(
+            rule, ESP_ID_A, skip_collector=skip_collector, calibrated_sensors=set()
+        )
+
+        assert len(result) == 1
+        assert result[0]["sensor_gpio"] == 32
+        assert result[0]["sensor_value_type"] == "moisture"
+        assert result[0]["actuator_gpio"] == 25
+        assert skip_collector == []
+
+    def test_and_two_raw_comparable_sensors_still_not_exported(self):
+        """AUT-1531 stays intact: ph AND ec is not representable, so no export."""
+        rule = _make_rule(
+            rule_name="ph_and_ec",
+            trigger_conditions=[
+                _hysteresis_cooling(ESP_ID_A, gpio=34, sensor_type="ph"),
+                _hysteresis_cooling(ESP_ID_A, gpio=35, sensor_type="ec"),
+            ],
+            actions=[_actuator_action(ESP_ID_A, gpio=25)],
+        )
+        rule.logic_operator = "AND"
+        skip_collector: list = []
+
+        result = _builder()._extract_offline_rule(
+            rule, ESP_ID_A, skip_collector=skip_collector, calibrated_sensors=set()
+        )
 
         assert result == []
+        assert len(skip_collector) == 1
+        assert skip_collector[0]["reason_code"] == ConfigPayloadBuilder.REASON_UNSUPPORTED_CONDITION
+        assert "2 sensor conditions" in skip_collector[0]["reason_detail"]
+
+    def test_threshold_value_is_exported_untransformed(self):
+        """The RAW threshold reaches the struct unchanged — no slope/offset/ATC applied."""
+        rule = _make_rule(
+            rule_name="ph_raw_threshold",
+            trigger_conditions=_threshold_condition(ESP_ID_A, "ph", ">", 2100.0, gpio=34),
+            actions=[_actuator_action(ESP_ID_A, gpio=25)],
+        )
+
+        result = _builder()._extract_offline_rule(rule, ESP_ID_A, calibrated_sensors=set())
+
+        assert len(result) == 1
+        assert result[0]["activate_above"] == 2100.0
 
 
 # ---------------------------------------------------------------------------

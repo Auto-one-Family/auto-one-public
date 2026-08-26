@@ -149,6 +149,8 @@ function handleClose(): void {
     :open="inboxStore.isPreferencesOpen"
     title="Benachrichtigungs-Einstellungen"
     width="md"
+    elevation="high"
+    allow-background-interaction
     @close="handleClose"
   >
     <template #default>

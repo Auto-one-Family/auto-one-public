@@ -55,6 +55,12 @@ export interface SensorWithContext {
   metadata?: Record<string, unknown> | null
   /** Sensor config calibration blob (derived.calibrated_at is SSOT after session apply). */
   calibration?: Record<string, unknown> | null
+  /** AUT-1555: Mount height in cm. Null = unset. */
+  mount_height_cm?: number | null
+  /** AUT-1555: Mount medium catalog air|canopy|substrate|solution. Null = unset. */
+  mount_medium?: 'air' | 'canopy' | 'substrate' | 'solution' | null
+  /** AUT-1555: Mount angle in degrees. Null = unset. */
+  mount_angle_deg?: number | null
 }
 
 export interface ActuatorWithContext {

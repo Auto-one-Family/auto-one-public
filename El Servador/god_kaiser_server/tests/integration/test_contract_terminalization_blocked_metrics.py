@@ -28,7 +28,6 @@ async def test_config_stale_terminalization_increments_blocked_metric():
     contract_repo.upsert_terminal_event_authority = AsyncMock(
         return_value=(SimpleNamespace(), True)
     )
-    contract_repo.list_open_intents_for_esp = AsyncMock(return_value=[])
 
     with (
         patch(
@@ -70,7 +69,6 @@ async def test_actuator_stale_terminalization_increments_blocked_metric():
     contract_repo.upsert_terminal_event_authority = AsyncMock(
         return_value=(SimpleNamespace(), True)
     )
-    contract_repo.list_open_intents_for_esp = AsyncMock(return_value=[])
 
     with (
         patch(
@@ -120,7 +118,6 @@ async def test_lwt_stale_terminalization_increments_blocked_metric():
     contract_repo.upsert_terminal_event_authority = AsyncMock(
         return_value=(SimpleNamespace(), True)
     )
-    contract_repo.list_open_intents_for_esp = AsyncMock(return_value=[])
 
     with (
         patch("src.mqtt.handlers.lwt_handler.resilient_session", return_value=_session_cm(session)),

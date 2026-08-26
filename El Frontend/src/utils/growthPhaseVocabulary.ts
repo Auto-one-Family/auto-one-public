@@ -1,5 +1,5 @@
 /**
- * Shared growth-phase vocabulary.
+ * Shared grower-facing growth-phase vocabulary.
  *
  * Space = zone / subzone (WHERE). Time = plant-phase section (WHEN).
  * Canonical keys are PLANT_PHASES. Legacy zone-context strings map here.

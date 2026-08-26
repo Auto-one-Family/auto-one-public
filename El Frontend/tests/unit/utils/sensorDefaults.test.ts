@@ -14,6 +14,10 @@ import {
   getSensorLabel,
   isValidSensorValue,
   getSensorTypeOptions,
+  ATC_SOURCE_SENSOR_TYPES,
+  isAtcSourceSensorType,
+  buildAtcSourceOptions,
+  getSensorDisplayName,
   formatSensorValueWithUnit,
   MULTI_VALUE_DEVICES,
   isMultiValueSensorType,
@@ -131,6 +135,10 @@ describe('getSensorDefault', () => {
     expect(getSensorDefault('pH')).toBe(7.0)
   })
 
+  it('returns 7.0 for persist key ph', () => {
+    expect(getSensorDefault('ph')).toBe(7.0)
+  })
+
   it('returns 0 for unknown type', () => {
     expect(getSensorDefault('unknown')).toBe(0)
   })
@@ -239,6 +247,11 @@ describe('getSensorLabel', () => {
   it('returns label for multi-value sensor', () => {
     expect(getSensorLabel('sht31_temp')).toBe('Temperatur')
   })
+
+  it('should not label leftover light type as domain Licht (AUT-1564)', () => {
+    expect(getSensorLabel('light')).not.toBe('Licht')
+    expect(SENSOR_CATEGORIES.light?.name).not.toBe('Licht')
+  })
 })
 
 // =============================================================================
@@ -308,11 +321,21 @@ describe('getSensorTypeOptions', () => {
     expect(ds18b20Options[0].label).toBe('Temperatur')
   })
 
-  it('contains pH option', () => {
+  it('contains pH option with persist key ph (AUT-1558)', () => {
     const options = getSensorTypeOptions()
-    const pH = options.find(opt => opt.value === 'pH')
+    const pH = options.find(opt => opt.value.toLowerCase() === 'ph')
     expect(pH).toBeDefined()
+    expect(pH?.value).toBe('ph')
     expect(pH?.label).toBe('pH-Wert')
+    expect(options.some(opt => opt.value === 'pH')).toBe(false)
+  })
+
+  it('contains EC option with persist key ec (AUT-1558)', () => {
+    const options = getSensorTypeOptions()
+    const ec = options.find(opt => opt.value.toLowerCase() === 'ec')
+    expect(ec).toBeDefined()
+    expect(ec?.value).toBe('ec')
+    expect(options.some(opt => opt.value === 'EC')).toBe(false)
   })
 
   it('contains exactly one SHT31 option (canonical device key sht31)', () => {
@@ -353,14 +376,84 @@ describe('getSensorTypeOptions', () => {
     expect(allBme280Related[0].value).toBe('bme280')
   })
 
-  it('single-value sensors still listed (ph, ec, moisture, ds18b20, flow, light, co2, analog, digital)', () => {
+  it('single-value sensors still listed (ph, ec, moisture, ds18b20, flow, co2, liquid_level)', () => {
     const options = getSensorTypeOptions()
     const values = options.map(opt => opt.value)
-    const required = ['ph', 'EC', 'moisture', 'ds18b20', 'flow', 'light', 'co2', 'analog', 'digital']
+    const required = ['ph', 'ec', 'moisture', 'ds18b20', 'flow', 'co2', 'liquid_level']
     for (const key of required) {
       const found = values.some(v => v.toLowerCase() === key.toLowerCase())
       expect(found).toBe(true)
     }
+  })
+
+  it('does not offer analog, digital, level, light, scd30_co2, mhz19_co2, DHT22 (AUT-1558)', () => {
+    const options = getSensorTypeOptions()
+    const values = options.map(opt => opt.value.toLowerCase())
+    for (const cut of ['analog', 'digital', 'level', 'light', 'scd30_co2', 'scd30', 'mhz19_co2', 'dht22', 'servo']) {
+      expect(values).not.toContain(cut)
+    }
+  })
+})
+
+describe('ATC_SOURCE_SENSOR_TYPES', () => {
+  it('matches the API allowlist (AUT-1559)', () => {
+    expect([...ATC_SOURCE_SENSOR_TYPES].sort()).toEqual(
+      ['bmp280_temp', 'ds18b20', 'sht31_temp', 'temperature'].sort(),
+    )
+  })
+
+  it('accepts allowlisted types and rejects bme280_temp (AUT-1559)', () => {
+    expect(isAtcSourceSensorType('ds18b20')).toBe(true)
+    expect(isAtcSourceSensorType('DS18B20')).toBe(true)
+    expect(isAtcSourceSensorType('temperature')).toBe(true)
+    expect(isAtcSourceSensorType('sht31_temp')).toBe(true)
+    expect(isAtcSourceSensorType('bmp280_temp')).toBe(true)
+    expect(isAtcSourceSensorType('bme280_temp')).toBe(false)
+    expect(isAtcSourceSensorType('sht31')).toBe(false)
+    expect(isAtcSourceSensorType('light')).toBe(false)
+  })
+})
+
+describe('buildAtcSourceOptions (AUT-1511 / AUT-1514)', () => {
+  const sensors = [
+    { sensor_type: 'ds18b20', name: null, config_id: 'cfg-ds', gpio: 4 },
+    { sensor_type: 'sht31_temp', name: 'Temp&Hum', config_id: 'cfg-sht', gpio: 0 },
+    { sensor_type: 'bmp280_temp', name: null, config_id: 'cfg-bmp', gpio: 0 },
+    { sensor_type: 'temperature', name: null, config_id: 'cfg-generic', gpio: 5 },
+    { sensor_type: 'bme280_temp', name: 'Luft', config_id: 'cfg-bme', gpio: 0 },
+    { sensor_type: 'ph', name: 'Becken', config_id: 'cfg-ph', gpio: 32 },
+    { sensor_type: 'ds18b20', name: 'Ohne-ID', gpio: 14 },
+  ]
+
+  it('should list allowlisted sources with human titles and config_id values', () => {
+    const options = buildAtcSourceOptions(sensors)
+    expect(options.map((o) => o.value).sort()).toEqual(
+      ['cfg-bmp', 'cfg-ds', 'cfg-generic', 'cfg-sht'].sort(),
+    )
+    expect(options.find((o) => o.value === 'cfg-ds')?.label).toBe('Temperatur')
+    expect(options.find((o) => o.value === 'cfg-sht')?.label).toBe('Temp&Hum (Temperatur)')
+    expect(options.find((o) => o.value === 'cfg-bmp')?.label).toBe('BMP280 Temperatur')
+    expect(options.find((o) => o.value === 'cfg-generic')?.label).toBe('Temperatur')
+  })
+
+  it('should omit bme280_temp and keep gpio/chip/URL out of the operator label', () => {
+    const options = buildAtcSourceOptions(sensors)
+    const labels = options.map((o) => o.label).join(' ')
+    expect(options.some((o) => o.value === 'cfg-bme')).toBe(false)
+    expect(labels).not.toContain('bme280_temp')
+    expect(labels).not.toContain('ds18b20')
+    expect(labels).not.toContain('sht31_temp')
+    expect(labels).not.toContain('GPIO')
+    expect(labels).not.toContain('0x')
+    expect(labels).not.toMatch(/https?:\/\//)
+  })
+})
+
+describe('getSensorDisplayName', () => {
+  it('should use the human type word when no name is set', () => {
+    expect(getSensorDisplayName({ sensor_type: 'ds18b20', name: null })).toBe('Temperatur')
+    expect(getSensorDisplayName({ sensor_type: 'sht31_temp' })).toBe('Temperatur')
+    expect(getSensorDisplayName({ sensor_type: 'temperature' })).toBe('Temperatur')
   })
 })
 
@@ -610,6 +703,11 @@ describe('getSensorAggCategory', () => {
   it('maps vpd to other', () => {
     expect(getSensorAggCategory('vpd')).toBe('other')
   })
+
+  it('maps ec and ec_sensor to the same category', () => {
+    expect(getSensorAggCategory('ec')).toBe('ec')
+    expect(getSensorAggCategory('ec_sensor')).toBe('ec')
+  })
 })
 
 describe('formatSubzoneKpiLine', () => {
@@ -626,7 +724,7 @@ describe('formatSubzoneKpiLine', () => {
       good('bmp280_pressure', 1010),
       good('co2', 900),
     ])
-    expect(line).toBe('55,0%RH · 1.010,0hPa · 900ppm')
+    expect(line).toBe('55%RH · 1010hPa · 900ppm')
   })
 
   it('skips stale readings', () => {

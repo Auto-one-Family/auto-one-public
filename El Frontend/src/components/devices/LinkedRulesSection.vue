@@ -61,14 +61,11 @@ const activeActuatorRuleCount = computed(() =>
   actuatorRules.value.filter((r) => r.enabled).length
 )
 
-/** Find first time_window/time condition in a rule's flat condition list. */
-function findTimeWindow(rule: LogicRule): TimeCondition | null {
-  for (const cond of rule.conditions ?? []) {
-    if (cond.type === 'time_window' || cond.type === 'time') {
-      return cond as TimeCondition
-    }
-  }
-  return null
+/** Find all time_window/time conditions in a rule's flat condition list. */
+function findTimeWindows(rule: LogicRule): TimeCondition[] {
+  return (rule.conditions ?? []).filter(
+    (cond) => cond.type === 'time_window' || cond.type === 'time'
+  ) as TimeCondition[]
 }
 
 function formatTimeWindow(tc: TimeCondition): string {
@@ -77,6 +74,11 @@ function formatTimeWindow(tc: TimeCondition): string {
   const eh = String(tc.end_hour).padStart(2, '0')
   const em = String(tc.end_minute ?? 0).padStart(2, '0')
   return `${sh}:${sm}-${eh}:${em}`
+}
+
+function formatTimeWindows(rule: LogicRule): string {
+  const join = rule.logic_operator === 'OR' ? ' oder ' : ' und '
+  return findTimeWindows(rule).map(formatTimeWindow).join(join)
 }
 
 function formatCooldown(seconds: number | undefined): string | null {
@@ -144,12 +146,12 @@ onMounted(() => {
               Regel-Pause: {{ formatCooldown(rule.cooldown_seconds) }}
             </span>
             <span
-              v-if="findTimeWindow(rule)"
+              v-if="findTimeWindows(rule).length > 0"
               class="linked-rules__chip"
               title="Aktives Zeitfenster"
             >
               <Clock class="w-3 h-3" />
-              Zeit: {{ formatTimeWindow(findTimeWindow(rule)!) }}
+              Zeit: {{ formatTimeWindows(rule) }}
             </span>
           </div>
 

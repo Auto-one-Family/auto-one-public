@@ -391,6 +391,46 @@ async def check_sensor_timeouts(
                     logger.error(f"Failed to broadcast sensor_health event: {e}")
                     errors.append(f"WebSocket broadcast failed: {e}")
 
+                # AUT-1562: Timeout-Stale enters the existing inbox chain
+                # (NotificationRouter + source=freshness_reminder). No new source/type.
+                try:
+                    from src.schemas.notification import NotificationCreate
+                    from src.services.notification_router import NotificationRouter
+
+                    router = NotificationRouter(session)
+                    sensor_name = (
+                        sensor.sensor_name or f"{sensor.sensor_type} GPIO {sensor.gpio}"
+                    )
+                    notification = NotificationCreate(
+                        severity="warning",
+                        category="data_quality",
+                        title=f"Messung veraltet: {sensor_name}",
+                        body=(
+                            f"Sensor '{sensor_name}' ({sensor.sensor_type}) auf "
+                            f"{device_id} hat seit {age_display} keine "
+                            f"Messung erhalten (Limit: {timeout_seconds}s). "
+                            f"Bitte erneut messen."
+                        ),
+                        source="freshness_reminder",
+                        metadata={
+                            "esp_id": device_id,
+                            "gpio": sensor.gpio,
+                            "sensor_type": sensor.sensor_type,
+                            "operating_mode": effective["operating_mode"],
+                            "measurement_age_seconds": (
+                                int(age_seconds) if age_seconds != float("inf") else None
+                            ),
+                            "timeout_seconds": timeout_seconds,
+                            "stale_reason": stale_reason,
+                        },
+                        fingerprint=(
+                            f"freshness_{device_id}_{sensor.gpio}_{sensor.sensor_type}"
+                        ),
+                    )
+                    await router.route(notification)
+                except Exception as e:
+                    logger.error(f"Failed to route timeout freshness notification: {e}")
+
             else:
                 sensors_healthy += 1
 

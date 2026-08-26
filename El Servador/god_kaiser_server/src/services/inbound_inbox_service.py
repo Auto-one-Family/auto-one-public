@@ -140,7 +140,9 @@ class InboundInboxService:
             "critical": sum(
                 1 for event in pending if self._priority_of(event) == InboundPriority.CRITICAL
             ),
-            "high": sum(1 for event in pending if self._priority_of(event) == InboundPriority.HIGH),
+            "high": sum(
+                1 for event in pending if self._priority_of(event) == InboundPriority.HIGH
+            ),
             "normal": sum(
                 1 for event in pending if self._priority_of(event) == InboundPriority.NORMAL
             ),

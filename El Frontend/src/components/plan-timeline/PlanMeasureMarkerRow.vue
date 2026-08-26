@@ -11,6 +11,7 @@ import type { PlanTimelineWindow } from '@/components/plan-timeline/planTimeline
 import { nowMarkerPercent } from '@/components/plan-timeline/planTimelineTracks'
 import {
   PLAN_PLANT_MEASURE_OPTIONS,
+  defaultExecutedMeasureWindowStartMs,
   type PlanMeasureCreatePayload,
   type PlanMeasureMarker,
   type PlanPlantMeasureEventType,
@@ -29,17 +30,19 @@ interface Props {
   window: PlanTimelineWindow
   plantId: string
   plants?: PlantOption[]
+  /** Latest occurred light-phase start (ms) per plant — clamps default Von. */
+  phaseStartMsByPlantId?: Record<string, number>
   disabled?: boolean
 }
 
 const props = withDefaults(defineProps<Props>(), {
   plants: () => [],
+  phaseStartMsByPlantId: () => ({}),
   disabled: false,
 })
 
 const emit = defineEmits<{
   create: [payload: PlanMeasureCreatePayload]
-  markOccurred: [eventId: string]
   select: [marker: PlanMeasureMarker]
 }>()
 
@@ -81,7 +84,10 @@ function openCreate(): void {
   eventType.value = 'topping'
   eventStatus.value = 'occurred'
   selectedPlantId.value = props.plantId || props.plants[0]?.plantId || ''
-  windowStartLocal.value = toLocalInput(props.window.nowMs - 60 * 60 * 1000)
+  const phaseStart = props.phaseStartMsByPlantId[selectedPlantId.value]
+  windowStartLocal.value = toLocalInput(
+    defaultExecutedMeasureWindowStartMs(props.window.nowMs, phaseStart),
+  )
   windowEndLocal.value = toLocalInput(props.window.nowMs)
   createOpen.value = true
 }

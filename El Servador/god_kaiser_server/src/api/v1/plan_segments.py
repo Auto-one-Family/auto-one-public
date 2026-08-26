@@ -121,7 +121,9 @@ async def get_climate_targets_at(
     db: DBSession,
     _user: ActiveUser,
     zone_id: str = Query(..., description="Zone identifier"),
-    at: Optional[datetime] = Query(None, description="Evaluation time (UTC); default = now"),
+    at: Optional[datetime] = Query(
+        None, description="Evaluation time (UTC); default = now"
+    ),
     subzone_config_id: Optional[UUID] = Query(
         None, description="Optional subzone scope (includes zone-wide segments)"
     ),

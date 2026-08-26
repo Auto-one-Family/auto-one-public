@@ -42,9 +42,7 @@ class TestExtractHysteresisThresholds:
         assert result == {"activate_above": 2.0}
 
     def test_no_hysteresis_condition_returns_empty(self):
-        conditions = [
-            {"type": "sensor", "esp_id": "ESP_001", "gpio": 4, "operator": ">", "value": 2.0}
-        ]
+        conditions = [{"type": "sensor", "esp_id": "ESP_001", "gpio": 4, "operator": ">", "value": 2.0}]
         assert LogicService._extract_hysteresis_thresholds(conditions) == {}
 
 

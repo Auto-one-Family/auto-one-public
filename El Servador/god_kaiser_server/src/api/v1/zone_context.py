@@ -238,7 +238,10 @@ async def get_cycle_history(
 @router.get(
     "/{zone_id}/kpis",
     summary="Get zone KPIs",
-    description="Calculated KPIs: VPD, DLI, growth progress, zone health score.",
+    description=(
+        "VPD (SHT31 humidity), growth progress, zone health. "
+        "DLI is not computed (lux is not PPFD). No WebSocket publisher."
+    ),
 )
 async def get_zone_kpis(
     zone_id: Annotated[str, Path(description="Zone identifier", max_length=50)],

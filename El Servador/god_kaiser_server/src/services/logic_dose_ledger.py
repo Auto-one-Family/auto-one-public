@@ -185,7 +185,9 @@ def collect_dispatched_dose_pumps(
         flat_actions, dose_config_components=dose_config_components
     )
     if dispatched_keys:
-        pumps = [p for p in pumps if (p.get("esp_id"), p.get("gpio")) in dispatched_keys]
+        pumps = [
+            p for p in pumps if (p.get("esp_id"), p.get("gpio")) in dispatched_keys
+        ]
     return pumps
 
 
@@ -267,7 +269,8 @@ async def record_logic_dose_to_ledger(
 
     if tank_id is None:
         logger.warning(
-            "AUT-1352: no tank_id resolvable for logic dose " "(rule_id=%s logic_execution_id=%s)",
+            "AUT-1352: no tank_id resolvable for logic dose "
+            "(rule_id=%s logic_execution_id=%s)",
             rule_id,
             logic_execution_id,
         )

@@ -265,6 +265,35 @@ export function unitFromChartLabel(
   return last || fallback
 }
 
+/** AUT-1555 first-class mount fields already loaded on the view config. */
+export interface MountChartFields {
+  mount_height_cm?: number | null
+  mount_medium?: string | null
+  mount_angle_deg?: number | null
+}
+
+/**
+ * AUT-1557: Montage-Suffix for the existing Monitor-L3 dataset label.
+ * Empty when the loaded config has no mount fields — never invents values.
+ * Example: ` · 30cm canopy`
+ */
+export function formatMountChartSuffix(
+  config: MountChartFields | null | undefined,
+): string {
+  if (!config) return ''
+  const parts: string[] = []
+  if (config.mount_height_cm != null && Number.isFinite(config.mount_height_cm)) {
+    parts.push(`${config.mount_height_cm}cm`)
+  }
+  if (config.mount_medium) {
+    parts.push(config.mount_medium)
+  }
+  if (config.mount_angle_deg != null && Number.isFinite(config.mount_angle_deg)) {
+    parts.push(`${config.mount_angle_deg}°`)
+  }
+  return parts.length > 0 ? ` · ${parts.join(' ')}` : ''
+}
+
 /**
  * AUT-837 E2: keep one tooltip row per dataset (mode:'x' otherwise hits neighbor buckets).
  */
@@ -843,7 +872,7 @@ export function qualityToStatus(quality: string, opts?: QualityToStatusOpts): Se
 
   if (quality === 'good' || quality === 'excellent') return 'good'
   if (quality === 'fair' || quality === 'degraded') return 'warning'
-  if (quality === 'poor' || quality === 'bad' || quality === 'error') return 'alarm'
+  if (quality === 'poor' || quality === 'bad' || quality === 'error' || quality === 'critical') return 'alarm'
   if (quality === 'stale') return 'stale'
   return 'good'
 }

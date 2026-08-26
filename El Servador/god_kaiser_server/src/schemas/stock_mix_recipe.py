@@ -44,7 +44,9 @@ class StockMixRecipeCreate(BaseModel):
     label: str = Field(..., min_length=1, max_length=200)
     dose_role: str = Field(..., description="part_a | part_b | ph_down | generic")
     coverage: StockMixCoverage
-    nutrient_phase: Optional[str] = Field(None, description="Required when coverage=phase_specific")
+    nutrient_phase: Optional[str] = Field(
+        None, description="Required when coverage=phase_specific"
+    )
     components: list[StockMixComponent] = Field(..., min_length=1)
     metadata: dict[str, Any] = Field(default_factory=dict)
     active: bool = True

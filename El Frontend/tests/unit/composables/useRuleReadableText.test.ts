@@ -1,6 +1,12 @@
 import { describe, it, expect } from 'vitest'
 import { getRuleReadableText } from '@/composables/useRuleReadableText'
-import type { LogicRule, ActuatorAction, SensorCondition } from '@/types/logic'
+import type {
+  LogicRule,
+  ActuatorAction,
+  SensorCondition,
+  HysteresisCondition,
+  SequenceAction,
+} from '@/types/logic'
 
 function baseRule(overrides: Partial<LogicRule>): LogicRule {
   return {
@@ -88,5 +94,44 @@ describe('useRuleReadableText (AUT-1318)', () => {
     )
     expect(text).toContain('GPIO 25 AN')
     expect(text).toContain('GPIO 26 AUS')
+  })
+
+  it('should show sequence info instead of Einschalten/Ausschalten when a sequence action is configured', () => {
+    const hc: HysteresisCondition = {
+      type: 'hysteresis',
+      esp_id: 'e',
+      gpio: 12,
+      sensor_type: 'ec',
+      activate_below: 1300,
+      deactivate_above: 1400,
+    }
+    const seq: SequenceAction = {
+      type: 'sequence',
+      steps: [
+        { name: 'Schritt 1', action: { type: 'actuator', esp_id: 'e', gpio: 25, command: 'ON', value: 1 } },
+        { name: 'Schritt 2', delay_seconds: 5 },
+      ],
+    }
+    const text = getRuleReadableText(baseRule({ conditions: [hc], actions: [seq] }))
+    expect(text).toContain('Sequenz (2 Schritte)')
+    expect(text).toContain('Auslöser unter 1300')
+    expect(text).not.toContain('Einschalten')
+    expect(text).not.toContain('Ausschalten')
+  })
+
+  it('should show plain Einschalten/Ausschalten again once the sequence action is removed (reverted to hysteresis)', () => {
+    const hc: HysteresisCondition = {
+      type: 'hysteresis',
+      esp_id: 'e',
+      gpio: 12,
+      sensor_type: 'ec',
+      activate_below: 1300,
+      deactivate_above: 1400,
+    }
+    const on: ActuatorAction = { type: 'actuator', esp_id: 'e', gpio: 25, command: 'ON', value: 1 }
+    const text = getRuleReadableText(baseRule({ conditions: [hc], actions: [on] }))
+    expect(text).toContain('Einschalten unter 1300')
+    expect(text).toContain('Ausschalten über 1400')
+    expect(text).not.toContain('Sequenz')
   })
 })

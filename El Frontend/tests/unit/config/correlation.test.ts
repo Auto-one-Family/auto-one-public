@@ -11,7 +11,6 @@ import { describe, it, expect, vi, beforeAll, afterAll, afterEach, beforeEach } 
 import { setActivePinia, createPinia } from 'pinia'
 import { server } from '../../mocks/server'
 import { http, HttpResponse } from 'msw'
-import axios from 'axios'
 
 // Mock WebSocket service (imported by auth store)
 vi.mock('@/services/websocket', () => ({
@@ -19,12 +18,6 @@ vi.mock('@/services/websocket', () => ({
     disconnect: vi.fn(),
     connect: vi.fn(),
     isConnected: vi.fn(() => false),
-    onConnect: vi.fn(() => () => {}),
-    onStatusChange: vi.fn(() => () => {}),
-    getStatus: vi.fn(() => 'disconnected'),
-    subscribe: vi.fn(() => 'sub-corr'),
-    unsubscribe: vi.fn(),
-    sendClientStageObservation: vi.fn(),
   },
 }))
 
@@ -49,32 +42,42 @@ describe('Axios X-Request-ID Interceptor', () => {
     setActivePinia(createPinia())
   })
 
-  async function captureRequestId(api: { interceptors: { request: { handlers: Array<{ fulfilled?: (config: any) => any } | null> } } }) {
-    const headers = new axios.AxiosHeaders()
-    let config: any = { method: 'get', url: '/test', headers }
-    const handlers = api.interceptors.request.handlers.filter(Boolean)
-    for (let i = handlers.length - 1; i >= 0; i--) {
-      const fn = handlers[i]?.fulfilled
-      if (fn) config = await fn(config)
-    }
-    return String(config.headers?.get?.('X-Request-ID') ?? config.headers?.['X-Request-ID'] ?? '')
-  }
-
   it('adds X-Request-ID header to every request', async () => {
+    let capturedRequestId: string | null = null
+
+    // Intercept the request to capture the header
+    server.use(
+      http.get('/api/v1/test', ({ request }) => {
+        capturedRequestId = request.headers.get('X-Request-ID')
+        return HttpResponse.json({ ok: true })
+      }),
+    )
+
     const { default: api } = await import('@/api/index')
-    const capturedRequestId = await captureRequestId(api)
+    await api.get('/test')
+
     expect(capturedRequestId).not.toBeNull()
     expect(capturedRequestId).toMatch(UUID_V4_REGEX)
-  }, 15000)
+  })
 
   it('generates unique request IDs per request', async () => {
+    const capturedIds: string[] = []
+
+    server.use(
+      http.get('/api/v1/unique-test', ({ request }) => {
+        const rid = request.headers.get('X-Request-ID')
+        if (rid) capturedIds.push(rid)
+        return HttpResponse.json({ ok: true })
+      }),
+    )
+
     const { default: api } = await import('@/api/index')
-    const a = await captureRequestId(api)
-    const b = await captureRequestId(api)
-    expect(a).toBeTruthy()
-    expect(b).toBeTruthy()
-    expect(a).not.toBe(b)
-  }, 15000)
+    await api.get('/unique-test')
+    await api.get('/unique-test')
+
+    expect(capturedIds).toHaveLength(2)
+    expect(capturedIds[0]).not.toBe(capturedIds[1])
+  })
 })
 
 // =============================================================================

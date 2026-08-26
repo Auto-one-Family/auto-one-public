@@ -24,8 +24,6 @@ Reference Values (from hardware datasheets):
 - EC: Linear mapping with 2% temp compensation per °C
 """
 
-import time
-
 import pytest
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -466,14 +464,14 @@ class TestPiEnhancedFlowE2E:
         # Simulate MQTT payload from Mock ESP
         topic = "kaiser/god/esp/MOCK_E2E_001/sensor/34/data"
         payload = {
-            "ts": int(time.time()),
+            "ts": 1735818000,
             "esp_id": "MOCK_E2E_001",
             "gpio": 34,
             "sensor_type": "moisture",
             "raw": 2350,  # ~50% moisture
             "value": 0.0,
             "unit": "",
-            "quality": "good",
+            "quality": "stale",
             "raw_mode": True,
         }
 
@@ -486,12 +484,7 @@ class TestPiEnhancedFlowE2E:
         mock_sensor_config = MagicMock()
         mock_sensor_config.pi_enhanced = True
         mock_sensor_config.calibration = None
-        mock_sensor_config.calibration_data = None
         mock_sensor_config.processing_params = {}
-        mock_sensor_config.sensor_metadata = {}
-        mock_sensor_config.adc_source = "internal"
-        mock_sensor_config.pga_gain = None
-        mock_sensor_config.device_scope = "zone_local"
 
         # Setup mock repositories
         mock_esp_repo = AsyncMock()
@@ -499,9 +492,7 @@ class TestPiEnhancedFlowE2E:
 
         mock_sensor_repo = AsyncMock()
         mock_sensor_repo.get_by_esp_and_gpio.return_value = mock_sensor_config
-        mock_sensor_repo.get_by_esp_gpio_and_type.return_value = mock_sensor_config
         mock_sensor_repo.save_sensor_data.return_value = MagicMock()
-        mock_sensor_repo.save_data.return_value = MagicMock()
 
         # Create async context manager for session
         @asynccontextmanager

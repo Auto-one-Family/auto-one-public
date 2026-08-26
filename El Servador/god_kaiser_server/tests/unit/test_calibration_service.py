@@ -1,9 +1,13 @@
 """Unit tests for calibration service session flow and guards."""
 
+from datetime import datetime, timezone
+
 import pytest
+from sqlalchemy import select
 
 from src.db.models.esp import ESPDevice
 from src.db.models.sensor import SensorConfig
+from src.services.calibration_payloads import read_calibrated_at, read_valid_until
 from src.services.calibration_service import CalibrationError, CalibrationService
 
 
@@ -63,6 +67,69 @@ async def test_calibration_service_add_finalize_apply_flow(db_session):
 
     session = await service.apply(session.id)
     assert session.status.value == "applied"
+    assert session.initiated_by == "tester"
+    result = session.calibration_result or {}
+    assert read_calibrated_at(result)
+    assert "valid_until" in (result.get("derived") or {})
+    assert result["derived"]["valid_until"] is None
+    assert "initiated_by" not in result
+    assert "initiated_by" not in (result.get("derived") or {})
+    assert "initiated_by" not in (result.get("metadata") or {})
+
+
+@pytest.mark.asyncio
+async def test_apply_writes_valid_until_on_derived_without_copying_initiated_by(db_session):
+    await _create_bound_sensor(db_session, esp_id="ESP_TEST_001", gpio=41)
+    service = CalibrationService(db_session)
+    valid_until = datetime(2026, 12, 1, tzinfo=timezone.utc)
+    session = await service.start_session(
+        esp_id="ESP_TEST_001",
+        gpio=41,
+        sensor_type="moisture",
+        method="linear_2point",
+        expected_points=2,
+        initiated_by="tester",
+        session_metadata={"valid_until": valid_until.isoformat()},
+    )
+    await service.add_point(session_id=session.id, raw=850.0, reference=0.0, point_role="dry")
+    await service.add_point(session_id=session.id, raw=620.0, reference=100.0, point_role="wet")
+    await service.finalize(session.id)
+    session = await service.apply(session.id)
+
+    sensor = await service.sensor_repo.get_by_id(session.sensor_config_id)
+    assert sensor is not None
+    blob = sensor.calibration_data
+    assert blob is not None
+    assert blob["derived"]["valid_until"].startswith("2026-12-01")
+    assert "calibrated_at" in blob["derived"]
+    assert "initiated_by" not in blob
+    assert "initiated_by" not in blob["derived"]
+    assert "initiated_by" not in blob.get("metadata", {})
+    assert session.initiated_by == "tester"
+
+
+@pytest.mark.asyncio
+async def test_apply_omits_valid_until_when_not_provided(db_session):
+    await _create_bound_sensor(db_session, esp_id="ESP_TEST_001", gpio=42)
+    service = CalibrationService(db_session)
+    session = await service.start_session(
+        esp_id="ESP_TEST_001",
+        gpio=42,
+        sensor_type="moisture",
+        method="linear_2point",
+        expected_points=2,
+        initiated_by="tester",
+    )
+    await service.add_point(session_id=session.id, raw=850.0, reference=0.0, point_role="dry")
+    await service.add_point(session_id=session.id, raw=620.0, reference=100.0, point_role="wet")
+    await service.finalize(session.id)
+    session = await service.apply(session.id)
+
+    sensor = await service.sensor_repo.get_by_id(session.sensor_config_id)
+    assert sensor is not None
+    derived = (sensor.calibration_data or {}).get("derived") or {}
+    assert "valid_until" in derived
+    assert derived["valid_until"] is None
 
 
 @pytest.mark.asyncio
@@ -222,6 +289,49 @@ async def test_apply_is_idempotent(db_session):
     assert first_apply.status.value == "applied"
     assert second_apply.status.value == "applied"
     assert second_apply.id == first_apply.id
+
+
+@pytest.mark.asyncio
+async def test_apply_persists_nullable_valid_until_on_existing_blob(db_session):
+    await _create_bound_sensor(db_session, esp_id="ESP_TEST_001", gpio=14)
+    service = CalibrationService(db_session)
+    session = await service.start_session(
+        esp_id="ESP_TEST_001",
+        gpio=14,
+        sensor_type="moisture",
+        method="linear_2point",
+        expected_points=2,
+        initiated_by="tester",
+    )
+    await service.add_point(session_id=session.id, raw=850.0, reference=0.0, point_role="dry")
+    await service.add_point(session_id=session.id, raw=650.0, reference=100.0, point_role="wet")
+    session = await service.finalize(session.id)
+
+    past = datetime(2020, 1, 15, tzinfo=timezone.utc)
+    session = await service.apply(session.id, valid_until=past)
+    assert session.status.value == "applied"
+    assert session.initiated_by == "tester"
+
+    result = session.calibration_result or {}
+    assert result["derived"]["valid_until"] == past.isoformat()
+    assert read_valid_until(result) == past.isoformat()
+    assert read_calibrated_at(result)
+    assert "initiated_by" not in result
+    assert "initiated_by" not in result["derived"]
+    points = result.get("points") or []
+    assert {point.get("point_role") for point in points} == {"dry", "wet"}
+    assert {point.get("reference") for point in points} == {0.0, 100.0}
+
+    sensor = (
+        await db_session.execute(
+            select(SensorConfig).where(SensorConfig.gpio == 14)
+        )
+    ).scalar_one()
+    blob = sensor.calibration_data or {}
+    assert blob["derived"]["valid_until"] == past.isoformat()
+    assert read_valid_until(blob) == past.isoformat()
+    assert blob["derived"]["valid_until"]  # stale past date stays stored
+    assert "initiated_by" not in blob
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -553,12 +663,8 @@ async def test_ec_linear_2point_canonical_structure(db_session):
         expected_points=2,
         initiated_by="tester",
     )
-    await service.add_point(
-        session_id=session.id, raw=625.0, reference=1413.0, point_role="reference_low"
-    )
-    await service.add_point(
-        session_id=session.id, raw=3200.0, reference=12880.0, point_role="reference_high"
-    )
+    await service.add_point(session_id=session.id, raw=625.0, reference=1413.0, point_role="reference_low")
+    await service.add_point(session_id=session.id, raw=3200.0, reference=12880.0, point_role="reference_high")
 
     session = await service.finalize(session.id)
     result = session.calibration_result
@@ -590,12 +696,8 @@ async def test_ec_linear_2point_missing_reference_low(db_session):
         expected_points=2,
     )
     # Add only reference_high, skip reference_low
-    await service.add_point(
-        session_id=session.id, raw=600.0, reference=1413.0, point_role="reference_low"
-    )
-    await service.add_point(
-        session_id=session.id, raw=3200.0, reference=12880.0, point_role="reference_high"
-    )
+    await service.add_point(session_id=session.id, raw=600.0, reference=1413.0, point_role="reference_low")
+    await service.add_point(session_id=session.id, raw=3200.0, reference=12880.0, point_role="reference_high")
     # Overwrite reference_low with a wrong role to simulate missing scenario by checking
     # that invalid role is rejected first
 
@@ -699,7 +801,6 @@ def test_ec_linear_2point_static_compute_slope_and_offset():
     expected_slope = (12880.0 - 1413.0) / (v_high - v_low)
     expected_offset = 1413.0 - expected_slope * v_low
     import pytest
-
     assert result["slope"] == pytest.approx(expected_slope, rel=0.001)
     assert result["offset"] == pytest.approx(expected_offset, rel=0.001)
 
@@ -716,7 +817,6 @@ def test_ec_linear_2point_static_compute_temperature_normalization():
     # At 30°C: actual EC = reference * (1 + 0.02 * (30 - 25)) = reference * 1.1
     # ref_low_at_cal_temp(30°C) = 1413 * 1.1 ≈ 1554.3
     import pytest
-
     assert result_30["ref_low_at_cal_temp"] == pytest.approx(1413.0 * 1.1, rel=0.001)
     assert result_30["ref_high_at_cal_temp"] == pytest.approx(12880.0 * 1.1, rel=0.001)
 

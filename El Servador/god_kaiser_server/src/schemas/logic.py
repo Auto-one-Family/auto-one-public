@@ -563,7 +563,9 @@ class LogicRuleCreate(LogicRuleBase):
 
     @field_validator("rule_metadata")
     @classmethod
-    def validate_rule_metadata_measure_bindings(cls, v: Dict[str, Any]) -> Dict[str, Any]:
+    def validate_rule_metadata_measure_bindings(
+        cls, v: Dict[str, Any]
+    ) -> Dict[str, Any]:
         result = _validate_rule_metadata_measure_bindings(v)
         return result if result is not None else {}
 
@@ -656,8 +658,12 @@ class LogicRuleUpdate(BaseModel):
     plan_subzone_config_id: Optional[uuid.UUID] = Field(
         None, description="AUT-1232: Optional subzone_config for plan subscription"
     )
-    plan_domain: Optional[str] = Field(None, max_length=32, description="AUT-1232: Plan domain")
-    plan_measure: Optional[str] = Field(None, max_length=32, description="AUT-1232: Plan measure")
+    plan_domain: Optional[str] = Field(
+        None, max_length=32, description="AUT-1232: Plan domain"
+    )
+    plan_measure: Optional[str] = Field(
+        None, max_length=32, description="AUT-1232: Plan measure"
+    )
 
     @field_validator("escalation_policy")
     @classmethod
@@ -713,7 +719,9 @@ class LogicRuleResponse(LogicRuleBase, TimestampMixin):
     settle_after_rule_id: Optional[uuid.UUID] = Field(
         None, description="AUT-1115: Settle-after rule reference"
     )
-    settle_seconds: Optional[int] = Field(None, description="AUT-1115: Settle window in seconds")
+    settle_seconds: Optional[int] = Field(
+        None, description="AUT-1115: Settle window in seconds"
+    )
     max_executions_per_hour: Optional[int] = Field(None)
     max_executions_per_day: Optional[int] = Field(None)
     max_dose_ml_per_day: Optional[float] = Field(None)
@@ -756,12 +764,18 @@ class LogicRuleResponse(LogicRuleBase, TimestampMixin):
         False,
         description="AUT-1232: Opt-in plan subscription (default False)",
     )
-    plan_zone_id: Optional[str] = Field(None, description="AUT-1232: Zone for plan subscription")
+    plan_zone_id: Optional[str] = Field(
+        None, description="AUT-1232: Zone for plan subscription"
+    )
     plan_subzone_config_id: Optional[uuid.UUID] = Field(
         None, description="AUT-1232: Optional subzone_config for plan subscription"
     )
-    plan_domain: Optional[str] = Field(None, description="AUT-1232: Plan domain")
-    plan_measure: Optional[str] = Field(None, description="AUT-1232: Plan measure")
+    plan_domain: Optional[str] = Field(
+        None, description="AUT-1232: Plan domain"
+    )
+    plan_measure: Optional[str] = Field(
+        None, description="AUT-1232: Plan measure"
+    )
     warnings: List[str] = Field(
         default_factory=list,
         description=(

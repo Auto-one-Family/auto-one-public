@@ -56,9 +56,9 @@ describe('shared/design primitives exports', () => {
     // 9 Base*: BaseCard, BaseBadge, BaseButton, BaseModal, BaseInput, BaseToggle,
     //          BaseSelect, BaseSpinner, BaseSkeleton
     // 8 aliases: Badge, Card, Button, Input, Modal, Select, Toggle, Spinner
-    // 5 new: SlideOver, RangeSlider, QualityIndicator, AccordionSection, BaseTabs
+    // 4 new: SlideOver, RangeSlider, QualityIndicator, AccordionSection
     const mod = await import('@/shared/design/primitives')
     const exportedKeys = Object.keys(mod)
-    expect(exportedKeys.length).toBe(22)
+    expect(exportedKeys.length).toBe(21)
   })
 })

@@ -377,7 +377,9 @@ class ConflictManager:
                 "name": winner,  # Conflict-Manager only knows rule_id
                 "priority": winner_priority,
             }
-            correlation_id = f"conflict_{esp_id}_{gpio}_{int(time.time() * 1000)}"
+            correlation_id = (
+                f"conflict_{esp_id}_{gpio}_{int(time.time() * 1000)}"
+            )
 
             logger.info(
                 "rule_conflict_resolved",
@@ -418,7 +420,9 @@ class ConflictManager:
                         },
                     )
                 except Exception as ws_err:
-                    logger.warning("rule_conflict_resolved WS broadcast failed: %s", ws_err)
+                    logger.warning(
+                        "rule_conflict_resolved WS broadcast failed: %s", ws_err
+                    )
 
             return winner == rule_id, conflict
 

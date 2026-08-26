@@ -277,10 +277,11 @@ def estimate_config_wire_size(config: Dict[str, Any]) -> int:
 def _get_default_deadband(sensor_type: str) -> float:
     """Return a type-specific deadband for auto-converting a simple threshold to hysteresis.
 
-    Called only for digital sensors that deliver calibrated physical values directly
-    on the ESP32 (temperature, humidity, pressure, CO2, light, flow). Analog sensors
-    that require server-side calibration (ph, ec, moisture, soil_moisture) are
-    filtered out by the P4-GUARD before this function is ever reached.
+    Digital sensors deliver calibrated physical values directly on the ESP32, so the
+    band is expressed in their physical unit. Since AUT-1565 the analog RAW-comparable
+    types (ph, ec, moisture, soil_moisture) also reach this function; their threshold
+    and the ESP's RAW cache share the same scale, and the unmapped fallback band below
+    is applied in that same RAW scale.
     """
     DEADBAND_MAP = {
         "sht31_temp": 2.0,  # °C — typical HVAC hysteresis band
@@ -401,10 +402,16 @@ class ConfigPayloadBuilder:
     # Sensor types that require calibration parameters to convert ADC raw values
     # to physical units. The ESP32 firmware's applyLocalConversion() has no
     # calibration data for these sensors and returns only the ADC raw value
-    # (0-4095). Offline rule thresholds expressed in physical units (e.g. pH 7.5,
-    # EC 1.8 mS/cm) would be compared against raw ADC counts — meaningless and
-    # potentially dangerous (e.g. ADC 2048 > pH 7.5 → dosing pump fires).
+    # (0-4095).
     CALIBRATION_REQUIRED_SENSOR_TYPES = {"ph", "ec", "moisture", "soil_moisture"}
+
+    # AUT-1565: offline rules on these types are operator-authored RAW rules. The
+    # ESP compares its RAW cache against the exported threshold, so operand and
+    # threshold share the same scale and the server applies no slope/offset/ATC on
+    # this path. Missing or empty calibration_data therefore does not withhold the
+    # offline struct. Any other member of CALIBRATION_REQUIRED_SENSOR_TYPES keeps
+    # the original gate — this exemption is deliberately key-scoped.
+    OFFLINE_RAW_COMPARABLE_SENSOR_TYPES = {"ph", "ec", "moisture", "soil_moisture"}
     TIME_WINDOW_ONLY_SENSOR_GPIO = 255
     TIME_WINDOW_ONLY_SENSOR_TYPE_ON = "__twindow_on"
     TIME_WINDOW_ONLY_SENSOR_TYPE_OFF = "__twindow_off"
@@ -451,6 +458,26 @@ class ConfigPayloadBuilder:
             cls.TIME_WINDOW_ONLY_SENSOR_TYPE_ON,
             cls.TIME_WINDOW_ONLY_SENSOR_TYPE_OFF,
         )
+
+    @classmethod
+    def _offline_calibration_gate_blocks(
+        cls,
+        normalized_type: str,
+        cal_key: str,
+        calibrated_sensors: Optional[set],
+    ) -> bool:
+        """Return True when missing calibration must withhold the offline rule.
+
+        ``cal_key`` is the ``"{gpio}:{normalized_sensor_type}"`` key of the
+        ``calibrated_sensors`` preload built in ``_build_offline_rules``.
+        RAW-comparable types (AUT-1565) never block; the ESP evaluates them
+        against its RAW cache.
+        """
+        if normalized_type not in cls.CALIBRATION_REQUIRED_SENSOR_TYPES:
+            return False
+        if normalized_type in cls.OFFLINE_RAW_COMPARABLE_SENSOR_TYPES:
+            return False
+        return cal_key not in (calibrated_sensors or set())
 
     # UART pin pairs used as fallback when sensor_metadata lacks explicit uart pins.
     # Convention: sensor.gpio = uart_rx_pin; value = uart_tx_pin.
@@ -796,13 +823,16 @@ class ConfigPayloadBuilder:
         3. For sensor-based conditions: ``sensor_gpio >= 0`` and a valid threshold pair
            (cooling: activate_above + deactivate_below; heating: activate_below +
            deactivate_above).
-        4. Sensor type is NOT calibration-required (ph, ec, moisture, soil_moisture —
-           these lack calibration data on the ESP32 so thresholds would fire against
-           raw ADC counts, not physical units).
+        4. Sensor type is NOT calibration-required, or it is one of the RAW-comparable
+           types ph / ec / moisture / soil_moisture, which the ESP evaluates against its
+           RAW cache and which therefore export without calibration_data (AUT-1565).
         5. ``sensor_value_type`` fits in 23 chars (ESP OfflineRule struct limit).
         6. For OR-compound rules: each branch is flattened into a separate single-condition
-           offline rule (DNF, AUT-739). AND-compound rules are not supported and are
-           excluded with REASON_UNSUPPORTED_CONDITION.
+           offline rule (DNF, AUT-739). AND-compound rules are exported only when they are
+           representable in the single-sensor struct — one sensor condition plus optional
+           time_window / cooldown / max_on (AUT-1531). AND-compounds with two or more sensor
+           conditions (same ESP or cross-ESP) or a nested compound are excluded with
+           REASON_UNSUPPORTED_CONDITION; they stay evaluable online only.
 
         ## Why offline_rules count may differ from UI logic-rule count
 
@@ -811,8 +841,11 @@ class ConfigPayloadBuilder:
         ESP32 can execute autonomously. The delta is expected and breaks down as:
 
         - **Cross-ESP rules** — actuator or sensor belongs to a different ESP.
-        - **Calibration-required sensors** — ph / ec / moisture / soil_moisture excluded.
-        - **OR-compound rules** — cannot be represented as a single hysteresis struct.
+        - **Calibration-required sensors** — only types outside
+          ``OFFLINE_RAW_COMPARABLE_SENSOR_TYPES``; ph / ec / moisture / soil_moisture
+          are exported RAW (AUT-1565).
+        - **AND-compound rules with 2+ sensor conditions** — the struct holds one sensor
+          condition; these are skipped instead of exporting one condition of several.
         - **No convertible condition** — unsupported operator or missing threshold value.
         - **Time-window-only rules** — *are* included but use ``sensor_gpio=255`` and
           ``sensor_value_type=__twindow_on`` or ``__twindow_off`` as a firmware
@@ -950,7 +983,8 @@ class ConfigPayloadBuilder:
                     skip_collector.append(
                         {
                             "rule_id": str(getattr(rule, "id", "") or ""),
-                            "rule_name": getattr(rule, "rule_name", "<unknown>") or "<unknown>",
+                            "rule_name": getattr(rule, "rule_name", "<unknown>")
+                            or "<unknown>",
                             "actuator_gpio": None,
                             "reason_code": self.REASON_UNSUPPORTED_CONDITION,
                             "reason_detail": f"extraction error: {exc}",
@@ -999,8 +1033,9 @@ class ConfigPayloadBuilder:
             "included=%d (sensor_hysteresis=%d, time_window_only=%d) | "
             "skipped=%d | capped=%d. "
             "Skip reasons per rule logged above as [CONFIG] Rule/Offline-rule skip. "
-            "Typical causes: calibration_required (ph/ec/moisture), "
-            "or_compound, no_convertible_condition, invalid_gpio. "
+            "Typical causes: calibration_required (types outside the RAW-comparable "
+            "set ph/ec/moisture/soil_moisture), "
+            "and_compound_multi_sensor, no_convertible_condition, invalid_gpio. "
             "time_window_only rules use sensor_gpio=255 and sensor_value_type=__twindow_on/off — "
             "these count in offline_rules but are not listed as sensor-based logic rules in the UI.",
             esp_id,
@@ -1153,8 +1188,8 @@ class ConfigPayloadBuilder:
                 normalized_type: str = normalize_sensor_type(raw_sensor_type)
 
                 _cal_key = f"{cond.get('gpio', -1)}:{normalized_type}"
-                if normalized_type in self.CALIBRATION_REQUIRED_SENSOR_TYPES and _cal_key not in (
-                    calibrated_sensors or set()
+                if self._offline_calibration_gate_blocks(
+                    normalized_type, _cal_key, calibrated_sensors
                 ):
                     logger.info(
                         "[CONFIG] Rule '%s' OR-branch[%d]: sensor_type '%s' requires calibration (not calibrated), branch skipped",
@@ -1255,10 +1290,10 @@ class ConfigPayloadBuilder:
                 continue
 
             _svt_cal_key = f"{sensor_gpio}:{sensor_value_type}"
-            if (
-                not self._is_time_window_only_sensor_type(sensor_value_type)
-                and sensor_value_type in self.CALIBRATION_REQUIRED_SENSOR_TYPES
-                and _svt_cal_key not in (calibrated_sensors or set())
+            if not self._is_time_window_only_sensor_type(
+                sensor_value_type
+            ) and self._offline_calibration_gate_blocks(
+                sensor_value_type, _svt_cal_key, calibrated_sensors
             ):
                 continue
 
@@ -1273,13 +1308,9 @@ class ConfigPayloadBuilder:
                     "sensor_gpio": sensor_gpio,
                     "sensor_value_type": sensor_value_type,
                     "activate_below": float(activate_below) if activate_below is not None else 0.0,
-                    "deactivate_above": (
-                        float(deactivate_above) if deactivate_above is not None else 0.0
-                    ),
+                    "deactivate_above": float(deactivate_above) if deactivate_above is not None else 0.0,
                     "activate_above": float(activate_above) if activate_above is not None else 0.0,
-                    "deactivate_below": (
-                        float(deactivate_below) if deactivate_below is not None else 0.0
-                    ),
+                    "deactivate_below": float(deactivate_below) if deactivate_below is not None else 0.0,
                     "current_state_active": current_state_active,
                     "max_on_seconds": _entry["duration"],
                 }
@@ -1327,8 +1358,10 @@ class ConfigPayloadBuilder:
         required by the firmware OfflineRule struct (AUT-664).
 
         Qualification criteria:
-        1. trigger_conditions must be a hysteresis condition (type == "hysteresis")
-           — single-condition rules only (compound conditions are excluded)
+        1. trigger_conditions must contain exactly one sensor condition (hysteresis,
+           sensor_threshold or sensor). OR-compounds are DNF-flattened per branch
+           (AUT-739); AND-compounds pass only with a single sensor condition plus
+           optional time_window (AUT-1531)
         2. The hysteresis condition's esp_id must equal esp_id
         3. At least one actuator_command action whose esp_id equals esp_id
         4. Either cooling mode (activate_above + deactivate_below) or
@@ -1447,9 +1480,7 @@ class ConfigPayloadBuilder:
                     _target_state = True
                 else:
                     _target_state = None
-            actuator_entries.append(
-                {"gpio": _gpio, "duration": _duration, "target_state": _target_state}
-            )
+            actuator_entries.append({"gpio": _gpio, "duration": _duration, "target_state": _target_state})
 
         if not actuator_entries:
             seen_esp_ids = [
@@ -1458,7 +1489,8 @@ class ConfigPayloadBuilder:
                 if isinstance(a, dict) and a.get("type") in ("actuator_command", "actuator")
             ]
             detail = (
-                f"no actuator action targets ESP '{esp_id}'" f"; seen_esp_ids={seen_esp_ids}"
+                f"no actuator action targets ESP '{esp_id}'"
+                f"; seen_esp_ids={seen_esp_ids}"
                 if seen_esp_ids
                 else f"no actuator action targets ESP '{esp_id}' (no matching action type or empty)"
             )
@@ -1494,7 +1526,47 @@ class ConfigPayloadBuilder:
                 calibrated_sensors=calibrated_sensors,
             )
 
-        # Locate the first hysteresis condition that belongs to our ESP.
+        # 3b': AUT-1531 — AND classifier before the single-sensor extraction below.
+        # The OfflineRule struct carries exactly one sensor condition, so an AND-compound
+        # is representable only when it holds a single sensor condition (plus optional
+        # time_window and the existing cooldown / max_on fields). Two or more sensor
+        # conditions — same ESP or cross-ESP — cannot be split into independent
+        # single-sensor rules without moving AND onto the firmware, and a nested compound
+        # hides further conditions. Both take the same skip path the docstring claims
+        # instead of silently exporting the first hysteresis of the list.
+        if len(conditions_list) > 1:
+            sensor_slot_types = [
+                str(cond.get("type", ""))
+                for cond in conditions_list
+                if isinstance(cond, dict)
+                and cond.get("type")
+                in ("hysteresis", "sensor_threshold", "sensor", "compound", "logic")
+            ]
+            if len(sensor_slot_types) > 1:
+                logger.info(
+                    "[CONFIG] Offline-rule skip: rule '%s' — AND compound with %d sensor "
+                    "conditions (%s) is not representable as a single-sensor offline rule; "
+                    "online AND evaluation is unaffected",
+                    rule.rule_name,
+                    len(sensor_slot_types),
+                    sensor_slot_types,
+                )
+                _skip(
+                    self.REASON_UNSUPPORTED_CONDITION,
+                    f"AND compound with {len(sensor_slot_types)} sensor conditions "
+                    f"({sensor_slot_types}) is not representable as a single-sensor "
+                    f"offline rule",
+                    actuator_gpio=actuator_gpio,
+                    resolution_hint=(
+                        "Der ESP wertet offline genau eine Sensorbedingung aus. "
+                        "Regel in eine Regel pro Sensor aufteilen oder online-only lassen."
+                    ),
+                )
+                return []
+
+        # Locate the hysteresis condition that belongs to our ESP. After the AND
+        # classifier above at most one sensor condition remains, so this is the rule's
+        # only sensor condition — not the first of several.
         # Track condition_index to match HysteresisConditionEvaluator's state key format.
         hysteresis_cond: Optional[Dict[str, Any]] = None
         hysteresis_cond_index: int = 0
@@ -1590,8 +1662,8 @@ class ConfigPayloadBuilder:
                 raw_sensor_type: str = threshold_cond.get("sensor_type") or ""
                 normalized_type: str = normalize_sensor_type(raw_sensor_type)
                 _cal_key = f"{threshold_cond.get('gpio', -1)}:{normalized_type}"
-                if normalized_type in self.CALIBRATION_REQUIRED_SENSOR_TYPES and _cal_key not in (
-                    calibrated_sensors or set()
+                if self._offline_calibration_gate_blocks(
+                    normalized_type, _cal_key, calibrated_sensors
                 ):
                     logger.info(
                         "[CONFIG] Rule '%s': sensor_type '%s' (normalized: '%s') requires "
@@ -1746,11 +1818,13 @@ class ConfigPayloadBuilder:
         # sensor_value_type is already normalized above, so direct set-membership
         # check is sufficient (no alias splitting needed).
         # AUT-739 calibration gate: allow through if calibration_data is present in DB.
+        # AUT-1565: ph / ec / moisture / soil_moisture are exempt — they are compared
+        # RAW-against-RAW on the device (see OFFLINE_RAW_COMPARABLE_SENSOR_TYPES).
         _hyst_cal_key = f"{sensor_gpio}:{sensor_value_type}"
-        if (
-            not self._is_time_window_only_sensor_type(sensor_value_type)
-            and sensor_value_type in self.CALIBRATION_REQUIRED_SENSOR_TYPES
-            and _hyst_cal_key not in (calibrated_sensors or set())
+        if not self._is_time_window_only_sensor_type(
+            sensor_value_type
+        ) and self._offline_calibration_gate_blocks(
+            sensor_value_type, _hyst_cal_key, calibrated_sensors
         ):
             logger.warning(
                 "[CONFIG] Rule '%s': sensor_type '%s' requires calibration "
@@ -1836,13 +1910,9 @@ class ConfigPayloadBuilder:
                 "sensor_gpio": sensor_gpio,
                 "sensor_value_type": sensor_value_type,
                 "activate_below": float(activate_below) if activate_below is not None else 0.0,
-                "deactivate_above": (
-                    float(deactivate_above) if deactivate_above is not None else 0.0
-                ),
+                "deactivate_above": float(deactivate_above) if deactivate_above is not None else 0.0,
                 "activate_above": float(activate_above) if activate_above is not None else 0.0,
-                "deactivate_below": (
-                    float(deactivate_below) if deactivate_below is not None else 0.0
-                ),
+                "deactivate_below": float(deactivate_below) if deactivate_below is not None else 0.0,
                 "current_state_active": current_state_active,
                 # Carry per-action runtime cap so firmware enforces "ON for N seconds"
                 # during MQTT disconnect / OFFLINE_ACTIVE.

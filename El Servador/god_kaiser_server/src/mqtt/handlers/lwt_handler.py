@@ -262,7 +262,9 @@ class LWTHandler:
                                 "esp_id": esp_id_str,
                                 "status": "offline",
                                 "source": "lwt",
-                                "reason": payload.get("reason", "unexpected_disconnect"),
+                                "reason": payload.get(
+                                    "reason", "unexpected_disconnect"
+                                ),
                                 "early": True,
                             },
                         )
@@ -419,7 +421,9 @@ class LWTHandler:
                         # AUT-884: carry last-known metrics into the offline broadcast so
                         # the frontend keeps the last shown heap/rssi/uptime instead of
                         # flashing 0/0/0 (default-0 + nullish-coalescing overwrite).
-                        last_metrics = extract_last_known_health_metrics(esp_device.device_metadata)
+                        last_metrics = extract_last_known_health_metrics(
+                            esp_device.device_metadata
+                        )
                         broadcast_payload = serialize_esp_health_event(
                             esp_id=esp_id_str,
                             status="offline",
@@ -582,9 +586,7 @@ class LWTHandler:
                 "retryable": False,
                 "ts": now_ts,
             }
-            outcome_row, is_stale = await contract_repo.upsert_outcome(
-                outcome_payload, esp_id=esp_id
-            )
+            outcome_row, is_stale = await contract_repo.upsert_outcome(outcome_payload, esp_id=esp_id)
             if is_stale:
                 continue
 

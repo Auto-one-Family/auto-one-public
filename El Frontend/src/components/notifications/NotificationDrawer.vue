@@ -4,11 +4,11 @@
  *
  * Uses SlideOver.vue primitive (width="lg" = 560px).
  * Features:
- * - Header: Title + Settings gear + "Alle gelesen" button
- * - Filter tabs: Alle | Kritisch | Warnungen | Infos
+ * - Header: Title + Settings + "Alle erledigen"
+ * - Segment: Aktiv | Bestätigt | Erledigt (Ack/Resolve, kein Mute)
  * - Grouped by Heute/Gestern/Älter
  * - Lazy loading: first 50, then "Mehr laden" button
- * - ESC and click-outside close (SlideOver feature)
+ * - ESC closes; backdrop pass-through so Satellite bleibt treffbar (AUT-1510)
  */
 
 import { ref, computed, watch } from 'vue'
@@ -169,6 +169,8 @@ async function handleResolve(id: string): Promise<void> {
     title="Benachrichtigungen"
     subtitle="Server-Inbox (Ack/Resolve). Echtzeit-Fehler (error_event) nur als Toast — nicht diese Liste."
     width="lg"
+    allow-background-interaction
+    :inert="inboxStore.isPreferencesOpen"
     @close="handleClose"
   >
     <!-- Custom header actions (injected via default slot, header area) -->
@@ -519,8 +521,10 @@ async function handleResolve(id: string): Promise<void> {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  min-height: 44px;
   color: var(--color-text-muted);
   background: transparent;
   border: 1px solid transparent;
@@ -567,7 +571,8 @@ async function handleResolve(id: string): Promise<void> {
   align-items: center;
   gap: var(--space-2);
   width: 100%;
-  padding: var(--space-1) 0;
+  min-height: 44px;
+  padding: var(--space-2) 0;
   font-size: var(--text-xs);
   font-weight: 600;
   color: var(--color-text-secondary);
@@ -649,8 +654,11 @@ async function handleResolve(id: string): Promise<void> {
 .drawer__actions-row .drawer__action-btn {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: var(--space-1);
-  padding: var(--space-1) var(--space-2);
+  min-height: 44px;
+  min-width: 44px;
+  padding: var(--space-2) var(--space-3);
   font-size: var(--text-xs);
   font-weight: 500;
   color: var(--color-text-secondary);
@@ -873,6 +881,7 @@ async function handleResolve(id: string): Promise<void> {
 }
 
 .drawer__load-more-btn {
+  min-height: 44px;
   padding: var(--space-2) var(--space-4);
   font-size: var(--text-xs);
   font-weight: 500;

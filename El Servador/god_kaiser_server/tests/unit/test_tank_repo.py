@@ -59,7 +59,9 @@ async def subzone(db_session: AsyncSession, esp: ESPDevice) -> SubzoneConfig:
 
 
 @pytest.mark.asyncio
-async def test_tank_create_persists_zone_assignment(db_session: AsyncSession, zone: Zone) -> None:
+async def test_tank_create_persists_zone_assignment(
+    db_session: AsyncSession, zone: Zone
+) -> None:
     repo = TankRepository(db_session)
     tank = await repo.create(
         zone_id=zone.zone_id,

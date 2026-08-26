@@ -138,7 +138,7 @@ async def websocket_realtime(websocket: WebSocket, client_id: str):
             sensor_keys: set = set()
             esp_ids_set: set = set()
             for dash in dashboards:
-                for widget in dash.widgets or []:
+                for widget in (dash.widgets or []):
                     if not isinstance(widget, dict):
                         continue
                     config = widget.get("config") or {}

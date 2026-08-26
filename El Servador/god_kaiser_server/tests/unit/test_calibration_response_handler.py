@@ -82,7 +82,9 @@ class TestComputeEcPreview:
 
         s = _Session()
         s.method = method
-        s.session_metadata = {"calibration_temperature": cal_temp} if cal_temp is not None else {}
+        s.session_metadata = (
+            {"calibration_temperature": cal_temp} if cal_temp is not None else {}
+        )
         s.calibration_points = {"points": points or []}
         return s
 
@@ -491,7 +493,9 @@ async def test_fallback_rejects_multiple_active_sessions(db_session):
     ):
         repo_instance = repo_cls.return_value
         repo_instance.get_active_session = AsyncMock(return_value=None)
-        repo_instance.get_sessions_for_sensor = AsyncMock(return_value=[_PhSession(), _EcSession()])
+        repo_instance.get_sessions_for_sensor = AsyncMock(
+            return_value=[_PhSession(), _EcSession()]
+        )
 
         topic = "kaiser/main/esp/ESP_TEST_001/sensor/0/response"
         payload = {

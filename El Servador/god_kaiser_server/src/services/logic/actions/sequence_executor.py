@@ -860,7 +860,9 @@ class SequenceActionExecutor(BaseActionExecutor):
                 exc_info=True,
             )
 
-    async def _run_measure_binding_hook(self, progress: "SequenceProgress", hook: str) -> None:
+    async def _run_measure_binding_hook(
+        self, progress: "SequenceProgress", hook: str
+    ) -> None:
         """
         AUT-1396: observe-only measure-binding hook.
 

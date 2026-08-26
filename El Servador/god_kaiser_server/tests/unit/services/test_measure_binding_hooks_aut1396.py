@@ -31,7 +31,9 @@ from src.services.logic.measure_live_reader import MeasureReadFailure, MeasureRe
 
 def _binding(**overrides):
     base = {
-        "sensor_refs": [{"esp_id": "ESP_12AB34CD", "gpio": 34, "sensor_type": "ec"}],
+        "sensor_refs": [
+            {"esp_id": "ESP_12AB34CD", "gpio": 34, "sensor_type": "ec"}
+        ],
         "hooks": ["on_start", "on_complete"],
         "formula_id": "difference",
         "formula_params": {},
@@ -47,7 +49,9 @@ def test_attach_without_bindings_returns_same_list_identity():
     assert out is actions
     out2 = attach_measure_bindings_to_sequences(actions, {})
     assert out2 is actions
-    out3 = attach_measure_bindings_to_sequences(actions, {"dose_config": {"target_value": 1.0}})
+    out3 = attach_measure_bindings_to_sequences(
+        actions, {"dose_config": {"target_value": 1.0}}
+    )
     assert out3 is actions
 
 
@@ -56,7 +60,9 @@ def test_attach_copies_bindings_onto_sequence_action_only():
         {"type": "actuator", "esp_id": "ESP_1", "gpio": 1},
         {"type": "sequence", "steps": [{"delay_seconds": 1}]},
     ]
-    out = attach_measure_bindings_to_sequences(actions, {"measure_bindings": [_binding()]})
+    out = attach_measure_bindings_to_sequences(
+        actions, {"measure_bindings": [_binding()]}
+    )
     assert out is not actions
     assert MEASURE_BINDINGS_ACTION_KEY not in out[0]
     assert out[1][MEASURE_BINDINGS_ACTION_KEY][0]["formula_id"] == "difference"

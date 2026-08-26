@@ -165,7 +165,9 @@ class TestRestoreBackup:
         await db_session.delete(event)
         await db_session.commit()
 
-        result = await backup_service.restore_backup(backup_id, delete_after_restore=False)
+        result = await backup_service.restore_backup(
+            backup_id, delete_after_restore=False
+        )
 
         assert result["backup_id"] == backup_id
         assert result["restored_count"] == 1

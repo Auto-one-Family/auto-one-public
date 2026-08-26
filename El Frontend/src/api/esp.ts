@@ -284,6 +284,9 @@ export function mapSensorConfigToMockSensor(config: SensorConfigResponse): MockS
     calibration: config.calibration ?? null,
     calibration_interval_days: config.calibration_interval_days ?? null,
     temp_sensor_config_id: config.temp_sensor_config_id ?? null,
+    mount_height_cm: config.mount_height_cm ?? null,
+    mount_medium: config.mount_medium ?? null,
+    mount_angle_deg: config.mount_angle_deg ?? null,
   }
 }
 

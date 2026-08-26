@@ -70,7 +70,7 @@ def _agent_debug_log(
         }
         line = json.dumps(entry, ensure_ascii=True) + "\n"
         for candidate_path in (
-            "/tmp/debug.log",
+            "/home/robin/.cursor/debug-eea42f.log",
             "/app/logs/debug-eea42f.log",
         ):
             try:
@@ -263,11 +263,9 @@ class Subscriber:
                 topic_class = (
                     "heartbeat"
                     if topic.endswith("/system/heartbeat")
-                    else (
-                        "heartbeat_metrics"
-                        if topic.endswith("/system/heartbeat_metrics")
-                        else "other"
-                    )
+                    else "heartbeat_metrics"
+                    if topic.endswith("/system/heartbeat_metrics")
+                    else "other"
                 )
                 payload_preview = payload_str[:160].replace("\n", "\\n").replace("\r", "\\r")
                 logger.error(
@@ -340,7 +338,11 @@ class Subscriber:
                 # Submit handler to thread pool for async execution
                 # This prevents blocking MQTT network loop
                 try:
-                    target_executor = self.priority_executor if latency_critical else self.executor
+                    target_executor = (
+                        self.priority_executor
+                        if latency_critical
+                        else self.executor
+                    )
                     # #region agent log
                     if is_off_response:
                         _agent_debug_log(

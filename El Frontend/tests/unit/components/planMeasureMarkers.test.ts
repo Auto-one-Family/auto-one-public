@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildPlannedMeasureMarkers,
+  defaultExecutedMeasureWindowStartMs,
   isPlanPlantMeasureEventType,
 } from '@/components/plan-timeline/planMeasureMarkers'
 import { buildPlanTimelineWindow } from '@/components/plan-timeline/planTimelineTracks'
@@ -78,5 +79,14 @@ describe('planMeasureMarkers', () => {
     )
     expect(markers[0].leftPct).toBeCloseTo(50, 0)
     expect(markers[0].label).toBe('Schnitt')
+  })
+
+  it('should clamp default executed window to the current phase start', () => {
+    const phaseStart = NOW - 15 * 60 * 1000
+    expect(defaultExecutedMeasureWindowStartMs(NOW, phaseStart)).toBe(phaseStart)
+    expect(defaultExecutedMeasureWindowStartMs(NOW, NOW - 3 * 60 * 60 * 1000)).toBe(
+      NOW - 60 * 60 * 1000,
+    )
+    expect(defaultExecutedMeasureWindowStartMs(NOW)).toBe(NOW - 60 * 60 * 1000)
   })
 })

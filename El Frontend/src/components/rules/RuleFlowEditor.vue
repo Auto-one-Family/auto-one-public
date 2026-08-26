@@ -16,6 +16,7 @@
 
 import { ref, watch } from 'vue'
 import { VueFlow, Position, MarkerType, useVueFlow } from '@vue-flow/core'
+import type { DefaultEdgeOptions, SnapGrid } from '@vue-flow/core'
 import { Background } from '@vue-flow/background'
 import { Controls } from '@vue-flow/controls'
 import { MiniMap } from '@vue-flow/minimap'
@@ -118,6 +119,17 @@ const espStore = useEspStore()
 const toast = useToast()
 
 // Vue Flow instance
+// Options passed as <VueFlow> props (not useVueFlow()) — avoids the "options
+// parameter is deprecated" warning, which only fires when useVueFlow() is
+// called with an options object from outside the VueFlow component itself.
+const FLOW_SNAP_GRID_SIZE = 20
+const flowDefaultEdgeOptions: DefaultEdgeOptions = {
+  animated: true,
+  type: 'smoothstep',
+  markerEnd: MarkerType.ArrowClosed,
+}
+const flowSnapGrid: SnapGrid = [FLOW_SNAP_GRID_SIZE, FLOW_SNAP_GRID_SIZE]
+
 const {
   nodes,
   edges,
@@ -134,16 +146,7 @@ const {
   onNodesInitialized,
   setNodes,
   setEdges,
-} = useVueFlow({
-  defaultEdgeOptions: {
-    animated: true,
-    type: 'smoothstep',
-    markerEnd: MarkerType.ArrowClosed,
-  },
-  fitViewOnInit: false,
-  snapToGrid: true,
-  snapGrid: [20, 20] as [number, number],
-})
+} = useVueFlow()
 
 const flowWrapper = ref<HTMLElement | null>(null)
 const isDragOver = ref(false)
@@ -198,7 +201,7 @@ const SENSOR_CONFIG: Record<string, SensorMeta> = {
   // AUT-1271: unit display comes from getSensorUnit (SSOT µS/cm); local unit is fallback only
   EC:            { icon: Zap,          unit: 'µS/cm', label: 'Leitfähigkeit' },
   moisture:      { icon: Waves,        unit: '%',    label: 'Bodenfeuchte' },
-  light:         { icon: Sun,          unit: 'lux',  label: 'Licht' },
+  light:         { icon: Sun,          unit: 'lux',  label: 'Beleuchtungsstärke' },
   co2:           { icon: Wind,         unit: 'ppm',  label: 'CO₂' },
   flow:          { icon: Waves,        unit: 'L/m',  label: 'Durchfluss' },
   level:         { icon: Leaf,         unit: '%',    label: 'Füllstand' },
@@ -954,9 +957,9 @@ function graphToRuleData(): {
             : 0
         conditions.push({
           type: 'time_window',
-          start_hour: node.data.startHour || 0,
+          start_hour: node.data.startHour ?? 0,
           start_minute: normalizedStartMinute,
-          end_hour: node.data.endHour || 23,
+          end_hour: node.data.endHour ?? 23,
           end_minute: normalizedEndMinute,
           ...(node.data.daysOfWeek?.length ? { days_of_week: node.data.daysOfWeek } : {}),
           timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
@@ -1717,6 +1720,10 @@ defineExpose({
       :default-zoom="1"
       :min-zoom="0.3"
       :max-zoom="2"
+      :default-edge-options="flowDefaultEdgeOptions"
+      :fit-view-on-init="false"
+      :snap-to-grid="true"
+      :snap-grid="flowSnapGrid"
     >
       <!-- ======================== SENSOR NODE ======================== -->
       <template #node-sensor="{ data, id }">

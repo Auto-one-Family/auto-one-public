@@ -20,6 +20,7 @@
  *   @validation-change="onValidationChange"
  * />
  *
+ * @author KI-Agent (Claude)
  * @since Phase 5 (GPIO-Picker & Add-Sensor/Actuator-Flow)
  */
 

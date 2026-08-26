@@ -268,29 +268,6 @@ class NotificationRepository(BaseRepository[Notification]):
         Only call when fingerprint is set in notification_data.
         Falls back to sequential check-then-insert on non-PostgreSQL dialects (test env).
         """
-        bind = getattr(self.session, "bind", None)
-        if bind is None:
-            sync_session = getattr(self.session, "sync_session", None)
-            bind = getattr(sync_session, "bind", None) if sync_session is not None else None
-        dialect_name = getattr(getattr(bind, "dialect", None), "name", "") or ""
-        if dialect_name != "postgresql":
-            is_dup = await self.check_fingerprint_duplicate(notification_data["fingerprint"])
-            if is_dup:
-                dup_stmt = (
-                    select(Notification)
-                    .where(
-                        and_(
-                            Notification.fingerprint == notification_data["fingerprint"],
-                            Notification.status.in_([AlertStatus.ACTIVE, AlertStatus.ACKNOWLEDGED]),
-                        )
-                    )
-                    .limit(1)
-                )
-                dup_result = await self.session.execute(dup_stmt)
-                return dup_result.scalar_one_or_none(), False
-            notification = await self.create(**notification_data)
-            return notification, True
-
         try:
             stmt = (
                 postgresql.insert(Notification)

@@ -1,7 +1,7 @@
 """Add nutrient_phase column and nutrient_phase_changed event type (AUT-1183)
 
 Introduces a second, independent phase axis on the plants table for the
-nutrient/fertilizer schedule.  An operator deliberately runs the light
+nutrient/fertilizer schedule.  A Cannabis grower deliberately runs the light
 cycle and the nutrient programme out of phase — e.g. 12/12 light (=Blüte)
 while still on a transition-formula Nährlösung.  A single ``phase`` column
 cannot represent both states simultaneously.

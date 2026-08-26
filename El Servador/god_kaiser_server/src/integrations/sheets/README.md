@@ -12,7 +12,7 @@ geplanten Sheets-Export. Es liefert ausschliesslich:
 Die eigentliche Export-Pipeline (Scheduler, Tab-Rotation, Cursor) ist
 **explizit nicht Teil von S1** und folgt in den Sub-Issues S2-S5.
 
-## Architektur-Entscheidungen (von operators fixiert)
+## Architektur-Entscheidungen (von Robin/TM fixiert)
 
 | Frage | Entscheidung |
 |-------|-------------|
@@ -23,7 +23,7 @@ Die eigentliche Export-Pipeline (Scheduler, Tab-Rotation, Cursor) ist
 
 ## Provisionierung (Operator-Runbook)
 
-1. **Google Cloud Project** im operator-Workspace anlegen oder
+1. **Google Cloud Project** im `11grower`-Workspace anlegen oder
    wiederverwenden (`gcloud projects create autoone-sheets` o. ae.).
 2. **Sheets API + Drive API aktivieren** (UI: APIs & Services → Library).
 3. **Service-Account erstellen**:
@@ -36,8 +36,8 @@ Die eigentliche Export-Pipeline (Scheduler, Tab-Rotation, Cursor) ist
    sudo install -m 0600 -o root -g root sheets_sa.json /secrets/sheets_sa.json
    ```
 
-5. **Spreadsheet im operator-Workspace** anlegen (Owner: operator) und teilen:
-   - `operator@example.com` als **Editor**
+5. **Spreadsheet im 11grower-Workspace** anlegen (Owner: Robin) und teilen:
+   - `christoph@…` als **Editor**
    - `autoone-sheets-exporter@<projekt>.iam.gserviceaccount.com` als
      **Editor** (Mail steht im JSON-Feld `client_email`).
 6. **Spreadsheet-ID** aus der URL extrahieren (Teil zwischen `/d/` und `/edit`).
@@ -113,7 +113,7 @@ das Paket fehlt, gibt es einen klaren `SheetsAuthError` mit Code
 ## Verifikation
 
 ```bash
-cd "/path/to/god_kaiser_server"
+cd "/home/robin/autoone/El Servador/god_kaiser_server"
 poetry run pytest tests/unit/integrations/test_sheets_auth.py -v
 poetry run ruff check src/integrations/sheets/ src/core/config.py
 ```

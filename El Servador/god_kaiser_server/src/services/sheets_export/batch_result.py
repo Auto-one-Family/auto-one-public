@@ -17,12 +17,12 @@ from typing import Any, Dict, Optional
 class ExportStatus(str, enum.Enum):
     """Final status of an export batch run."""
 
-    SUCCESS = "success"  # Cursor advanced, all rows written.
+    SUCCESS = "success"           # Cursor advanced, all rows written.
     NOTHING_TO_DO = "nothing_to_do"  # No new rows since last cursor.
-    DRY_RUN = "dry_run"  # No writes performed (cursor unchanged).
-    FAILED_RETRYABLE = "failed_retryable"  # Aborted after max retries.
+    DRY_RUN = "dry_run"           # No writes performed (cursor unchanged).
+    FAILED_RETRYABLE = "failed_retryable"    # Aborted after max retries.
     FAILED_NON_RETRYABLE = "failed_non_retryable"  # 403/404/config error.
-    SKIPPED_DISABLED = "skipped_disabled"  # SHEETS_EXPORT_ENABLED=false.
+    SKIPPED_DISABLED = "skipped_disabled"    # SHEETS_EXPORT_ENABLED=false.
 
 
 @dataclass

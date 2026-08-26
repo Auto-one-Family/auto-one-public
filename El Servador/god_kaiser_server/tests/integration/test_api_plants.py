@@ -226,7 +226,9 @@ class TestPlantLocationResponse:
         plant_with_subzone_and_zone: Plant,
         operator_headers: dict,
     ):
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
             list_response = await client.get(
                 "/api/v1/plants",
                 headers=operator_headers,
@@ -257,7 +259,9 @@ class TestPlantLocationResponse:
         sample_plant: Plant,
         operator_headers: dict,
     ):
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
             response = await client.get(
                 f"/api/v1/plants/{sample_plant.plant_id}",
                 headers=operator_headers,
@@ -274,7 +278,9 @@ class TestPlantLocationResponse:
         plant_with_zoneless_subzone: Plant,
         operator_headers: dict,
     ):
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
             response = await client.get(
                 f"/api/v1/plants/{plant_with_zoneless_subzone.plant_id}",
                 headers=operator_headers,
@@ -293,7 +299,9 @@ class TestPlantLocationResponse:
         operator_headers: dict,
     ):
         """AUT-1073: parent_zone_id is effective; zone_id is stored direct (null here)."""
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
             response = await client.get(
                 f"/api/v1/plants/{plant_with_subzone_and_zone.plant_id}",
                 headers=operator_headers,
@@ -322,7 +330,9 @@ class TestListLifecycleEvents:
     ):
         """ActiveUser (operator) can fetch lifecycle events and receives 200."""
         plant_id = plant_with_events.plant_id
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
             response = await client.get(
                 f"/api/v1/plants/{plant_id}/lifecycle-events",
                 headers=operator_headers,
@@ -342,7 +352,9 @@ class TestListLifecycleEvents:
     ):
         """Viewer role (ActiveUser) can also fetch lifecycle events."""
         plant_id = plant_with_events.plant_id
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
             response = await client.get(
                 f"/api/v1/plants/{plant_id}/lifecycle-events",
                 headers=viewer_headers,
@@ -359,7 +371,9 @@ class TestListLifecycleEvents:
     ):
         """Events are returned oldest-first (event_timestamp ASC)."""
         plant_id = plant_with_events.plant_id
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
             response = await client.get(
                 f"/api/v1/plants/{plant_id}/lifecycle-events",
                 headers=operator_headers,
@@ -378,8 +392,12 @@ class TestListLifecycleEvents:
     async def test_unauthenticated_returns_401(self, sample_plant: Plant):
         """Request without token is rejected with 401."""
         plant_id = sample_plant.plant_id
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.get(f"/api/v1/plants/{plant_id}/lifecycle-events")
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.get(
+                f"/api/v1/plants/{plant_id}/lifecycle-events"
+            )
 
         assert response.status_code == 401
 
@@ -387,7 +405,9 @@ class TestListLifecycleEvents:
     async def test_unknown_plant_returns_404(self, operator_headers: dict):
         """Unknown plant_id returns 404."""
         unknown_id = uuid.uuid4()
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
             response = await client.get(
                 f"/api/v1/plants/{unknown_id}/lifecycle-events",
                 headers=operator_headers,
@@ -403,7 +423,9 @@ class TestListLifecycleEvents:
     ):
         """Plant with no events returns empty list with total=0."""
         plant_id = sample_plant.plant_id
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
             response = await client.get(
                 f"/api/v1/plants/{plant_id}/lifecycle-events",
                 headers=operator_headers,
@@ -427,7 +449,9 @@ class TestListLifecycleEvents:
         plant.deleted_by = 1
         await db_session.commit()
 
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
             response = await client.get(
                 f"/api/v1/plants/{plant.plant_id}/lifecycle-events",
                 headers=operator_headers,
@@ -453,7 +477,9 @@ class TestAddLifecycleEventRoleGuard:
     ):
         """Viewer can post note_added event -> 201."""
         plant_id = sample_plant.plant_id
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
             response = await client.post(
                 f"/api/v1/plants/{plant_id}/lifecycle-event",
                 json={"event_type": "note_added", "note": "Sieht gut aus"},
@@ -473,7 +499,9 @@ class TestAddLifecycleEventRoleGuard:
     ):
         """Viewer posting phase_changed is rejected with 403."""
         plant_id = sample_plant.plant_id
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
             response = await client.post(
                 f"/api/v1/plants/{plant_id}/lifecycle-event",
                 json={"event_type": "phase_changed", "new_phase": "bluete-bulk"},
@@ -491,7 +519,9 @@ class TestAddLifecycleEventRoleGuard:
     ):
         """Viewer posting transplanted (structural event) is rejected with 403."""
         plant_id = sample_plant.plant_id
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
             response = await client.post(
                 f"/api/v1/plants/{plant_id}/lifecycle-event",
                 json={"event_type": "transplanted"},
@@ -509,7 +539,9 @@ class TestAddLifecycleEventRoleGuard:
     ):
         """Operator can post phase_changed -> 201 and plant phase is updated."""
         plant_id = sample_plant.plant_id
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
             response = await client.post(
                 f"/api/v1/plants/{plant_id}/lifecycle-event",
                 json={
@@ -534,7 +566,9 @@ class TestAddLifecycleEventRoleGuard:
         """Operator can post any event type in LIFECYCLE_EVENT_TYPES."""
         plant_id = sample_plant.plant_id
         # Test a representative non-phase event (no phase semantics)
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
             response = await client.post(
                 f"/api/v1/plants/{plant_id}/lifecycle-event",
                 json={"event_type": "defoliation", "note": "Light defoliation"},
@@ -548,7 +582,9 @@ class TestAddLifecycleEventRoleGuard:
     async def test_unauthenticated_post_returns_401(self, sample_plant: Plant):
         """Unauthenticated POST is rejected with 401."""
         plant_id = sample_plant.plant_id
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
             response = await client.post(
                 f"/api/v1/plants/{plant_id}/lifecycle-event",
                 json={"event_type": "note_added", "note": "no auth"},
@@ -585,7 +621,9 @@ class TestNutrientPhaseAxis:
         plant_id = sample_plant.plant_id
         original_phase = sample_plant.phase  # "veg-frueh"
 
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
             response = await client.post(
                 f"/api/v1/plants/{plant_id}/lifecycle-event",
                 json={
@@ -603,7 +641,9 @@ class TestNutrientPhaseAxis:
         assert data["previous_phase"] is None
 
         # Verify via GET that nutrient_phase was set but phase is unchanged
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
             plant_response = await client.get(
                 f"/api/v1/plants/{plant_id}",
                 headers=operator_headers,
@@ -611,9 +651,9 @@ class TestNutrientPhaseAxis:
 
         plant_data = plant_response.json()
         assert plant_data["nutrient_phase"] == "bluete-stretch"
-        assert (
-            plant_data["phase"] == original_phase
-        ), "light/growth phase must not change when nutrient_phase_changed is posted"
+        assert plant_data["phase"] == original_phase, (
+            "light/growth phase must not change when nutrient_phase_changed is posted"
+        )
 
     @pytest.mark.asyncio
     async def test_two_axis_events_same_day_do_not_overwrite(
@@ -628,7 +668,9 @@ class TestNutrientPhaseAxis:
         """
         plant_id = sample_plant.plant_id
 
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
             # Event 1: change light/growth phase
             r1 = await client.post(
                 f"/api/v1/plants/{plant_id}/lifecycle-event",
@@ -655,12 +697,12 @@ class TestNutrientPhaseAxis:
             )
 
         plant_data = plant_response.json()
-        assert (
-            plant_data["phase"] == "bluete-bulk"
-        ), "light/growth phase must reflect phase_changed event"
-        assert (
-            plant_data["nutrient_phase"] == "veg-spaet"
-        ), "nutrient phase must reflect nutrient_phase_changed event independently"
+        assert plant_data["phase"] == "bluete-bulk", (
+            "light/growth phase must reflect phase_changed event"
+        )
+        assert plant_data["nutrient_phase"] == "veg-spaet", (
+            "nutrient phase must reflect nutrient_phase_changed event independently"
+        )
 
     @pytest.mark.asyncio
     async def test_nutrient_phase_changed_without_new_phase_returns_400(
@@ -670,7 +712,9 @@ class TestNutrientPhaseAxis:
     ):
         """``nutrient_phase_changed`` without ``new_phase`` is rejected with 400."""
         plant_id = sample_plant.plant_id
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
             response = await client.post(
                 f"/api/v1/plants/{plant_id}/lifecycle-event",
                 json={"event_type": "nutrient_phase_changed"},
@@ -686,7 +730,9 @@ class TestNutrientPhaseAxis:
         operator_headers: dict,
     ):
         """Plant can be created with both axes set from the start."""
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
             response = await client.post(
                 "/api/v1/plants",
                 json={
@@ -709,7 +755,9 @@ class TestNutrientPhaseAxis:
         operator_headers: dict,
     ):
         """Plants created without nutrient_phase have nutrient_phase=None."""
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
             response = await client.post(
                 "/api/v1/plants",
                 json={
@@ -736,7 +784,9 @@ class TestNutrientPhaseAxis:
         """
         plant_id = sample_plant.plant_id
 
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
             # First nutrient phase transition
             await client.post(
                 f"/api/v1/plants/{plant_id}/lifecycle-event",
@@ -766,7 +816,9 @@ class TestNutrientPhaseAxis:
     ):
         """Viewer posting nutrient_phase_changed is rejected with 403."""
         plant_id = sample_plant.plant_id
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
             response = await client.post(
                 f"/api/v1/plants/{plant_id}/lifecycle-event",
                 json={
@@ -807,7 +859,9 @@ class TestPhaseChronologyDerivation:
         newer_ts = (now - timedelta(days=5)).isoformat().replace("+00:00", "Z")
         older_ts = (now - timedelta(days=20)).isoformat().replace("+00:00", "Z")
 
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
             r_newer = await client.post(
                 f"/api/v1/plants/{plant_id}/lifecycle-event",
                 json={
@@ -845,7 +899,9 @@ class TestPhaseChronologyDerivation:
 
         assert plant_response.json()["phase"] == "bluete-stretch"
         phase_events = [
-            e for e in events_response.json()["events"] if e["event_type"] == "phase_changed"
+            e
+            for e in events_response.json()["events"]
+            if e["event_type"] == "phase_changed"
         ]
         assert len(phase_events) == 2
         assert any(e["event_id"] == backdated["event_id"] for e in phase_events)
@@ -864,7 +920,9 @@ class TestPhaseChronologyDerivation:
         newer_ts = (now - timedelta(days=3)).isoformat().replace("+00:00", "Z")
         older_ts = (now - timedelta(days=15)).isoformat().replace("+00:00", "Z")
 
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
             r_newer = await client.post(
                 f"/api/v1/plants/{plant_id}/lifecycle-event",
                 json={
@@ -912,7 +970,9 @@ class TestPhaseChronologyDerivation:
         older_ts = (now - timedelta(days=10)).isoformat().replace("+00:00", "Z")
         newer_ts = (now - timedelta(days=1)).isoformat().replace("+00:00", "Z")
 
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
             await client.post(
                 f"/api/v1/plants/{plant_id}/lifecycle-event",
                 json={
@@ -1042,7 +1102,9 @@ class TestZonePlantSummary:
         field names alone.
         """
         zone_id = zone_with_plants
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
             response = await client.get(
                 f"/api/v1/plants/zone-summary/{zone_id}",
                 headers=operator_headers,
@@ -1053,13 +1115,14 @@ class TestZonePlantSummary:
 
         # Both axis fields must be present in the response.
         assert "phases" in data, "light/growth histogram must be present"
-        assert "nutrient_phase_histogram" in data, "nutrient histogram must be present (AUT-1194)"
+        assert "nutrient_phase_histogram" in data, (
+            "nutrient histogram must be present (AUT-1194)"
+        )
 
         # Light/growth axis: all 3 plants counted.
-        assert data["phases"] == {
-            "bluete-bulk": 2,
-            "veg-frueh": 1,
-        }, "phases must reflect the light/growth axis for all active plants"
+        assert data["phases"] == {"bluete-bulk": 2, "veg-frueh": 1}, (
+            "phases must reflect the light/growth axis for all active plants"
+        )
 
         # Nutrient axis: only plants A and C have nutrient_phase set.
         assert data["nutrient_phase_histogram"] == {"veg-spaet": 2}, (
@@ -1079,7 +1142,9 @@ class TestZonePlantSummary:
         Zone with no plants returns zero plant_count and empty histograms
         for both axes — no 404, the endpoint is zone-existence-agnostic.
         """
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
             response = await client.get(
                 "/api/v1/plants/zone-summary/nonexistent_zone_xyz",
                 headers=operator_headers,
@@ -1131,7 +1196,9 @@ class TestZonePlantSummary:
         db_session.add(plant)
         await db_session.commit()
 
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
             response = await client.get(
                 f"/api/v1/plants/zone-summary/{zone_id}",
                 headers=operator_headers,
@@ -1142,9 +1209,9 @@ class TestZonePlantSummary:
         assert data["plant_count"] == 1
         assert data["phases"] == {"clone": 1}
         # nutrient histogram must be empty — the only plant has no nutrient phase
-        assert (
-            data["nutrient_phase_histogram"] == {}
-        ), "NULL nutrient_phase must not appear in nutrient_phase_histogram"
+        assert data["nutrient_phase_histogram"] == {}, (
+            "NULL nutrient_phase must not appear in nutrient_phase_histogram"
+        )
 
 
 # =============================================================================
@@ -1176,7 +1243,9 @@ class TestPlantPatchSubzoneAut1266:
         db_session.add_all([zone, subzone])
         await db_session.commit()
 
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
             response = await client.patch(
                 f"/api/v1/plants/{sample_plant.plant_id}",
                 json={"subzone_id": str(subzone.id)},
@@ -1198,7 +1267,9 @@ class TestPlantPatchSubzoneAut1266:
         operator_headers: dict,
     ):
         missing = uuid.uuid4()
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
             response = await client.patch(
                 f"/api/v1/plants/{sample_plant.plant_id}",
                 json={"subzone_id": str(missing)},
@@ -1228,7 +1299,9 @@ class TestPlantDirectZoneAssignmentAut1073:
         db_session.add(zone)
         await db_session.commit()
 
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
             create_resp = await client.post(
                 "/api/v1/plants",
                 json={"zone_id": "zone_direct_aut1073"},
@@ -1291,7 +1364,9 @@ class TestPlantDirectZoneAssignmentAut1073:
         db_session.add_all([zone, subzone, plant])
         await db_session.commit()
 
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
             response = await client.get(
                 f"/api/v1/plants/{plant.plant_id}",
                 headers=operator_headers,
@@ -1325,7 +1400,9 @@ class TestPlantDirectZoneAssignmentAut1073:
         db_session.add_all([zone_a, zone_b, subzone])
         await db_session.commit()
 
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
             response = await client.patch(
                 f"/api/v1/plants/{sample_plant.plant_id}",
                 json={
@@ -1371,7 +1448,9 @@ class TestPlantDirectZoneAssignmentAut1073:
         db_session.add_all([zone, subzone, plant])
         await db_session.commit()
 
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
             response = await client.get(
                 f"/api/v1/plants/{plant.plant_id}",
                 headers=operator_headers,

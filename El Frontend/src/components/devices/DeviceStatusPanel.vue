@@ -57,7 +57,10 @@ const contextSensor = computed(() => {
     && String(sensor.sensor_type ?? '').toLowerCase() === normalizedType,
   ) ?? null
 })
-const deviceName = computed(() => (contextDevice.value as any)?.name || props.espId)
+const deviceName = computed(() => {
+  const named = (contextDevice.value as { name?: string | null } | undefined)?.name?.trim()
+  return named || ''
+})
 /**
  * AUT-1523: Aktor-Name steht einmal im Config-Input. Status-Kopf zeigt den
  * Typ (Pumpe/Ventil/…), nicht den Eigennamen und nicht GPIO als Identität.
@@ -249,7 +252,7 @@ function formatDuration(seconds: number | null): string {
   <div class="status-panel">
     <!-- Header: Typ (Aktor) / Gerätename (Sensor) · ESP · Online. GPIO nicht als Aktor-Identität. -->
     <div class="status-panel__header">
-      <span class="status-panel__name">{{ primaryName }}</span>
+      <span v-if="primaryName" class="status-panel__name">{{ primaryName }}</span>
       <span v-if="statusMeta" class="status-panel__meta">{{ statusMeta }}</span>
       <span
         class="status-panel__online"

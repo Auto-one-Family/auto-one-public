@@ -31,6 +31,7 @@ from ..sensors.adc_normalization import (
 )
 from ..sensors.sensor_type_registry import normalize_sensor_type
 from .calibration_payloads import (
+    attach_valid_until,
     build_canonical_calibration_result,
     canonicalize_calibration_data,
 )
@@ -203,10 +204,7 @@ class CalibrationService:
                     source = str(session_metadata.get("calibration_temperature_source") or "manual")
                     return value, source
             except (TypeError, ValueError):
-                logger.warning(
-                    "Invalid explicit calibration_temperature in session metadata: %s",
-                    explicit_temp,
-                )
+                logger.warning("Invalid explicit calibration_temperature in session metadata: %s", explicit_temp)
 
         sensor_repo = SensorRepository(self.session)
         now_utc = datetime.now(timezone.utc)
@@ -221,16 +219,9 @@ class CalibrationService:
                     sensor_type=linked.sensor_type,
                 )
                 if reading is not None and reading.processed_value is not None:
-                    ts = (
-                        reading.timestamp
-                        if reading.timestamp.tzinfo
-                        else reading.timestamp.replace(tzinfo=timezone.utc)
-                    )
+                    ts = reading.timestamp if reading.timestamp.tzinfo else reading.timestamp.replace(tzinfo=timezone.utc)
                     if now_utc - ts <= max_age:
-                        return (
-                            float(reading.processed_value),
-                            f"config:{sensor_config.temp_sensor_config_id}",
-                        )
+                        return float(reading.processed_value), f"config:{sensor_config.temp_sensor_config_id}"
 
         if esp_device_id is not None:
             for temp_type in ("temperature", "sht31_temp"):
@@ -240,11 +231,7 @@ class CalibrationService:
                 )
                 if reading is None or reading.processed_value is None:
                     continue
-                ts = (
-                    reading.timestamp
-                    if reading.timestamp.tzinfo
-                    else reading.timestamp.replace(tzinfo=timezone.utc)
-                )
+                ts = reading.timestamp if reading.timestamp.tzinfo else reading.timestamp.replace(tzinfo=timezone.utc)
                 if now_utc - ts <= max_age:
                     return float(reading.processed_value), f"same_esp:{temp_type}"
 
@@ -738,7 +725,9 @@ class CalibrationService:
                 )
 
         # AUT-299: Read calibration_temperature from session_metadata (default 25.0°C NIST).
-        cal_temp = float((cal_session.session_metadata or {}).get("calibration_temperature", 25.0))
+        cal_temp = float(
+            (cal_session.session_metadata or {}).get("calibration_temperature", 25.0)
+        )
 
         # Determine the acquisition source of the sensor being calibrated so that
         # the RAW->voltage normalization at calibration time is identical to the
@@ -808,11 +797,18 @@ class CalibrationService:
 
         return updated
 
-    async def apply(self, session_id: uuid.UUID) -> CalibrationSession:
+    async def apply(
+        self,
+        session_id: uuid.UUID,
+        valid_until: Optional[datetime] = None,
+    ) -> CalibrationSession:
         """
         Apply the calibration result to the sensor configuration.
 
         Persists calibration_data to the sensor's config in the DB.
+        AUT-1576: attaches nullable ``derived.valid_until`` on the existing blob
+        and session result. Query wins over ``session_metadata.valid_until``.
+        No default interval. Does not copy ``initiated_by``.
 
         Raises:
             CalibrationError: If session not in FINALIZING state or sensor not found
@@ -871,6 +867,13 @@ class CalibrationService:
                 "Invalid calibration result payload for apply",
                 "APPLY_PERSISTENCE_REQUIRED",
             )
+
+        resolved_valid_until = valid_until
+        if resolved_valid_until is None:
+            resolved_valid_until = (cal_session.session_metadata or {}).get("valid_until")
+        attach_valid_until(canonical_payload, resolved_valid_until)
+        # Keep session event + last blob aligned (no second event table).
+        cal_session.calibration_result = canonical_payload
 
         try:
             sensor.calibration_data = canonical_payload

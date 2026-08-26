@@ -403,7 +403,8 @@ class TestRegistryConsistency:
             for value_def in definition["values"]:
                 sub_type = value_def["sensor_type"]
                 assert sub_type in SENSOR_TYPE_MAPPING, (
-                    f"{device_type} sub-type '{sub_type}' missing from " f"SENSOR_TYPE_MAPPING"
+                    f"{device_type} sub-type '{sub_type}' missing from "
+                    f"SENSOR_TYPE_MAPPING"
                 )
 
     def test_virtual_sensor_types_is_set(self):

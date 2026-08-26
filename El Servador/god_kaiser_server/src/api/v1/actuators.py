@@ -114,10 +114,14 @@ def _model_to_schema_response(
     """
     safety = actuator.safety_constraints or {}
     max_runtime_seconds = (
-        safety["max_runtime"] if "max_runtime" in safety else safety.get("max_runtime_seconds")
+        safety["max_runtime"]
+        if "max_runtime" in safety
+        else safety.get("max_runtime_seconds")
     )
     cooldown_seconds = (
-        safety["cooldown_period"] if "cooldown_period" in safety else safety.get("cooldown_seconds")
+        safety["cooldown_period"]
+        if "cooldown_period" in safety
+        else safety.get("cooldown_seconds")
     )
 
     # Normalize possible millisecond storage to seconds (future proof)
@@ -622,14 +626,18 @@ async def create_or_update_actuator(
 
     # AUT-1419 B2: optional NPK recompute beside stock identity write.
     # Does NOT alter concentration / stock_recipe_ref / stock_prepared_at semantics.
-    if "stock_recipe_ref" in request.model_fields_set and actuator.stock_recipe_ref is not None:
+    if (
+        "stock_recipe_ref" in request.model_fields_set
+        and actuator.stock_recipe_ref is not None
+    ):
         try:
             from ...services.stock_mix_npk import recompute_recipe_by_id
 
             await recompute_recipe_by_id(db, actuator.stock_recipe_ref)
         except Exception as e:
             logger.warning(
-                "AUT-1419 NPK recompute after stock_recipe_ref write failed " "for recipe %s: %s",
+                "AUT-1419 NPK recompute after stock_recipe_ref write failed "
+                "for recipe %s: %s",
                 actuator.stock_recipe_ref,
                 e,
                 exc_info=True,

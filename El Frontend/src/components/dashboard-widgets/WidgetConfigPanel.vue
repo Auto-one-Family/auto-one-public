@@ -238,9 +238,12 @@ const resolvedSensorSelectId = computed(() => {
 const orphanSensorOption = computed(() => {
   const id = resolvedSensorSelectId.value
   if (!id || sensorOptionValues.value.has(id)) return null
+  if (isConfigId(id)) {
+    return { value: id, label: 'Sensor' }
+  }
   const parsed = parseSensorId(id)
   if (!parsed.isValid || !parsed.espId || parsed.gpio == null) {
-    return { value: id, label: id }
+    return { value: id, label: 'Sensor' }
   }
   const device = espStore.devices.find(d => espStore.getDeviceId(d) === parsed.espId)
   const sensor = device
@@ -248,11 +251,14 @@ const orphanSensorOption = computed(() => {
         s => s.gpio === parsed.gpio && (!parsed.sensorType || s.sensor_type === parsed.sensorType)
       )
     : null
-  const espName = device?.name?.trim() || parsed.espId
   const sensorLabel = sensor
     ? getSensorDisplayName({ sensor_type: sensor.sensor_type || parsed.sensorType || '', name: sensor.name })
-    : (parsed.sensorType ? formatSensorType(parsed.sensorType) : `GPIO ${parsed.gpio}`)
-  return { value: id, label: `${espName} · ${sensorLabel}` }
+    : (parsed.sensorType ? formatSensorType(parsed.sensorType) : 'Sensor')
+  const deviceName = device?.name?.trim()
+  return {
+    value: id,
+    label: deviceName && deviceName !== sensorLabel ? `${deviceName} · ${sensorLabel}` : sensorLabel,
+  }
 })
 
 watch(

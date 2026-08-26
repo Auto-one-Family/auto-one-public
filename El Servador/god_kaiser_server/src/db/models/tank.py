@@ -29,7 +29,9 @@ TANK_OPERATION_MODES: tuple[str, ...] = (
     "recirculating",
 )
 
-_OPERATION_MODE_CHECK = f"operation_mode IN ({', '.join(repr(m) for m in TANK_OPERATION_MODES)})"
+_OPERATION_MODE_CHECK = (
+    f"operation_mode IN ({', '.join(repr(m) for m in TANK_OPERATION_MODES)})"
+)
 
 
 class Tank(Base, TimestampMixin):

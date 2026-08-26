@@ -23,7 +23,9 @@ from src.services.logic.conditions.running_state_evaluator import (
 
 class _FakeSequenceExecutor:
     def __init__(self, running_rule_ids: Optional[List[str]] = None):
-        self._running = [SimpleNamespace(rule_id=rid) for rid in (running_rule_ids or [])]
+        self._running = [
+            SimpleNamespace(rule_id=rid) for rid in (running_rule_ids or [])
+        ]
 
     def get_running_sequences(self) -> list[Any]:
         return list(self._running)
@@ -95,7 +97,10 @@ class TestNotRunningSequenceTarget:
         evaluator = NotRunningConditionEvaluator(
             sequence_executor=_FakeSequenceExecutor([]),
         )
-        assert await evaluator.evaluate({"type": "not_running", "target": "sequence"}, {}) is False
+        assert (
+            await evaluator.evaluate({"type": "not_running", "target": "sequence"}, {})
+            is False
+        )
 
     @pytest.mark.asyncio
     async def test_sequence_missing_executor_returns_false(self):
@@ -290,16 +295,21 @@ class TestNotRunningRegistration:
         )
 
         not_running = [
-            e for e in engine.condition_evaluators if isinstance(e, NotRunningConditionEvaluator)
+            e
+            for e in engine.condition_evaluators
+            if isinstance(e, NotRunningConditionEvaluator)
         ]
         assert len(not_running) == 1
 
         compounds = [
-            e for e in engine.condition_evaluators if isinstance(e, CompoundConditionEvaluator)
+            e
+            for e in engine.condition_evaluators
+            if isinstance(e, CompoundConditionEvaluator)
         ]
         assert len(compounds) == 1
         compound_has = any(
-            isinstance(e, NotRunningConditionEvaluator) for e in compounds[0].evaluators
+            isinstance(e, NotRunningConditionEvaluator)
+            for e in compounds[0].evaluators
         )
         assert compound_has is True
 

@@ -284,7 +284,9 @@ class TestFailOpen:
         """get_execution_count_last_24h raises → fail-open (allowed=True)."""
         repo = MagicMock()
         repo.get_execution_count_last_hour = AsyncMock(return_value=0)
-        repo.get_execution_count_last_24h = AsyncMock(side_effect=Exception("DB connection lost"))
+        repo.get_execution_count_last_24h = AsyncMock(
+            side_effect=Exception("DB connection lost")
+        )
         repo.get_dose_ml_last_24h = AsyncMock(return_value=0.0)
         limiter = _make_limiter(logic_repo=repo)
 
@@ -303,7 +305,9 @@ class TestFailOpen:
         repo = MagicMock()
         repo.get_execution_count_last_hour = AsyncMock(return_value=0)
         repo.get_execution_count_last_24h = AsyncMock(return_value=0)
-        repo.get_dose_ml_last_24h = AsyncMock(side_effect=Exception("DB timeout"))
+        repo.get_dose_ml_last_24h = AsyncMock(
+            side_effect=Exception("DB timeout")
+        )
         limiter = _make_limiter(logic_repo=repo)
 
         result = await limiter.check_rate_limit(

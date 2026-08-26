@@ -72,14 +72,15 @@ QUALITY_LEVELS = [
 
 # AUT-299: Sensor types that are valid ATC temperature sources.
 # Used both for schema documentation and for API-layer validation in sensors.py.
-_TEMPERATURE_SENSOR_TYPES: frozenset[str] = frozenset(
-    {
-        "ds18b20",
-        "temperature",
-        "sht31_temp",
-        "bmp280_temp",
-    }
-)
+_TEMPERATURE_SENSOR_TYPES: frozenset[str] = frozenset({
+    "ds18b20",
+    "temperature",
+    "sht31_temp",
+    "bmp280_temp",
+})
+
+# AUT-1555: Mount medium catalog on sensor_configs (first-class columns, not metadata).
+MOUNT_MEDIUM_PATTERN = r"^(air|canopy|substrate|solution)$"
 
 
 # =============================================================================
@@ -120,6 +121,20 @@ class SensorConfigBase(BaseModel):
         None,
         pattern=r"^(inflow|runoff)$",
         description="Domain role: 'inflow', 'runoff', or None for unassigned",
+    )
+    # AUT-1555: Mount geometry — first-class columns, not sensor_metadata.
+    mount_height_cm: Optional[float] = Field(
+        None,
+        description="AUT-1555: Mount height in cm. NULL = unset. Server-side only.",
+    )
+    mount_medium: Optional[str] = Field(
+        None,
+        pattern=MOUNT_MEDIUM_PATTERN,
+        description="AUT-1555: Mount medium — air | canopy | substrate | solution. NULL = unset.",
+    )
+    mount_angle_deg: Optional[float] = Field(
+        None,
+        description="AUT-1555: Mount angle in degrees. NULL = unset. Server-side only.",
     )
 
     @field_validator("sensor_type")
@@ -408,6 +423,20 @@ class SensorConfigUpdate(BaseModel):
     assigned_zones: Optional[List[str]] = Field(
         None,
         description="List of zone_ids this sensor can serve",
+    )
+    # AUT-1555: Mount geometry — same keys as create, omitted = leave unchanged.
+    mount_height_cm: Optional[float] = Field(
+        None,
+        description="AUT-1555: Mount height in cm. None = leave unchanged.",
+    )
+    mount_medium: Optional[str] = Field(
+        None,
+        pattern=MOUNT_MEDIUM_PATTERN,
+        description="AUT-1555: Mount medium air|canopy|substrate|solution. None = leave unchanged.",
+    )
+    mount_angle_deg: Optional[float] = Field(
+        None,
+        description="AUT-1555: Mount angle in degrees. None = leave unchanged.",
     )
     # NOTE (AUT-227): assigned_subzones removed from SensorConfigUpdate (read-only).
     # The DB column is DEPRECATED and is not consumed by any business-logic layer.

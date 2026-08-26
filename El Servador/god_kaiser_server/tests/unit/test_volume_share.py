@@ -90,5 +90,7 @@ def test_compute_ratio_shares_one_to_one_volume_unequal_c() -> None:
 
 
 def test_compute_ratio_shares_equal_c_is_half() -> None:
-    ratios = compute_ratio_shares_from_volume([{"concentration": 4.0}, {"concentration": 4.0}])
+    ratios = compute_ratio_shares_from_volume(
+        [{"concentration": 4.0}, {"concentration": 4.0}]
+    )
     assert ratios == [0.5, 0.5]

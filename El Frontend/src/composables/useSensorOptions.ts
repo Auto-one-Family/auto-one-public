@@ -7,6 +7,7 @@
 import { computed } from 'vue'
 import type { Ref, ComputedRef } from 'vue'
 import { useEspStore } from '@/stores/esp'
+import { getSensorDisplayName } from '@/utils/sensorDefaults'
 import type { MockSensor } from '@/types'
 
 export interface SensorOption {
@@ -91,7 +92,7 @@ export function useSensorOptions(
         }
 
         zoneEntry.subzoneMap.get(subzoneId)!.options.push({
-          label: s.name || s.sensor_type,
+          label: getSensorDisplayName({ sensor_type: s.sensor_type, name: s.name }),
           value: sensorId,
           sensorType: s.sensor_type,
           espId: deviceId,

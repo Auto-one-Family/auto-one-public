@@ -290,9 +290,7 @@ class SensorDataHandler:
                     if payload.get("stable") is not None:
                         sampling_metadata["stable"] = bool(payload["stable"])
                     window_ms: float | None = (
-                        float(payload["window_ms"])
-                        if payload.get("window_ms") is not None
-                        else None
+                        float(payload["window_ms"]) if payload.get("window_ms") is not None else None
                     )
 
                     # AUT-327: EC ADC reads 0 on disconnected probe or power fault → drop before persist.
@@ -331,12 +329,7 @@ class SensorDataHandler:
                     ec_extra_params: dict = {}
                     ph_extra_params: dict = {}
 
-                    if (
-                        sensor_config
-                        and sensor_config.pi_enhanced
-                        and raw_mode
-                        and quality != "warming_up"
-                    ):
+                    if sensor_config and sensor_config.pi_enhanced and raw_mode and quality != "warming_up":
                         # Pi-Enhanced processing needed
                         processing_mode = "pi_enhanced"
 
@@ -390,10 +383,7 @@ class SensorDataHandler:
                         # Default without a linked temp sensor: 25.0°C → no change.
                         if sensor_type == "ph":
                             ph_atc_temp, ph_atc_source = await self._try_get_atc_temperature(
-                                esp_device,
-                                session,
-                                sensor_config=sensor_config,
-                                log_prefix="pH-ATC",
+                                esp_device, session, sensor_config=sensor_config, log_prefix="pH-ATC"
                             )
                             if ph_atc_source == "default_25c_degraded":
                                 # AUT-672: Explicitly linked sensor went dark (age >= MAX_AGE).
@@ -683,7 +673,9 @@ class SensorDataHandler:
                                     "timestamp": esp32_timestamp_raw,
                                     "zone_id": zone_id,
                                     "subzone_id": subzone_id,
-                                    "config_id": (str(sensor_config.id) if sensor_config else None),
+                                    "config_id": (
+                                        str(sensor_config.id) if sensor_config else None
+                                    ),
                                     "i2c_address": i2c_address if i2c_address else None,
                                     "onewire_address": (
                                         onewire_address if onewire_address else None
@@ -692,7 +684,9 @@ class SensorDataHandler:
                                 },
                             )
                         except Exception as e:
-                            logger.warning("Failed to broadcast warming_up via WebSocket: %s", e)
+                            logger.warning(
+                                "Failed to broadcast warming_up via WebSocket: %s", e
+                            )
                         return True
 
                     sensor_data = await sensor_repo.save_data(
@@ -781,8 +775,7 @@ class SensorDataHandler:
                         # Einheitliche Message generieren (Server-Centric)
                         # warming_up: keep value=None so frontend shows '--' (AUT-975)
                         display_value = (
-                            None
-                            if quality == "warming_up"
+                            None if quality == "warming_up"
                             else (processed_value if processed_value is not None else raw_value)
                         )
                         message = format_sensor_message(
@@ -859,7 +852,9 @@ class SensorDataHandler:
                         )
 
                         adoption_svc = get_state_adoption_service()
-                        if adoption_svc is not None and await adoption_svc.is_adopting(esp_id_str):
+                        if adoption_svc is not None and await adoption_svc.is_adopting(
+                            esp_id_str
+                        ):
                             skip_logic_for_adoption = True
                             logger.info(
                                 "reconnect_bootstrap_guard: skipping logic eval for %s "
@@ -868,12 +863,16 @@ class SensorDataHandler:
                                 gpio,
                                 sensor_type,
                                 float(
-                                    processed_value if processed_value is not None else raw_value
+                                    processed_value
+                                    if processed_value is not None
+                                    else raw_value
                                 ),
                             )
                     except Exception as e:
                         # Guard must never block ingest — log and continue.
-                        logger.debug(f"Adoption-phase guard check failed (continuing): {e}")
+                        logger.debug(
+                            f"Adoption-phase guard check failed (continuing): {e}"
+                        )
 
                     # Logic trigger is freshness-gated on event-time.
                     if stale_for_logic:
@@ -1907,7 +1906,9 @@ class SensorDataHandler:
 
             proc_calibration = None
             if sensor_config and sensor_config.calibration_data:
-                proc_calibration = resolve_calibration_for_processor(sensor_config.calibration_data)
+                proc_calibration = resolve_calibration_for_processor(
+                    sensor_config.calibration_data
+                )
 
             # AUT-948 B1+B4: sensor_configs.adc_source is the SSOT for current
             # hardware routing. calibration_data.derived carries provenance only

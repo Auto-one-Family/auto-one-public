@@ -33,7 +33,7 @@ import {
   Power,
 } from 'lucide-vue-next'
 import {
-  SENSOR_TYPE_CONFIG,
+  getSensorConfig,
   type SensorTypeConfig,
 } from '@/utils/sensorDefaults'
 import {
@@ -89,10 +89,9 @@ const BASE_SENSOR_TYPES = [
   'DS18B20',
   'SHT31',
   'BME280',
-  'pH',
-  'EC',
+  'ph',
+  'ec',
   'moisture',
-  'light',
   'co2',
   'flow',
   'liquid_level',
@@ -103,10 +102,9 @@ const SHORT_LABELS: Record<string, string> = {
   'DS18B20': 'Temp',
   'SHT31': 'T+H',
   'BME280': 'T+H+P',
-  'pH': 'pH',
-  'EC': 'EC',
+  'ph': 'pH',
+  'ec': 'EC',
   'moisture': 'Feuchte',
-  'light': 'Licht',
   'co2': 'CO2',
   'flow': 'Flow',
   'liquid_level': 'Level',
@@ -129,7 +127,7 @@ const allItems = computed<SidebarItem[]>(() => {
 
   // Sensoren hinzufügen
   BASE_SENSOR_TYPES.forEach(type => {
-    const config = SENSOR_TYPE_CONFIG[type]
+    const config = getSensorConfig(type)
     if (config) {
       items.push({
         id: `sensor-${type}`,

@@ -5,17 +5,18 @@ Phase 5: The Circle — Sensor data flows into zone KPIs.
 Status: IMPLEMENTED
 
 Provides:
-- VPD calculation from temperature + humidity sensors
-- DLI (Daily Light Integral) from light sensor time series
+- VPD from latest zone temperature + SHT31 humidity (BMP280 has no RH)
 - Growth progress from planted_date/expected_harvest
 - Zone health score aggregated from device health
 
+DLI is not computed: light/lux is not PPFD, and no reader exists (AUT-1530).
+Live VPD persist remains on SHT31 ingest in sensor_handler.
+
 Used by:
-- REST API (GET /v1/zone/context/{zone_id}/kpis)
-- WebSocket broadcaster (zone_kpi_update events)
+- REST API (GET /v1/zone/context/{zone_id}/kpis) — no WebSocket publisher
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import List, Optional
 
 from sqlalchemy import select, and_
@@ -76,7 +77,7 @@ class ZoneKPIService:
             zone_id, ["sht31_temp", "bmp280_temp", "ds18b20"], domain=domain
         )
         hum_val = await self._get_latest_sensor_value(
-            zone_id, ["sht31_humidity", "bmp280_humidity"], domain=domain
+            zone_id, ["sht31_humidity"], domain=domain
         )
 
         if temp_val is None or hum_val is None:
@@ -84,30 +85,6 @@ class ZoneKPIService:
 
         vpd = _calculate_vpd(temp_val, hum_val)
         return VPDResult(vpd, temp_val, hum_val).to_dict()
-
-    async def calculate_dli(self, zone_id: str, domain: Optional[str] = None) -> Optional[dict]:
-        """Daily Light Integral from light sensor data (last 24h).
-
-        Args:
-            zone_id: Zone identifier.
-            domain: Optional report domain pre-filter (AUT-1087).
-
-        DLI = sum of (PPFD * interval_seconds) / 1_000_000 over 24h
-        Simplified: average PPFD * 3600 * photoperiod_hours / 1_000_000
-        """
-        light_readings = await self._get_sensor_readings_24h(
-            zone_id, ["light", "par", "lux"], domain=domain
-        )
-        if not light_readings:
-            return None
-
-        avg_ppfd = sum(light_readings) / len(light_readings)
-        dli = avg_ppfd * 3600 * 24 / 1_000_000
-        return {
-            "dli_mol_m2_day": round(dli, 2),
-            "avg_ppfd": round(avg_ppfd, 1),
-            "data_points": len(light_readings),
-        }
 
     async def calculate_growth_progress(self, zone_id: str) -> Optional[dict]:
         """Growth progress from planted_date / expected_harvest."""
@@ -165,18 +142,18 @@ class ZoneKPIService:
         Args:
             zone_id: Zone identifier.
             domain: Optional report domain pre-filter (AUT-1087).  Forwarded to
-                ``calculate_vpd`` and ``calculate_dli`` only.  Zone health and
-                growth progress are always zone-wide (by design).
+                ``calculate_vpd`` only.  Zone health and growth progress are
+                always zone-wide (by design).  ``dli`` is always ``None``
+                (AUT-1530: lux is not PPFD, no reader).
         """
         vpd = await self.calculate_vpd(zone_id, domain=domain)
-        dli = await self.calculate_dli(zone_id, domain=domain)
         growth = await self.calculate_growth_progress(zone_id)
         health = await self.get_zone_health_score(zone_id)
 
         return {
             "zone_id": zone_id,
             "vpd": vpd,
-            "dli": dli,
+            "dli": None,
             "growth": growth,
             "health": health,
             "calculated_at": datetime.now(timezone.utc).isoformat(),
@@ -224,46 +201,6 @@ class ZoneKPIService:
         result = await self.session.execute(stmt)
         row = result.scalar_one_or_none()
         return float(row) if row is not None else None
-
-    async def _get_sensor_readings_24h(
-        self,
-        zone_id: str,
-        sensor_types: List[str],
-        domain: Optional[str] = None,
-    ) -> List[float]:
-        """Get all sensor readings from the last 24h.
-
-        Args:
-            zone_id: Zone identifier.
-            sensor_types: Accepted sensor type names (OR condition).
-            domain: Optional report domain pre-filter (AUT-1087).  When set,
-                restricts to devices whose ``ESPDevice.domain`` matches.
-        """
-        since = datetime.now(timezone.utc) - timedelta(hours=24)
-        conditions = [
-            ESPDevice.zone_id == zone_id,
-            ESPDevice.deleted_at.is_(None),
-            SensorData.sensor_type.in_(sensor_types),
-            SensorData.processed_value.isnot(None),
-            SensorData.timestamp >= since,
-        ]
-        if domain is not None:
-            conditions.append(ESPDevice.domain == domain)
-
-        stmt = (
-            select(SensorData.processed_value)
-            .join(
-                SensorConfig,
-                and_(
-                    SensorData.esp_id == SensorConfig.esp_id,
-                    SensorData.gpio == SensorConfig.gpio,
-                ),
-            )
-            .join(ESPDevice, SensorConfig.esp_id == ESPDevice.id)
-            .where(*conditions)
-        )
-        result = await self.session.execute(stmt)
-        return [float(r) for r in result.scalars().all()]
 
     def _device_health_score(self, device: ESPDevice) -> float:
         """Calculate health score for a single device (0-100)."""

@@ -977,7 +977,8 @@ class SensorConfigInvalidUuidError(ValidationException):
         GodKaiserException.__init__(
             self,
             message=(
-                f"Validation failed for field 'sensor_config_id': " f"'{value}' is not a valid UUID"
+                f"Validation failed for field 'sensor_config_id': "
+                f"'{value}' is not a valid UUID"
             ),
             error_code="INVALID_SENSOR_CONFIG_UUID",
             details={
@@ -987,3 +988,4 @@ class SensorConfigInvalidUuidError(ValidationException):
             },
             numeric_code=5209,  # ValidationErrorCode.INVALID_PAYLOAD_FORMAT
         )
+

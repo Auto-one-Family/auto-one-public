@@ -47,10 +47,6 @@ def test_model_to_schema_response_preserves_zero_runtime_and_cooldown() -> None:
         assigned_subzones=[],
         fail_safe_on_disconnect=True,
         flow_rate_ml_s=None,
-        concentration=None,
-        dose_role=None,
-        stock_recipe_ref=None,
-        stock_prepared_at=None,
         created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc),
     )

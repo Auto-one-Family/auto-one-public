@@ -45,7 +45,7 @@ import { storeToRefs } from 'pinia'
 import { useDashboardStore } from '@/shared/stores/dashboard.store'
 import { useLogicStore } from '@/shared/stores/logic.store'
 import { useAuthStore } from '@/shared/stores/auth.store'
-import { formatDateTime, formatRelativeTime, formatSensorValue, unitFromChartLabel, isFirstTooltipItemForDataset, qualityToStatus, sensorStatusToLevel, DATA_STALE_THRESHOLD_S } from '@/utils/formatters'
+import { formatDateTime, formatRelativeTime, formatSensorValue, unitFromChartLabel, formatMountChartSuffix, isFirstTooltipItemForDataset, qualityToStatus, sensorStatusToLevel, DATA_STALE_THRESHOLD_S } from '@/utils/formatters'
 import StatusBadge from '@/components/base/StatusBadge.vue'
 import { calculateTrend } from '@/utils/trendUtils'
 import type { TrendDirection } from '@/utils/trendUtils'
@@ -495,7 +495,18 @@ async function fetchDetailData() {
 /** All sensors in current zone except the primary detail sensor (includes sensor_type for multi-value separation) */
 const availableOverlaySensors = computed(() => {
   if (zoneDeviceGroup.value.length === 0 || !selectedDetailSensor.value) return []
-  const result: { key: string; name: string; type: string; unit: string; espId: string; gpio: number; subzoneName: string }[] = []
+  const result: {
+    key: string
+    name: string
+    type: string
+    unit: string
+    espId: string
+    gpio: number
+    subzoneName: string
+    mount_height_cm?: number | null
+    mount_medium?: string | null
+    mount_angle_deg?: number | null
+  }[] = []
   for (const sz of zoneDeviceGroup.value) {
     for (const s of sz.sensors) {
       // Exclude the primary detail sensor (match by espId + gpio + sensorType)
@@ -512,6 +523,9 @@ const availableOverlaySensors = computed(() => {
         gpio: s.gpio,
         // L2 accordion name only when a named subzone exists — not "Zone-weit"
         subzoneName: sz.subzoneId ? sz.subzoneName : '',
+        mount_height_cm: s.mount_height_cm ?? null,
+        mount_medium: s.mount_medium ?? null,
+        mount_angle_deg: s.mount_angle_deg ?? null,
       })
     }
   }
@@ -578,7 +592,7 @@ const detailChartData = computed(() => {
   if (!hasMain && !hasOverlay) return { datasets: [] }
 
   const sensor = selectedDetailSensor.value
-  // AUT-1543: L1/L2 view context — not sample-join, not height/medium/site
+  // AUT-1543: L1/L2 view context — not sample-join. AUT-1557 appends mount from the same loaded config.
   const zoneName = selectedZoneName.value
   const primaryGroup = sensor
     ? zoneDeviceGroup.value.find(sz =>
@@ -589,10 +603,18 @@ const detailChartData = computed(() => {
         )
       )
     : undefined
+  const primaryConfig = sensor
+    ? primaryGroup?.sensors.find(s =>
+        s.esp_id === sensor.espId &&
+        s.gpio === sensor.gpio &&
+        s.sensor_type === sensor.sensorType
+      )
+    : undefined
   const primarySubzone = primaryGroup?.subzoneId ? primaryGroup.subzoneName : ''
   const primaryLocation = zoneName
     ? (primarySubzone ? ` · ${zoneName} / ${primarySubzone}` : ` · ${zoneName}`)
     : ''
+  const primaryMount = formatMountChartSuffix(primaryConfig)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const datasets: any[] = []
 
@@ -614,7 +636,7 @@ const detailChartData = computed(() => {
     const mainWithGaps = insertGapMarkers(mainGapPoints, mainExpectedMs)
     const mainData = mainWithGaps.map((p) => ({ x: p.timestamp.getTime(), y: p.value }))
     datasets.push({
-      label: `${sensor?.name ?? 'Sensor'} (${sensor?.unit ?? ''})${primaryLocation}`,
+      label: `${sensor?.name ?? 'Sensor'} (${sensor?.unit ?? ''})${primaryLocation}${primaryMount}`,
       unit: sensor?.unit ?? '',
       data: mainData,
       borderColor: getChartColor(0),
@@ -642,6 +664,7 @@ const detailChartData = computed(() => {
     const overlayLocation = zoneName
       ? (overlaySubzone ? ` · ${zoneName} / ${overlaySubzone}` : ` · ${zoneName}`)
       : ''
+    const overlayMount = formatMountChartSuffix(overlaySensor)
 
     const overlayPoints = readings
       .map(r => ({
@@ -659,7 +682,7 @@ const detailChartData = computed(() => {
     const overlayData = overlayWithGaps.map((p) => ({ x: p.timestamp.getTime(), y: p.value }))
 
     datasets.push({
-      label: `${overlaySensor?.name ?? key} (${overlaySensor?.unit ?? ''})${overlayLocation}`,
+      label: `${overlaySensor?.name ?? key} (${overlaySensor?.unit ?? ''})${overlayLocation}${overlayMount}`,
       unit: overlaySensor?.unit ?? '',
       data: overlayData,
       borderColor: color,
@@ -1262,6 +1285,10 @@ const zoneDeviceGroup = computed<ZoneDeviceSubzone[]>(() => {
           is_stale: liveSensor?.is_stale ?? (s as Partial<SensorWithContext>).is_stale ?? false,
           // AUT-1544: SubzoneSensorEntry has no calibration blob; hydrate from store (same leftover as config_id).
           calibration: liveSensor?.calibration ?? (s as Partial<SensorWithContext>).calibration ?? null,
+          // AUT-1557: zone-monitor payload has no mount_*; leftover from store (A1 config).
+          mount_height_cm: liveSensor?.mount_height_cm ?? (s as Partial<SensorWithContext>).mount_height_cm ?? null,
+          mount_medium: liveSensor?.mount_medium ?? (s as Partial<SensorWithContext>).mount_medium ?? null,
+          mount_angle_deg: liveSensor?.mount_angle_deg ?? (s as Partial<SensorWithContext>).mount_angle_deg ?? null,
         }
       }) as SensorWithContext[]),
       actuators: sortActuatorsStable(sz.actuators.map(a => ({

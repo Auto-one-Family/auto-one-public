@@ -69,6 +69,27 @@ export interface PlantLifecycleEventsResult {
   tankIncidents: PlantTankIncidentEvent[]
 }
 
+function parseLifecycleEventsPayload(
+  payload: PlantLifecycleEventListEnvelope | PlantLifecycleEvent[],
+): PlantLifecycleEventsResult {
+  if (
+    payload &&
+    typeof payload === 'object' &&
+    'events' in payload &&
+    Array.isArray((payload as PlantLifecycleEventListEnvelope).events)
+  ) {
+    const envelope = payload as PlantLifecycleEventListEnvelope
+    return {
+      events: envelope.events ?? [],
+      tankIncidents: envelope.tank_incidents ?? [],
+    }
+  }
+  return {
+    events: Array.isArray(payload) ? payload : [],
+    tankIncidents: [],
+  }
+}
+
 /**
  * Unwrap a server response that may arrive in one of three shapes:
  *   1) PlantListResponse `{ plants: [...], total: N }` — detected first
@@ -143,6 +164,8 @@ export const plantsApi = {
    * Response envelope: { plant_id, total, events: PlantLifecycleEvent[],
    * tank_incidents: PlantTankIncidentEvent[] }
    * Events are ordered by event_timestamp ASC (oldest first) on the server.
+   * Pages through ``skip`` / ``limit`` (max 500) so a full first page of
+   * older rows does not drop newer measures after Eintragen.
    *
    * AUT-1181: Befund 2 — use the dedicated endpoint instead of the embedded
    * field on the plant detail response (which the server does not populate).
@@ -152,26 +175,26 @@ export const plantsApi = {
    * since they are not per-plant lifecycle events.
    */
   async getLifecycleEvents(id: string): Promise<PlantLifecycleEventsResult> {
-    const response = await api.get<PlantLifecycleEventListEnvelope | PlantLifecycleEvent[]>(
-      `/plants/${id}/lifecycle-events`,
-    )
-    const payload = response.data
-    if (
-      payload &&
-      typeof payload === 'object' &&
-      'events' in payload &&
-      Array.isArray((payload as PlantLifecycleEventListEnvelope).events)
-    ) {
-      const envelope = payload as PlantLifecycleEventListEnvelope
-      return {
-        events: envelope.events ?? [],
-        tankIncidents: envelope.tank_incidents ?? [],
+    const pageSize = 500
+    const events: PlantLifecycleEvent[] = []
+    let tankIncidents: PlantTankIncidentEvent[] = []
+    let skip = 0
+
+    while (true) {
+      const response = await api.get<PlantLifecycleEventListEnvelope | PlantLifecycleEvent[]>(
+        `/plants/${id}/lifecycle-events`,
+        { params: { skip, limit: pageSize } },
+      )
+      const page = parseLifecycleEventsPayload(response.data)
+      if (skip === 0) {
+        tankIncidents = page.tankIncidents
       }
+      events.push(...page.events)
+      if (page.events.length < pageSize) break
+      skip += pageSize
     }
-    return {
-      events: Array.isArray(payload) ? payload : [],
-      tankIncidents: [],
-    }
+
+    return { events, tankIncidents }
   },
 
   /** Append a lifecycle event (phase change, note, harvest, ...). */

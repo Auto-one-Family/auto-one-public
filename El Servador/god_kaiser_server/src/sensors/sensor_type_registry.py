@@ -104,15 +104,9 @@ SENSOR_TYPE_MAPPING: Dict[str, str] = {
 # scheduled MQTT publishes. They are calculated on-the-fly from other sensor readings.
 VIRTUAL_SENSOR_TYPES: set[str] = {
     "vpd",
-    "phi2",
-    "fv_fm",
-    "npqt",
-    "lef",
-    "par_internal",
-    "ppfd",
-    "chlorophyll_spad",
-    "leaf_temp",
-    "anthocyanin_index",
+    "phi2", "fv_fm", "npqt", "lef",
+    "par_internal", "ppfd",
+    "chlorophyll_spad", "leaf_temp", "anthocyanin_index",
 }
 
 
@@ -190,26 +184,11 @@ _MULTISPEQ_VALUE_DEFS: List[Dict[str, Any]] = [
     {"value_type": "fv_fm", "sensor_type": "fv_fm", "unit": "Fv/Fm", "gpio_offset": 1},
     {"value_type": "npqt", "sensor_type": "npqt", "unit": "NPQt", "gpio_offset": 2},
     {"value_type": "lef", "sensor_type": "lef", "unit": "μmol e⁻/m²/s", "gpio_offset": 3},
-    {
-        "value_type": "par_internal",
-        "sensor_type": "par_internal",
-        "unit": "μmol/m²/s",
-        "gpio_offset": 4,
-    },
+    {"value_type": "par_internal", "sensor_type": "par_internal", "unit": "μmol/m²/s", "gpio_offset": 4},
     {"value_type": "ppfd", "sensor_type": "ppfd", "unit": "μmol/m²/s", "gpio_offset": 5},
-    {
-        "value_type": "chlorophyll_spad",
-        "sensor_type": "chlorophyll_spad",
-        "unit": "SPAD",
-        "gpio_offset": 6,
-    },
+    {"value_type": "chlorophyll_spad", "sensor_type": "chlorophyll_spad", "unit": "SPAD", "gpio_offset": 6},
     {"value_type": "leaf_temp", "sensor_type": "leaf_temp", "unit": "°C", "gpio_offset": 7},
-    {
-        "value_type": "anthocyanin_index",
-        "sensor_type": "anthocyanin_index",
-        "unit": "ARI",
-        "gpio_offset": 8,
-    },
+    {"value_type": "anthocyanin_index", "sensor_type": "anthocyanin_index", "unit": "ARI", "gpio_offset": 8},
 ]
 
 # Register MultispeQ in MULTI_VALUE_SENSORS without breaking the hardware

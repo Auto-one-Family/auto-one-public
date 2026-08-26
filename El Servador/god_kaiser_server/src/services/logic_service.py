@@ -390,14 +390,15 @@ class LogicService:
         trigger may bypass the rule's cooldown/settle window (force=True) or must
         respect it like any other trigger (force=False).
         """
-
         def _as_condition_list(value: Any) -> Any:
             # Mirrors CrossESPLogic.conditions property: a single legacy-format
             # condition dict is equivalent to a one-element list, not a distinct
             # value — comparing raw shapes would report a "change" that never happened.
             return value if isinstance(value, list) else [value]
 
-        old_actions_normalized = list(old_actions) if isinstance(old_actions, list) else old_actions
+        old_actions_normalized = (
+            list(old_actions) if isinstance(old_actions, list) else old_actions
+        )
         return (
             _as_condition_list(new_conditions) != _as_condition_list(old_conditions)
             or new_actions != old_actions_normalized
@@ -778,7 +779,9 @@ class LogicService:
         global_conditions_met = LogicEngine._combine_condition_results(results_bool, logic_op)
 
         raw_actions = rule.actions if isinstance(rule.actions, list) else [rule.actions]
-        actions: List[Dict[str, Any]] = [a for a in raw_actions if isinstance(a, dict)]
+        actions: List[Dict[str, Any]] = [
+            a for a in raw_actions if isinstance(a, dict)
+        ]
         has_routed_actions = LogicEngine._rule_has_routed_actions(actions)
 
         action_results: List[ActionResult] = []
@@ -1204,7 +1207,9 @@ class LogicService:
                 logger.warning(message)
                 warnings.append(message)
         except Exception as e:
-            logger.warning("DP4 deadband check skipped (paired_rule_id=%s): %s", paired_rule_id, e)
+            logger.warning(
+                "DP4 deadband check skipped (paired_rule_id=%s): %s", paired_rule_id, e
+            )
 
         return warnings
 
@@ -1333,7 +1338,9 @@ class LogicService:
 
         return warnings
 
-    async def _enforce_pump_freshness(self, conditions: Any, actions: List[Dict[str, Any]]) -> None:
+    async def _enforce_pump_freshness(
+        self, conditions: Any, actions: List[Dict[str, Any]]
+    ) -> None:
         """
         AUT-994 B1: A rule that dispatches to a dosing pump (ActuatorConfig.hardware_type
         == "pump") must only trigger on fresh sensor data — a stale pH/EC reading must

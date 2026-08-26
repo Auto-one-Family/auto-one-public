@@ -39,7 +39,9 @@ from ...sensors.sensor_type_registry import get_unit_for_sensor_type, sanitize_u
 logger = get_logger(__name__)
 
 # Regex matching: kaiser/{kaiser_id}/esp/{esp_id}/sensor/batch
-_BATCH_TOPIC_RE = re.compile(r"^kaiser/[^/]+/esp/(?P<esp_id>[^/]+)/sensor/batch$")
+_BATCH_TOPIC_RE = re.compile(
+    r"^kaiser/[^/]+/esp/(?P<esp_id>[^/]+)/sensor/batch$"
+)
 
 
 def _parse_batch_topic(topic: str) -> Optional[str]:
@@ -170,9 +172,7 @@ class SensorBatchHandler:
                     quality = reading.get("quality") or reading.get("q")
                     raw_ts = reading.get("timestamp") or reading.get("ts")
                     boot_epoch_s_raw = reading.get("be")
-                    boot_epoch_s: int | None = (
-                        int(boot_epoch_s_raw) if boot_epoch_s_raw is not None else None
-                    )
+                    boot_epoch_s: int | None = int(boot_epoch_s_raw) if boot_epoch_s_raw is not None else None
                     subzone_id = reading.get("subzone_id") or reading.get("sz")
                     onewire_address = reading.get("onewire_address") or reading.get("ow")
                     # raw_mode stored as int (0/1) by spool_manager — use explicit None-check
@@ -197,8 +197,7 @@ class SensorBatchHandler:
                     if sensor_type_str == "ec" and raw_mode and raw_value_f == 0.0:
                         logger.debug(
                             "sensor/batch: EC raw=0 dropped (boot artifact?): esp=%s gpio=%s",
-                            esp_id_str,
-                            gpio,
+                            esp_id_str, gpio,
                         )
                         skipped += 1
                         BATCH_SKIPPED_TOTAL.labels(esp_id=esp_id_str).inc(1)
@@ -234,14 +233,9 @@ class SensorBatchHandler:
                         # ATC (EC/pH temperature compensation) intentionally omitted for
                         # replays — historical timestamp makes cross-sensor ATC invalid.
                         from .sensor_handler import get_sensor_handler
-
                         pi_result = await get_sensor_handler()._trigger_pi_enhanced_processing(
-                            esp_id_str,
-                            int(gpio),
-                            sensor_type_str,
-                            raw_value_f,
-                            sensor_config,
-                            raw_mode=raw_mode,
+                            esp_id_str, int(gpio), sensor_type_str, raw_value_f,
+                            sensor_config, raw_mode=raw_mode,
                         )
                         if pi_result:
                             processed_value_f = pi_result["processed_value"]

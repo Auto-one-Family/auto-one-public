@@ -54,7 +54,9 @@ class TestCreatePlanSegment:
     """Test POST /api/v1/plan-segments"""
 
     @pytest.mark.asyncio
-    async def test_create_plan_segment_success(self, auth_headers: dict, sample_zone: Zone):
+    async def test_create_plan_segment_success(
+        self, auth_headers: dict, sample_zone: Zone
+    ):
         payload = {
             "zone_id": sample_zone.zone_id,
             "domain": "nutrient_solution",
@@ -65,7 +67,9 @@ class TestCreatePlanSegment:
             "interp": "step",
             "status": "planned",
         }
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
             response = await client.post(
                 "/api/v1/plan-segments",
                 json=payload,
@@ -96,7 +100,9 @@ class TestListPlanSegmentsFiltered:
         db_session.add(other)
         await db_session.commit()
 
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
             # Matching segment (in window)
             r1 = await client.post(
                 "/api/v1/plan-segments",
@@ -192,7 +198,9 @@ class TestClimatePlanSegmentsAut1239:
     async def test_create_climate_temperature_and_humidity_segments(
         self, auth_headers: dict, sample_zone: Zone
     ):
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
             r_temp = await client.post(
                 "/api/v1/plan-segments",
                 json={
@@ -235,7 +243,9 @@ class TestClimatePlanSegmentsAut1239:
     async def test_climate_at_derives_vpd_band_from_planned_targets(
         self, auth_headers: dict, sample_zone: Zone
     ):
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
             await client.post(
                 "/api/v1/plan-segments",
                 json={
@@ -294,7 +304,9 @@ class TestClimatePlanSegmentsAut1239:
     async def test_climate_at_missing_humidity_not_silent(
         self, auth_headers: dict, sample_zone: Zone
     ):
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
             await client.post(
                 "/api/v1/plan-segments",
                 json={

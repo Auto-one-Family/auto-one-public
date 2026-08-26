@@ -1107,8 +1107,7 @@ async def get_gpio_status(
     # Calculate available GPIOs using board-specific range and constraints
     all_gpios = set(range(0, board_constraints.gpio_max + 1))
     available_gpios = [
-        g
-        for g in all_gpios
+        g for g in all_gpios
         if g not in reserved_gpios
         and g not in board_constraints.input_only_pins
         and g not in board_system_pins

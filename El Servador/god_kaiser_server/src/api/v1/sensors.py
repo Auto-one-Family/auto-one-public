@@ -99,7 +99,10 @@ from ...services.sensor_scheduler_service import SensorSchedulerService
 from ...services.sensor_service import SensorService
 from ...services.gpio_validation_service import GpioValidationService
 from ...services.subzone_service import SubzoneService
-from ...services.calibration_payloads import canonicalize_calibration_data
+from ...services.calibration_payloads import (
+    canonicalize_calibration_data,
+    read_calibrated_at,
+)
 from ...services.config_builder import ConfigConflictError
 from ...mqtt.topics import TopicBuilder
 from ...utils.subzone_helpers import normalize_subzone_id
@@ -175,7 +178,9 @@ def _model_to_response(
     # `thresholds` above). None if unset — CustomThresholds() would produce an
     # all-None object instead, which the frontend can't distinguish from "unset".
     custom_thresholds_raw = (sensor.alert_config or {}).get("custom_thresholds")
-    custom_thresholds = CustomThresholds(**custom_thresholds_raw) if custom_thresholds_raw else None
+    custom_thresholds = (
+        CustomThresholds(**custom_thresholds_raw) if custom_thresholds_raw else None
+    )
 
     # Convert pi_enhanced boolean to processing_mode string
     processing_mode = "pi_enhanced" if sensor.pi_enhanced else "raw"
@@ -233,6 +238,10 @@ def _model_to_response(
         # Multi-Zone Device Scope (T13-R2)
         device_scope=sensor.device_scope,
         assigned_zones=sensor.assigned_zones,
+        # AUT-1555: Mount geometry (first-class columns, not sensor_metadata)
+        mount_height_cm=sensor.mount_height_cm,
+        mount_medium=sensor.mount_medium,
+        mount_angle_deg=sensor.mount_angle_deg,
         # assigned_subzones: Legacy field, passed through the API layer but not evaluated
         # in business logic (logic_engine, config_builder, notification_router, safety).
         # Primary subzone assignment is via subzone_configs.assigned_gpios. Candidate for
@@ -322,6 +331,10 @@ def _schema_to_model_fields(request: SensorConfigCreate) -> dict:
         # =========================================================================
         "device_scope": request.device_scope if request.device_scope is not None else "zone_local",
         "assigned_zones": request.assigned_zones if request.assigned_zones is not None else [],
+        # AUT-1555: Mount geometry — nullable, omitted stays unset on create
+        "mount_height_cm": request.mount_height_cm,
+        "mount_medium": request.mount_medium,
+        "mount_angle_deg": request.mount_angle_deg,
         # AUT-227: assigned_subzones is DEPRECATED (read-only API).
         # Writes from clients are ignored; column persists as empty list for new rows.
         # Reads continue via the response schema for backwards compatibility.
@@ -791,6 +804,13 @@ async def create_or_update_sensor(
                         existing_vt.device_scope = model_fields["device_scope"]
                     if request.assigned_zones is not None:
                         existing_vt.assigned_zones = model_fields["assigned_zones"]
+                    # AUT-1555: only write mount fields when explicitly provided
+                    if request.mount_height_cm is not None:
+                        existing_vt.mount_height_cm = model_fields["mount_height_cm"]
+                    if request.mount_medium is not None:
+                        existing_vt.mount_medium = model_fields["mount_medium"]
+                    if request.mount_angle_deg is not None:
+                        existing_vt.mount_angle_deg = model_fields["mount_angle_deg"]
                     # AUT-227: assigned_subzones is read-only — writes from clients are ignored.
                     existing_vt.config_status = "pending"
                     existing_vt.config_error = None
@@ -858,7 +878,9 @@ async def create_or_update_sensor(
             subzone_error = str(e)
         except SQLAlchemyError as e:
             # AUT-228 (E2): Erwartete DB-Fehler -> WARNING, non-fatal
-            logger.warning(f"Subzone assignment DB error for {esp_id}/GPIO {gpio}: {e}")
+            logger.warning(
+                f"Subzone assignment DB error for {esp_id}/GPIO {gpio}: {e}"
+            )
             await db.rollback()
             subzone_error = "subzone_db_error"
         except Exception as e:
@@ -975,16 +997,12 @@ async def create_or_update_sensor(
                     conflict_type=validation_result.conflict_type.value,
                     conflict_component=validation_result.conflict_component,
                     conflict_id=(
-                        str(validation_result.conflict_id)
-                        if validation_result.conflict_id
-                        else None
+                        str(validation_result.conflict_id) if validation_result.conflict_id else None
                     ),
                     message=validation_result.message,
                 )
             if validation_result.warning:
-                logger.info(
-                    f"GPIO warning for ESP {esp_id}, GPIO {gpio}: {validation_result.warning}"
-                )
+                logger.info(f"GPIO warning for ESP {esp_id}, GPIO {gpio}: {validation_result.warning}")
     # =========================================================================
 
     # Convert schema fields to model fields
@@ -1053,6 +1071,13 @@ async def create_or_update_sensor(
             existing.device_scope = model_fields["device_scope"]
         if request.assigned_zones is not None:
             existing.assigned_zones = model_fields["assigned_zones"]
+        # AUT-1555: only write mount fields when explicitly provided (no clobber)
+        if request.mount_height_cm is not None:
+            existing.mount_height_cm = model_fields["mount_height_cm"]
+        if request.mount_medium is not None:
+            existing.mount_medium = model_fields["mount_medium"]
+        if request.mount_angle_deg is not None:
+            existing.mount_angle_deg = model_fields["mount_angle_deg"]
         # AUT-227: assigned_subzones is read-only — writes from clients are ignored.
         # AUT-299: temp_sensor_config_id — explicit NULL clears the link (intentional write)
         if "temp_sensor_config_id" in model_fields:
@@ -1597,7 +1622,9 @@ async def query_sensor_data(
         ]
     else:
         reading_responses = [
-            reading for reading in (_raw_row_to_reading(r) for r in readings) if reading is not None
+            reading
+            for reading in (_raw_row_to_reading(r) for r in readings)
+            if reading is not None
         ]
 
     # Cursor pagination metadata
@@ -1690,7 +1717,9 @@ async def get_sensor_data_by_source(
 
     # Convert to response format (skip warming_up — AUT-723 E3)
     reading_responses = [
-        reading for reading in (_raw_row_to_reading(r) for r in readings) if reading is not None
+        reading
+        for reading in (_raw_row_to_reading(r) for r in readings)
+        if reading is not None
     ]
 
     return SensorDataResponse(
@@ -2495,9 +2524,7 @@ async def update_sensor_alert_config(
     sensor.alert_config = existing
     await session.commit()
 
-    logger.info(
-        f"Alert config updated: sensor {sensor_id}, user={user.username}, config={existing}"
-    )
+    logger.info(f"Alert config updated: sensor {sensor_id}, user={user.username}, config={existing}")
     return SensorAlertConfigViewResponse(status="ok", alert_config=existing)
 
 
@@ -2536,6 +2563,10 @@ async def update_sensor_runtime(
 # =============================================================================
 
 _EXPORT_BATCH_SIZE = 500
+# AUT-1577: honest schema header. Missing values = empty cell, column stays.
+# timezone is a constant column (HEAD has no # comment-line pattern).
+# mount_*/sample_interval_ms/calibrated_at come from SensorConfig join, not sensor_data.
+# site_id is always empty — no facility model (do not invent location numbers).
 _EXPORT_ALLOWED_COLUMNS: frozenset[str] = frozenset(
     {
         "timestamp",
@@ -2544,10 +2575,17 @@ _EXPORT_ALLOWED_COLUMNS: frozenset[str] = frozenset(
         "unit",
         "quality",
         "sensor_type",
+        "timezone",
         "esp_id",
         "gpio",
         "zone_id",
         "subzone_id",
+        "sample_interval_ms",
+        "mount_height_cm",
+        "mount_medium",
+        "mount_angle_deg",
+        "calibrated_at",
+        "site_id",
     }
 )
 _EXPORT_DEFAULT_COLUMNS: list[str] = [
@@ -2556,11 +2594,84 @@ _EXPORT_DEFAULT_COLUMNS: list[str] = [
     "unit",
     "quality",
     "sensor_type",
+    "timezone",
+    "esp_id",
+    "zone_id",
+    "subzone_id",
+    "sample_interval_ms",
+    "mount_height_cm",
+    "mount_medium",
+    "mount_angle_deg",
+    "calibrated_at",
+    "site_id",
 ]
 
 
-def _export_column_value(row: object, col: str, is_aggregated: bool) -> str:
-    """Extract a column value from a SensorData row (raw or aggregated) as a string."""
+def _ensure_schema_columns(col_list: list[str]) -> list[str]:
+    """Keep caller order, then append any missing AUT-1577 Pflicht-Spalten."""
+    missing = [col for col in _EXPORT_DEFAULT_COLUMNS if col not in col_list]
+    if not missing:
+        return col_list
+    return [*col_list, *missing]
+
+
+_EXPORT_CONFIG_COLUMNS: frozenset[str] = frozenset(
+    {
+        "sample_interval_ms",
+        "mount_height_cm",
+        "mount_medium",
+        "mount_angle_deg",
+        "calibrated_at",
+    }
+)
+
+
+def _format_export_timestamp(value: datetime) -> str:
+    """Serialize timestamps as UTC ISO-8601 (always include offset)."""
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc).isoformat()
+
+
+def _export_config_column_value(config: Optional[SensorConfig], col: str) -> str:
+    """Read a config-join column. Missing config or NULL field → empty cell."""
+    if config is None:
+        return ""
+    if col == "calibrated_at":
+        cal_ts = read_calibrated_at(config.calibration_data)
+        return "" if cal_ts is None else str(cal_ts)
+    val = getattr(config, col, None)
+    if val is None:
+        return ""
+    return str(val)
+
+
+def _export_column_value(
+    row: object,
+    col: str,
+    is_aggregated: bool,
+    *,
+    config: Optional[SensorConfig] = None,
+    device_id: str = "",
+) -> str:
+    """Extract a column value from a SensorData row (raw or aggregated) as a string.
+
+    Config-join fields (interval, mount, calibrated_at) come from SensorConfig,
+    never from a sample column. Missing values stay empty cells — columns remain.
+    """
+    if col == "timezone":
+        return "UTC"
+    if col == "site_id":
+        return ""
+    if col in _EXPORT_CONFIG_COLUMNS:
+        if is_aggregated:
+            return ""
+        return _export_config_column_value(config, col)
+    if col == "esp_id":
+        if is_aggregated:
+            return ""
+        return device_id
+
     if is_aggregated:
         mapping = {
             "timestamp": "bucket",
@@ -2579,7 +2690,7 @@ def _export_column_value(row: object, col: str, is_aggregated: bool) -> str:
     if val is None:
         return ""
     if isinstance(val, datetime):
-        return val.isoformat()
+        return _format_export_timestamp(val)
     if isinstance(val, uuid.UUID):
         return str(val)
     return str(val)
@@ -2587,6 +2698,7 @@ def _export_column_value(row: object, col: str, is_aggregated: bool) -> str:
 
 async def _generate_csv(
     sensor_repo: SensorRepository,
+    esp_repo: ESPRepository,
     esp_db_id: Optional[uuid.UUID],
     gpio: Optional[int],
     sensor_type: Optional[str],
@@ -2601,6 +2713,8 @@ async def _generate_csv(
     """Yield BOM + CSV header, then data rows via cursor-based batching (500 rows/batch)."""
     buf = io.StringIO()
     writer = csv.writer(buf)
+    config_cache: dict[tuple[uuid.UUID, int, str], Optional[SensorConfig]] = {}
+    device_id_cache: dict[uuid.UUID, str] = {}
 
     yield "﻿"  # BOM for Excel compatibility
 
@@ -2628,9 +2742,39 @@ async def _generate_csv(
             break
 
         for row in batch:
+            config: Optional[SensorConfig] = None
+            device_id = ""
+            if not is_aggregated:
+                row_esp_id = getattr(row, "esp_id", None)
+                row_gpio = getattr(row, "gpio", None)
+                row_type = getattr(row, "sensor_type", None)
+                if isinstance(row_esp_id, uuid.UUID) and row_gpio is not None and row_type:
+                    cfg_key = (row_esp_id, int(row_gpio), str(row_type).lower())
+                    if cfg_key not in config_cache:
+                        config_cache[cfg_key] = await sensor_repo.get_by_esp_gpio_and_type(
+                            row_esp_id,
+                            int(row_gpio),
+                            str(row_type),
+                        )
+                    config = config_cache[cfg_key]
+                    if row_esp_id not in device_id_cache:
+                        device = await esp_repo.get_by_id(row_esp_id)
+                        device_id_cache[row_esp_id] = device.device_id if device else ""
+                    device_id = device_id_cache[row_esp_id]
             buf.seek(0)
             buf.truncate()
-            writer.writerow([_export_column_value(row, col, is_aggregated) for col in col_list])
+            writer.writerow(
+                [
+                    _export_column_value(
+                        row,
+                        col,
+                        is_aggregated,
+                        config=config,
+                        device_id=device_id,
+                    )
+                    for col in col_list
+                ]
+            )
             buf.seek(0)
             yield buf.read()
 
@@ -2657,16 +2801,15 @@ async def export_sensor_data(
     esp_id: Annotated[Optional[str], Query(description="Filter by ESP device ID")] = None,
     gpio: Annotated[Optional[int], Query(ge=0, le=39, description="Filter by GPIO")] = None,
     sensor_type: Annotated[Optional[str], Query(description="Filter by sensor type")] = None,
-    start_time: Annotated[
-        Optional[datetime], Query(description="Start of time range (ISO-8601)")
-    ] = None,
-    end_time: Annotated[
-        Optional[datetime], Query(description="End of time range (ISO-8601)")
-    ] = None,
+    start_time: Annotated[Optional[datetime], Query(description="Start of time range (ISO-8601)")] = None,
+    end_time: Annotated[Optional[datetime], Query(description="End of time range (ISO-8601)")] = None,
     columns: Annotated[
         Optional[str],
         Query(
-            description="Comma-separated column names (default: timestamp,processed_value,unit,quality,sensor_type)"
+            description=(
+                "Comma-separated column names; omitted query uses the schema CSV head "
+                "with unit, UTC, zone, mount, esp_id, calibrated_at"
+            ),
         ),
     ] = None,
     resolution: Annotated[
@@ -2714,6 +2857,8 @@ async def export_sensor_data(
     else:
         col_list = list(_EXPORT_DEFAULT_COLUMNS)
 
+    col_list = _ensure_schema_columns(col_list)
+
     # Normalize time range (timezone-aware UTC)
     if not start_time:
         start_time = datetime.now(timezone.utc) - timedelta(hours=24)
@@ -2749,6 +2894,7 @@ async def export_sensor_data(
 
     generator = _generate_csv(
         sensor_repo=sensor_repo,
+        esp_repo=esp_repo,
         esp_db_id=esp_db_id,
         gpio=gpio,
         sensor_type=sensor_type,

@@ -19,11 +19,11 @@ import { useEspStore } from '@/stores/esp'
 import { espApi } from '@/api/esp'
 import { useToast } from '@/composables/useToast'
 import {
-  SENSOR_TYPE_CONFIG,
   MULTI_VALUE_DEVICES,
   getSensorUnit,
   getSensorDefault,
   getSensorLabel,
+  getSensorConfig,
   getDefaultInterval,
   getSensorTypeOptions,
   inferInterfaceType,
@@ -78,21 +78,11 @@ const newSensor = ref<MockSensorConfig & { operating_mode?: string; timeout_seco
 const sensorGpioValid = ref(false)
 const oneWireScanPin = ref(4)
 const isAdding = ref(false)
-const selectedI2CAddress = ref<number | null>(null)
-const adcSource = ref<'internal' | 'ads1115'>('internal')
-const adcI2cAddress = ref('0x48')
-const adcChannel = ref(0)
-const pgaGain = ref<'6.144' | '4.096' | '2.048' | '1.024' | '0.512' | '0.256'>('4.096')
-
-const device = computed(() =>
-  (espStore.devices ?? []).find((d) => espStore.getDeviceId(d) === props.espId)
-)
-const zoneId = computed(() => device.value?.zone_id ?? null)
 
 // ── Sensor Type Watchers ─────────────────────────────────────────────
 
 watch(() => newSensor.value.sensor_type, (newType) => {
-  const config = SENSOR_TYPE_CONFIG[newType]
+  const config = getSensorConfig(newType)
   if (config) {
     newSensor.value.unit = config.unit
     newSensor.value.raw_value = config.defaultValue
@@ -163,6 +153,11 @@ const isMockEsp = computed(() => espApi.isMockEsp(props.espId))
 const isOneWireSensor = computed(() => newSensor.value.sensor_type.toLowerCase().includes('ds18b20'))
 const isI2CSensor = computed(() => inferInterfaceType(newSensor.value.sensor_type) === 'I2C')
 const i2cAddressOptions = computed(() => getI2CAddressOptions(newSensor.value.sensor_type))
+const selectedI2CAddress = ref<number | null>(null)
+const adcSource = ref<'internal' | 'ads1115'>('internal')
+const adcI2cAddress = ref('0x48')
+const adcChannel = ref(0)
+const pgaGain = ref<'6.144' | '4.096' | '2.048' | '1.024' | '0.512' | '0.256'>('4.096')
 const ADS1115_ADDRESS_OPTIONS = ['0x48', '0x49', '0x4A', '0x4B']
 const PGA_GAIN_OPTIONS: Array<{ value: typeof pgaGain.value; label: string }> = [
   { value: '6.144', label: '±6.144 V' },
@@ -219,12 +214,12 @@ const sensorTypeInfo = computed((): string => {
 })
 
 const recommendedMode = computed(() => {
-  const config = SENSOR_TYPE_CONFIG[newSensor.value.sensor_type]
+  const config = getSensorConfig(newSensor.value.sensor_type)
   return config?.recommendedMode || 'continuous'
 })
 
 const supportsOnDemand = computed(() => {
-  const config = SENSOR_TYPE_CONFIG[newSensor.value.sensor_type]
+  const config = getSensorConfig(newSensor.value.sensor_type)
   return config?.supportsOnDemand ?? false
 })
 
@@ -237,6 +232,11 @@ const effectiveGpio = computed(() => {
   if (useAds1115.value) return 0
   return newSensor.value.gpio
 })
+
+const device = computed(() =>
+  (espStore.devices ?? []).find((d) => espStore.getDeviceId(d) === props.espId)
+)
+const zoneId = computed(() => device.value?.zone_id ?? null)
 
 /** Subzone v-model: SubzoneAssignmentSection expects string | null, form may have undefined */
 const subzoneModel = computed({

@@ -57,12 +57,7 @@ SENSOR_DEFAULTS = {
     "ec": {"unit": "mS/cm", "raw_value": 1.2, "min": 0, "max": 10},
     "moisture": {"unit": "%", "raw_value": 40.0, "min": 0, "max": 100},
     "pressure": {"unit": "hPa", "raw_value": 1013.25, "min": 900, "max": 1100},
-    "co2": {
-        "unit": "ppm",
-        "raw_value": 400.0,
-        "min": 200,
-        "max": 50000,
-    },  # AUT-576: SEN0220 range 0-50000 ppm
+    "co2": {"unit": "ppm", "raw_value": 400.0, "min": 200, "max": 50000},  # AUT-576: SEN0220 range 0-50000 ppm
     "light": {"unit": "lux", "raw_value": 500.0, "min": 0, "max": 100000},
     "flow": {"unit": "L/min", "raw_value": 0.0, "min": 0, "max": 100},
 }

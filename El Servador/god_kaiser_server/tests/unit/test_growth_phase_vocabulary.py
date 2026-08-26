@@ -1,4 +1,4 @@
-"""Shared growth phase vocabulary — legacy zone strings → PLANT_PHASES."""
+"""Shared grower phase vocabulary — legacy zone strings → PLANT_PHASES."""
 
 import pytest
 

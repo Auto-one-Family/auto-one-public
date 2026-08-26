@@ -187,10 +187,17 @@ def compute_salt_calculator_assist(
     legacy_concentration = conc_a if conc_a is not None else conc_b
     if legacy_concentration is None:
         legacy_concentration = 0.0
-    concentrations_ready = conc_a is not None and conc_a > 0 and conc_b is not None and conc_b > 0
+    concentrations_ready = (
+        conc_a is not None
+        and conc_a > 0
+        and conc_b is not None
+        and conc_b > 0
+    )
 
     # Measured/already-applied zugabe: update working EC for dose-up only.
-    ec_wasser_effective = float(ec_wasser_us_cm) if ec_wasser_us_cm is not None else 0.0
+    ec_wasser_effective = (
+        float(ec_wasser_us_cm) if ec_wasser_us_cm is not None else 0.0
+    )
     ec_after_input_dilution = dilute_ec_us_cm(
         prior_ec_us_cm=current_ec_us_cm,
         prior_volume_l=volume_alt_l,
@@ -364,7 +371,8 @@ def compute_salt_calculator_assist(
             suggestion_kind="unavailable",
             fresh_water_suggest_l=None,
             operator_message=(
-                "Wirkstärke der Stammlösungen ist nicht kalibriert — " "kein präziser ml-Vorschlag."
+                "Wirkstärke der Stammlösungen ist nicht kalibriert — "
+                "kein präziser ml-Vorschlag."
             ),
             notes=["Fall 1: Konzentration nicht kalibriert."],
         )

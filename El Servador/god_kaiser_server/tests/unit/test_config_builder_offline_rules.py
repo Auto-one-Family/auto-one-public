@@ -360,34 +360,48 @@ class TestExtractOfflineRuleUnit:
         assert result == []
 
     # ------------------------------------------------------------------
-    # 9. Calibration-required sensor types → skipped (SAFETY-P4-GUARD)
+    # 9. RAW-comparable sensor types → exported without calibration (AUT-1565)
     # ------------------------------------------------------------------
 
-    def test_offline_rule_skips_ph_sensor(self):
-        """Rule with pH sensor → skipped (ADC raw value, no calibration on ESP)."""
+    def test_offline_rule_exports_ph_sensor_without_calibration(self):
+        """Rule with pH sensor → exported; ESP compares its RAW cache (AUT-1565)."""
         builder = self._builder()
+        skip_collector: list = []
         rule = _make_rule(
             rule_name="ph_dosing_rule",
             trigger_conditions=_heating_condition(ESP_ID_A, gpio=34, sensor_type="ph"),
             actions=[_actuator_action(ESP_ID_A, gpio=25)],
         )
 
-        result = builder._extract_offline_rule(rule, ESP_ID_A)
+        result = builder._extract_offline_rule(
+            rule, ESP_ID_A, skip_collector=skip_collector, calibrated_sensors=set()
+        )
 
-        assert result == []
+        assert len(result) == 1
+        assert result[0]["sensor_gpio"] == 34
+        assert result[0]["sensor_value_type"] == "ph"
+        assert result[0]["activate_below"] == 18.0
+        assert result[0]["deactivate_above"] == 22.0
+        assert skip_collector == []
 
-    def test_offline_rule_skips_ec_sensor(self):
-        """Rule with EC sensor → skipped (ADC raw value, no calibration on ESP)."""
+    def test_offline_rule_exports_ec_sensor_without_calibration(self):
+        """Rule with EC sensor → exported; ESP compares its RAW cache (AUT-1565)."""
         builder = self._builder()
+        skip_collector: list = []
         rule = _make_rule(
             rule_name="ec_dosing_rule",
             trigger_conditions=_heating_condition(ESP_ID_A, gpio=35, sensor_type="ec"),
             actions=[_actuator_action(ESP_ID_A, gpio=26)],
         )
 
-        result = builder._extract_offline_rule(rule, ESP_ID_A)
+        result = builder._extract_offline_rule(
+            rule, ESP_ID_A, skip_collector=skip_collector, calibrated_sensors=set()
+        )
 
-        assert result == []
+        assert len(result) == 1
+        assert result[0]["sensor_value_type"] == "ec"
+        assert result[0]["actuator_gpio"] == 26
+        assert skip_collector == []
 
     def test_offline_rule_allows_sht31_sensor(self):
         """Rule with sht31_humidity sensor → included (digital sensor, real physical values)."""
@@ -403,8 +417,8 @@ class TestExtractOfflineRuleUnit:
         assert len(result) == 1
         assert result[0]["sensor_value_type"] == "sht31_humidity"
 
-    def test_offline_rule_skips_soil_moisture_alias(self):
-        """Rule with soil_moisture alias → skipped (normalizes to moisture, calibration required)."""
+    def test_offline_rule_exports_soil_moisture_alias(self):
+        """soil_moisture alias normalizes to moisture and is exported RAW (AUT-1565)."""
         builder = self._builder()
         rule = _make_rule(
             rule_name="irrigation_rule",
@@ -412,12 +426,13 @@ class TestExtractOfflineRuleUnit:
             actions=[_actuator_action(ESP_ID_A, gpio=28)],
         )
 
-        result = builder._extract_offline_rule(rule, ESP_ID_A)
+        result = builder._extract_offline_rule(rule, ESP_ID_A, calibrated_sensors=set())
 
-        assert result == []
+        assert len(result) == 1
+        assert result[0]["sensor_value_type"] == "moisture"
 
-    def test_offline_rule_skips_ph_sensor_alias(self):
-        """Rule with ph_sensor alias → skipped (normalizes to ph, calibration required)."""
+    def test_offline_rule_exports_ph_sensor_alias(self):
+        """ph_sensor alias normalizes to ph and is exported RAW (AUT-1565)."""
         builder = self._builder()
         rule = _make_rule(
             rule_name="ph_dosing_alias_rule",
@@ -425,9 +440,45 @@ class TestExtractOfflineRuleUnit:
             actions=[_actuator_action(ESP_ID_A, gpio=29)],
         )
 
-        result = builder._extract_offline_rule(rule, ESP_ID_A)
+        result = builder._extract_offline_rule(rule, ESP_ID_A, calibrated_sensors=set())
+
+        assert len(result) == 1
+        assert result[0]["sensor_value_type"] == "ph"
+
+    def test_calibration_gate_still_blocks_non_raw_comparable_type(self):
+        """The gate is key-scoped: a calibration type outside the RAW set still skips."""
+        builder = self._builder()
+        skip_collector: list = []
+        rule = _make_rule(
+            rule_name="hypothetical_analog_rule",
+            trigger_conditions=_heating_condition(ESP_ID_A, gpio=36, sensor_type="ds18b20"),
+            actions=[_actuator_action(ESP_ID_A, gpio=30)],
+        )
+
+        with patch.object(
+            ConfigPayloadBuilder,
+            "CALIBRATION_REQUIRED_SENSOR_TYPES",
+            ConfigPayloadBuilder.CALIBRATION_REQUIRED_SENSOR_TYPES | {"ds18b20"},
+        ):
+            result = builder._extract_offline_rule(
+                rule, ESP_ID_A, skip_collector=skip_collector, calibrated_sensors=set()
+            )
 
         assert result == []
+        assert len(skip_collector) == 1
+        assert skip_collector[0]["reason_code"] == ConfigPayloadBuilder.REASON_CALIBRATION_REQUIRED
+
+    def test_raw_comparable_types_are_a_subset_of_the_calibration_gate(self):
+        """AUT-1565 exemption covers exactly the four contract keys and nothing else."""
+        assert ConfigPayloadBuilder.OFFLINE_RAW_COMPARABLE_SENSOR_TYPES == {
+            "ph",
+            "ec",
+            "moisture",
+            "soil_moisture",
+        }
+        assert ConfigPayloadBuilder.OFFLINE_RAW_COMPARABLE_SENSOR_TYPES.issubset(
+            ConfigPayloadBuilder.CALIBRATION_REQUIRED_SENSOR_TYPES
+        )
 
     def test_normalized_type_in_returned_dict(self):
         """After normalization, sensor_value_type in result uses canonical form."""
@@ -455,7 +506,9 @@ class TestExtractOfflineRuleUnit:
         builder = self._builder()
         rule = _make_rule(
             rule_name="timmsregen",
-            trigger_conditions=_cooling_condition(ESP_ID_A, gpio=5, sensor_type="sht31_humidity"),
+            trigger_conditions=_cooling_condition(
+                ESP_ID_A, gpio=5, sensor_type="sht31_humidity"
+            ),
             actions=[
                 _actuator_action(ESP_ID_A, gpio=25, duration_seconds=8),
                 _actuator_action(ESP_ID_A, gpio=14, duration_seconds=8),
@@ -473,6 +526,7 @@ class TestExtractOfflineRuleUnit:
             assert r["max_on_seconds"] == 8
             assert r["activate_above"] == 28.0
             assert r["deactivate_below"] == 24.0
+
 
     # ------------------------------------------------------------------
     # AUT-739: OR-compound DNF-flattening
@@ -515,7 +569,7 @@ class TestExtractOfflineRuleUnit:
             assert r["sensor_value_type"] == "sht31_humidity"
             assert r["activate_below"] > 0.0
             assert r["deactivate_above"] > 0.0
-            assert r["activate_above"] == 0.0  # heating mode — cooling fields zero
+            assert r["activate_above"] == 0.0   # heating mode — cooling fields zero
             assert r["deactivate_below"] == 0.0
 
     def test_or_compound_threshold_conditions_flattened(self):
@@ -552,13 +606,13 @@ class TestExtractOfflineRuleUnit:
         assert sensor_gpios == {4, 7}
         for r in result:
             assert r["actuator_gpio"] == 18
-            assert r["activate_below"] > 0.0  # heating threshold set
-            assert r["deactivate_above"] > 0.0  # deadband added
+            assert r["activate_below"] > 0.0     # heating threshold set
+            assert r["deactivate_above"] > 0.0   # deadband added
             assert r["activate_above"] == 0.0
             assert r["deactivate_below"] == 0.0
 
-    def test_or_compound_calibration_required_branch_skipped(self):
-        """OR compound where one branch uses a calibration-required sensor → that branch skipped."""
+    def test_or_compound_raw_comparable_branch_also_exports(self):
+        """OR compound with a pH branch → both branches export RAW (AUT-1565)."""
         builder = self._builder()
         rule = _make_rule(
             rule_name="ph_or_temp_rule",
@@ -567,7 +621,7 @@ class TestExtractOfflineRuleUnit:
                     "type": "hysteresis",
                     "esp_id": ESP_ID_A,
                     "gpio": 34,
-                    "sensor_type": "ph",  # calibration-required → branch skipped
+                    "sensor_type": "ph",        # RAW-comparable → no longer skipped
                     "activate_below": 6.0,
                     "deactivate_above": 7.0,
                 },
@@ -575,7 +629,7 @@ class TestExtractOfflineRuleUnit:
                     "type": "hysteresis",
                     "esp_id": ESP_ID_A,
                     "gpio": 4,
-                    "sensor_type": "ds18b20",  # valid
+                    "sensor_type": "ds18b20",   # valid
                     "activate_below": 18.0,
                     "deactivate_above": 22.0,
                 },
@@ -584,34 +638,33 @@ class TestExtractOfflineRuleUnit:
         )
         rule.logic_operator = "OR"
 
-        result = builder._extract_offline_rule(rule, ESP_ID_A)
+        result = builder._extract_offline_rule(rule, ESP_ID_A, calibrated_sensors=set())
 
-        assert len(result) == 1, "Only the valid branch should produce an offline rule"
-        assert result[0]["sensor_gpio"] == 4
-        assert result[0]["sensor_value_type"] == "ds18b20"
+        assert len(result) == 2
+        assert {r["sensor_value_type"] for r in result} == {"ph", "ds18b20"}
 
     def test_or_compound_all_branches_invalid_returns_empty_with_skip_entry(self):
-        """OR compound where all branches are calibration-required → empty list + skip entry."""
+        """OR compound where no branch has a convertible operator → empty list + skip entry."""
         builder = self._builder()
         skip_collector: list = []
         rule = _make_rule(
-            rule_name="ph_or_ec_rule",
+            rule_name="between_or_between_rule",
             trigger_conditions=[
                 {
-                    "type": "hysteresis",
+                    "type": "sensor_threshold",
                     "esp_id": ESP_ID_A,
-                    "gpio": 34,
-                    "sensor_type": "ph",
-                    "activate_below": 6.0,
-                    "deactivate_above": 7.0,
+                    "gpio": 4,
+                    "sensor_type": "ds18b20",
+                    "operator": "between",
+                    "value": 6.0,
                 },
                 {
-                    "type": "hysteresis",
+                    "type": "sensor_threshold",
                     "esp_id": ESP_ID_A,
-                    "gpio": 35,
-                    "sensor_type": "ec",
-                    "activate_below": 1.0,
-                    "deactivate_above": 2.0,
+                    "gpio": 7,
+                    "sensor_type": "ds18b20",
+                    "operator": "between",
+                    "value": 1.0,
                 },
             ],
             actions=[_actuator_action(ESP_ID_A, gpio=25)],
@@ -678,20 +731,18 @@ class TestBuildOfflineRulesAsync:
     async def test_no_matching_rules_returns_empty_list(self):
         """ESP with only non-convertible rules → offline_rules == [].
 
-        Uses a pH sensor_threshold rule which is blocked by the P4-GUARD
-        (ADC raw value only on ESP32, no calibration data available).
+        Uses a "between" operator, which has no offline hysteresis representation.
         """
         builder = self._builder()
         mock_logic_repo = AsyncMock()
-        # pH sensor is in CALIBRATION_REQUIRED_SENSOR_TYPES — P4-GUARD blocks it
         non_hysteresis_rule = _make_rule(
-            rule_name="ph_threshold_rule",
+            rule_name="between_threshold_rule",
             trigger_conditions={
                 "type": "sensor_threshold",
                 "esp_id": ESP_ID_A,
                 "gpio": 34,
-                "sensor_type": "ph",
-                "operator": ">",
+                "sensor_type": "ds18b20",
+                "operator": "between",
                 "value": 7.5,
             },
             actions=[_actuator_action(ESP_ID_A)],
@@ -1248,9 +1299,7 @@ class TestResolveMaxOfflineRules:
         from src.services.config_builder import resolve_max_offline_rules
 
         esp = _make_esp(ESP_ID_A)
-        assert (
-            resolve_max_offline_rules(esp.hardware_type) == ConfigPayloadBuilder.MAX_OFFLINE_RULES
-        )
+        assert resolve_max_offline_rules(esp.hardware_type) == ConfigPayloadBuilder.MAX_OFFLINE_RULES
 
 
 class TestBuildOfflineRulesS3BoardDifferentiation:
@@ -1282,4 +1331,6 @@ class TestBuildOfflineRulesS3BoardDifferentiation:
 
         result = await builder._build_offline_rules(mock_db, esp)
 
-        assert len(result) == 16, f"S3 board must accept up to 16 offline rules, got {len(result)}"
+        assert len(result) == 16, (
+            f"S3 board must accept up to 16 offline rules, got {len(result)}"
+        )

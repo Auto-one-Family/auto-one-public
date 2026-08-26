@@ -196,14 +196,18 @@ const sensorTypeOptions = [
   { value: 'bme280_temp', label: 'BME280 Temperatur (°C)' },
   { value: 'bme280_humidity', label: 'BME280 Luftfeuchtigkeit (%RH)' },
   { value: 'bme280_pressure', label: 'BME280 Druck (hPa)' },
-  { value: 'pH', label: 'pH-Sensor' },
-  { value: 'EC', label: 'EC (Leitfähigkeit)' },
+  { value: 'ph', label: 'pH-Sensor' },
+  { value: 'ec', label: 'EC (Leitfähigkeit)' },
   { value: 'moisture', label: 'Bodenfeuchte' },
-  { value: 'light', label: 'Lichtsensor' },
   { value: 'co2', label: 'CO2-Sensor' },
-  { value: 'flow', label: 'Durchflusssensor' },
-  { value: 'level', label: 'Füllstandsensor' },
+  { value: 'liquid_level', label: 'Füllstandsensor' },
 ]
+
+/** Stored pH/EC (legacy palette) must still match canonical ph/ec options and live sensors. */
+function sensorTypesMatch(a: string | undefined | null, b: string | undefined | null): boolean {
+  if (a == null || b == null) return a === b
+  return a === b || a.toLowerCase() === b.toLowerCase()
+}
 
 // Maps each conditionCategory to a sensor-type predicate for filtering
 const CONDITION_CATEGORY_FILTER: Record<string, (st: string) => boolean> = {
@@ -533,6 +537,14 @@ const filteredSensorTypeOptions = computed(() => {
   return sensorTypeOptions.filter(opt => categoryFilter(opt.value))
 })
 
+// Fallback <select> binds exactly; map legacy pH/EC onto the current option values.
+const fallbackSensorTypeSelectValue = computed(() => {
+  const st = localData.value.sensorType
+  if (typeof st !== 'string' || !st) return ''
+  const match = filteredSensorTypeOptions.value.find(opt => sensorTypesMatch(opt.value, st))
+  return match?.value ?? st
+})
+
 // Device-aware: actuators on the currently selected ESP (actuator + interlock config)
 const availableActuators = computed(() => {
   const espId = localData.value.espId as string
@@ -673,8 +685,8 @@ const sensorDropdownValue = computed({
     const gp = localData.value.gpio as number | undefined
     const st = localData.value.sensorType as string | undefined
     if (gp === undefined || gp === null) return ''
-    const match = availableSensors.value.find(s => s.gpio === gp && s.sensorType === st)
-    if (match) return `${gp}:${st}`
+    const match = availableSensors.value.find(s => s.gpio === gp && sensorTypesMatch(s.sensorType, st))
+    if (match) return `${gp}:${match.sensorType}`
     // Base type (SHT31, BME280): don't auto-select — force user to choose explicit sub-type
     if (st && isMultiValueBaseType(st)) return ''
     // Fallback: first sensor with same gpio (legacy rules without sensorType)
@@ -703,7 +715,7 @@ function selectSensor(value: string | number) {
     gpio = typeof value === 'number' ? value : parseInt(strVal, 10)
     sensorType = availableSensors.value.find(s => s.gpio === gpio)?.sensorType ?? ''
   }
-  const sensor = availableSensors.value.find(s => s.gpio === gpio && s.sensorType === sensorType)
+  const sensor = availableSensors.value.find(s => s.gpio === gpio && sensorTypesMatch(s.sensorType, sensorType))
   if (sensor) {
     updateField('gpio', sensor.gpio)
     updateField('sensorType', sensor.sensorType)
@@ -1182,7 +1194,7 @@ async function loadRuleValueFromSensorBase(): Promise<void> {
               <label class="config-label">Sensor-Typ</label>
               <select
                 class="config-select"
-                :value="localData.sensorType"
+                :value="fallbackSensorTypeSelectValue"
                 @change="updateField('sensorType', ($event.target as HTMLSelectElement).value)"
               >
                 <option v-for="opt in filteredSensorTypeOptions" :key="opt.value" :value="opt.value">

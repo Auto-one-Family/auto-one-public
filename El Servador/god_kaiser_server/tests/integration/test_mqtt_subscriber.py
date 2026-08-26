@@ -194,9 +194,9 @@ class TestMessageRouting:
         assert Subscriber._is_critical_topic("kaiser/god/esp/ESP_1/system/intent_outcome") is True
         assert (
             Subscriber._is_critical_topic("kaiser/god/esp/ESP_1/system/intent_outcome/lifecycle")
-            is False
+            is True
         )
-        assert Subscriber._is_critical_topic("kaiser/god/esp/ESP_1/sensor/34/data") is False
+        assert Subscriber._is_critical_topic("kaiser/god/esp/ESP_1/sensor/34/data") is True
         assert Subscriber._is_critical_topic("kaiser/god/esp/ESP_1/system/will") is True
         assert Subscriber._is_critical_topic("kaiser/god/esp/ESP_1/system/heartbeat") is False
 

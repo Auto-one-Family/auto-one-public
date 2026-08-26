@@ -409,7 +409,9 @@ class HeartbeatHandler:
                     # ============================================
                     tombstone = await esp_repo.get_by_device_id(esp_id_str, include_deleted=True)
                     if tombstone is not None:
-                        restore_policy = os.environ.get("ESP_SOFT_DELETE_RESTORE_POLICY", "allow")
+                        restore_policy = os.environ.get(
+                            "ESP_SOFT_DELETE_RESTORE_POLICY", "allow"
+                        )
                         if restore_policy == "deny":
                             logger.info(
                                 f"Restore blocked by policy for soft-deleted device {esp_id_str}"
@@ -617,7 +619,9 @@ class HeartbeatHandler:
                     last_seen = existing_seen
 
                 if payload_seen:
-                    payload_drift_seconds = abs((server_received_at - payload_seen).total_seconds())
+                    payload_drift_seconds = abs(
+                        (server_received_at - payload_seen).total_seconds()
+                    )
                     if payload_drift_seconds > HEARTBEAT_TIMEOUT_SECONDS:
                         logger.warning(
                             "Heartbeat payload timestamp drift too large for %s: payload=%s server=%s drift_s=%.1f (using server last_seen)",
@@ -1330,7 +1334,6 @@ class HeartbeatHandler:
             if esp_subzone_count >= 0 and not is_reconnect:
                 try:
                     from ...db.repositories.subzone_repo import SubzoneRepository as _SubzoneRepo
-
                     _subzone_repo = _SubzoneRepo(session)
                     db_subzone_count_meta = await _subzone_repo.count_by_esp(esp_device.device_id)
 
@@ -1368,10 +1371,7 @@ class HeartbeatHandler:
                                 esp_device.device_id,
                             )
 
-                        if (
-                            should_sz_resync
-                            and esp_device.device_id in self._config_push_pending_esps
-                        ):
+                        if should_sz_resync and esp_device.device_id in self._config_push_pending_esps:
                             should_sz_resync = False
                             logger.debug(
                                 "Skipping subzone resync for %s: config push pending",
@@ -1388,23 +1388,17 @@ class HeartbeatHandler:
                             try:
                                 from ..client import MQTTClient
 
-                                active_subzones = await _subzone_repo.get_by_esp(
-                                    esp_device.device_id
-                                )
+                                active_subzones = await _subzone_repo.get_by_esp(esp_device.device_id)
                                 active_subzones = [sz for sz in active_subzones if sz.is_active][:8]
                                 mqtt_client_instance = MQTTClient.get_instance()
                                 resent = 0
                                 for sz in active_subzones:
-                                    sz_topic = TopicBuilder.build_subzone_assign_topic(
-                                        esp_device.device_id
-                                    )
+                                    sz_topic = TopicBuilder.build_subzone_assign_topic(esp_device.device_id)
                                     sz_payload_data = {
                                         "subzone_id": sz.subzone_id,
                                         "subzone_name": sz.subzone_name or "",
                                         "parent_zone_id": "",
-                                        "assigned_gpios": [
-                                            g for g in (sz.assigned_gpios or []) if g != 0
-                                        ],
+                                        "assigned_gpios": [g for g in (sz.assigned_gpios or []) if g != 0],
                                         "safe_mode_active": False,
                                         "timestamp": now_ts_sz,
                                     }
@@ -2263,7 +2257,6 @@ class HeartbeatHandler:
 
             # AUT-283: subzone count drift detection (esp_subzone_count=-1 means old firmware → skip)
             from ...db.repositories.subzone_repo import SubzoneRepository
-
             subzone_repo = SubzoneRepository(session)
             db_subzone_count = await subzone_repo.count_by_esp(esp_device.device_id)
             needs_subzone_push = (
@@ -2308,7 +2301,6 @@ class HeartbeatHandler:
                 # R1 — AUT-590: Skip automated config push when ESP is under FreeRTOS
                 # queue pressure. Resumes on next heartbeat after recovered is received.
                 from .queue_pressure_handler import is_esp_under_pressure
-
                 if is_esp_under_pressure(esp_device.device_id):
                     logger.info(
                         "Config push for %s skipped (queue pressure active)",
@@ -2405,9 +2397,9 @@ class HeartbeatHandler:
                     "esp_offline_rule_count": int(esp_offline_rule_count),
                     "db_sensor_count": int(db_sensor_count),
                     "db_actuator_count": int(db_actuator_count),
-                    "db_offline_rule_count": (
-                        int(db_offline_rule_count) if db_offline_rule_count >= 0 else None
-                    ),
+                    "db_offline_rule_count": int(db_offline_rule_count)
+                    if db_offline_rule_count >= 0
+                    else None,
                     "is_reconnect": bool(is_reconnect),
                     "offline_seconds": float(offline_seconds),
                 }

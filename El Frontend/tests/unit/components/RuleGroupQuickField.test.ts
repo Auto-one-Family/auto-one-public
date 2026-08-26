@@ -97,13 +97,13 @@ const thresholdRuleB = makeRule({
 const globalStubs = {
   BaseToggle: {
     template:
-      '<input type="checkbox" class="base-toggle-stub" :checked="modelValue" @change="$emit(\'update:modelValue\', $event.target.checked)" />',
+      '<input type="checkbox" class="base-toggle-stub" :checked="modelValue" @change="$emit(\'update:modelValue\', ($event.target as HTMLInputElement).checked)" />',
     props: ['modelValue', 'label'],
     emits: ['update:modelValue'],
   },
   BaseInput: {
     template:
-      '<input class="base-input-stub" :data-label="label" :value="modelValue" @input="$emit(\'update:modelValue\', $event.target.value)" />',
+      '<input class="base-input-stub" :data-label="label" :value="modelValue" @input="$emit(\'update:modelValue\', ($event.target as HTMLInputElement).value)" />',
     props: ['modelValue', 'type', 'label', 'min', 'max'],
     emits: ['update:modelValue'],
   },

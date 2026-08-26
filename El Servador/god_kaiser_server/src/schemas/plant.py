@@ -55,7 +55,10 @@ class PlantCreate(BaseModel):
     )
     planting_date: Optional[date] = Field(
         None,
-        description=("Calendar date the plant was planted / cloned. " "Optional (AUT-1073)."),
+        description=(
+            "Calendar date the plant was planted / cloned. "
+            "Optional (AUT-1073)."
+        ),
     )
     phase: Optional[str] = Field(
         None,
@@ -111,7 +114,9 @@ class PlantCreate(BaseModel):
     @classmethod
     def validate_phase(cls, v: Optional[str]) -> Optional[str]:
         if v is not None and v not in _PHASE_SET:
-            raise ValueError(f"Invalid phase '{v}'. Must be one of: {sorted(_PHASE_SET)}")
+            raise ValueError(
+                f"Invalid phase '{v}'. Must be one of: {sorted(_PHASE_SET)}"
+            )
         return v
 
     @field_validator("nutrient_phase")
@@ -189,7 +194,9 @@ class PlantUpdate(BaseModel):
     @classmethod
     def validate_phase(cls, v: Optional[str]) -> Optional[str]:
         if v is not None and v not in _PHASE_SET:
-            raise ValueError(f"Invalid phase '{v}'. Must be one of: {sorted(_PHASE_SET)}")
+            raise ValueError(
+                f"Invalid phase '{v}'. Must be one of: {sorted(_PHASE_SET)}"
+            )
         return v
 
     @field_validator("nutrient_phase")
@@ -205,7 +212,9 @@ class PlantUpdate(BaseModel):
     @classmethod
     def validate_visibility(cls, v: Optional[str]) -> Optional[str]:
         if v is not None and v not in _VISIBILITY_SET:
-            raise ValueError(f"Invalid visibility '{v}'. Must be one of: {sorted(_VISIBILITY_SET)}")
+            raise ValueError(
+                f"Invalid visibility '{v}'. Must be one of: {sorted(_VISIBILITY_SET)}"
+            )
         return v
 
 
@@ -222,7 +231,9 @@ class PlantResponse(BaseModel):
         ),
     )
     subzone_id: Optional[uuid.UUID] = Field(None, description="Current subzone FK")
-    subzone_name: Optional[str] = Field(None, description="Human-readable current subzone name")
+    subzone_name: Optional[str] = Field(
+        None, description="Human-readable current subzone name"
+    )
     parent_zone_id: Optional[str] = Field(
         None,
         description=(
@@ -242,7 +253,9 @@ class PlantResponse(BaseModel):
         None, description="Track-and-Trace anchor (CanG)"
     )
     genotype_label: Optional[str] = Field(None, description="Genotype label")
-    cultivar_or_variety: Optional[str] = Field(None, description="Cultivar / variety")
+    cultivar_or_variety: Optional[str] = Field(
+        None, description="Cultivar / variety"
+    )
     lineage_parent_plant_id: Optional[uuid.UUID] = Field(
         None, description="Mother-clone lineage parent"
     )
@@ -253,12 +266,18 @@ class PlantResponse(BaseModel):
     nutrient_phase: Optional[str] = Field(
         None, description="Current nutrient/fertilizer phase (AUT-1183)"
     )
-    current_position_label: Optional[str] = Field(None, description="Free-form position label")
+    current_position_label: Optional[str] = Field(
+        None, description="Free-form position label"
+    )
     visibility: str = Field(..., description="Visibility level")
     notes: Optional[str] = Field(None, description="Notes")
-    rooting_success: Optional[bool] = Field(None, description="Whether rooting succeeded")
+    rooting_success: Optional[bool] = Field(
+        None, description="Whether rooting succeeded"
+    )
     rooting_date: Optional[date] = Field(None, description="Rooting confirmation date")
-    deleted_at: Optional[datetime] = Field(None, description="Soft-delete timestamp")
+    deleted_at: Optional[datetime] = Field(
+        None, description="Soft-delete timestamp"
+    )
     created_at: datetime = Field(..., description="Creation timestamp")
     updated_at: datetime = Field(..., description="Last update timestamp")
 
@@ -268,7 +287,9 @@ class PlantResponse(BaseModel):
 class PlantListResponse(BaseModel):
     """Response schema for listing plants."""
 
-    plants: list[PlantResponse] = Field(default_factory=list, description="List of plants")
+    plants: list[PlantResponse] = Field(
+        default_factory=list, description="List of plants"
+    )
     total: int = Field(0, description="Number of plants returned", ge=0)
 
 
@@ -385,7 +406,9 @@ class LifecycleEventCreate(BaseModel):
     @classmethod
     def validate_event_type(cls, v: str) -> str:
         if v not in _EVENT_TYPE_SET:
-            raise ValueError(f"Invalid event_type '{v}'. Must be one of: {sorted(_EVENT_TYPE_SET)}")
+            raise ValueError(
+                f"Invalid event_type '{v}'. Must be one of: {sorted(_EVENT_TYPE_SET)}"
+            )
         return v
 
     @field_validator("new_phase")
@@ -394,7 +417,9 @@ class LifecycleEventCreate(BaseModel):
         # AUT-1209: loose check only (either axis) — the axis-correct check
         # happens in the API handler, which knows event_type.
         if v is not None and v not in _ANY_PHASE_SET:
-            raise ValueError(f"Invalid new_phase '{v}'. Must be one of: {sorted(_ANY_PHASE_SET)}")
+            raise ValueError(
+                f"Invalid new_phase '{v}'. Must be one of: {sorted(_ANY_PHASE_SET)}"
+            )
         return v
 
     @field_validator("event_timestamp")
@@ -443,7 +468,9 @@ class LifecycleEventResponse(BaseModel):
     linked_sensor_window_end: Optional[datetime] = Field(
         None, description="Marked action range end (UTC), if any."
     )
-    zone_id: Optional[str] = Field(None, description="Zone snapshot at write time (WHERE).")
+    zone_id: Optional[str] = Field(
+        None, description="Zone snapshot at write time (WHERE)."
+    )
     subzone_id: Optional[uuid.UUID] = Field(
         None, description="Subzone snapshot at write time (WHERE)."
     )
@@ -525,7 +552,9 @@ class LifecycleEventStatusUpdate(BaseModel):
             "validation as event creation."
         ),
     )
-    notes: Optional[str] = Field(None, description="AUT-1208: corrected free-form note text.")
+    notes: Optional[str] = Field(
+        None, description="AUT-1208: corrected free-form note text."
+    )
     event_type: Optional[str] = Field(
         None,
         max_length=48,
@@ -557,7 +586,9 @@ class LifecycleEventStatusUpdate(BaseModel):
     @classmethod
     def validate_event_type(cls, v: Optional[str]) -> Optional[str]:
         if v is not None and v not in _EVENT_TYPE_SET:
-            raise ValueError(f"Invalid event_type '{v}'. Must be one of: {sorted(_EVENT_TYPE_SET)}")
+            raise ValueError(
+                f"Invalid event_type '{v}'. Must be one of: {sorted(_EVENT_TYPE_SET)}"
+            )
         return v
 
     @field_validator("new_phase")
@@ -566,7 +597,9 @@ class LifecycleEventStatusUpdate(BaseModel):
         # AUT-1209: loose check only (either axis) — the axis-correct check
         # happens in the API handler, which knows event_type.
         if v is not None and v not in _ANY_PHASE_SET:
-            raise ValueError(f"Invalid new_phase '{v}'. Must be one of: {sorted(_ANY_PHASE_SET)}")
+            raise ValueError(
+                f"Invalid new_phase '{v}'. Must be one of: {sorted(_ANY_PHASE_SET)}"
+            )
         return v
 
     @field_validator("event_timestamp")
@@ -647,7 +680,9 @@ class TankIncidentEventResponse(BaseModel):
     id: uuid.UUID = Field(..., description="nutrient_solution_batches.id")
     tank_id: uuid.UUID = Field(..., description="Tank this incident occurred on")
     occurred_at: datetime = Field(..., description="When the incident occurred (UTC)")
-    recipe_label: Optional[str] = Field(None, description="Optional free-text recipe/profile name")
+    recipe_label: Optional[str] = Field(
+        None, description="Optional free-text recipe/profile name"
+    )
     volume_l: float = Field(..., description="Reservoir volume in liters for this entry")
     ph_measured_after: Optional[float] = Field(
         None, description="Measured pH after the incident, if any"
@@ -655,7 +690,9 @@ class TankIncidentEventResponse(BaseModel):
     ec_measured_after: Optional[float] = Field(
         None, description="Measured EC after the incident, if any"
     )
-    qualifier: str = Field(..., description="Confidence qualifier (precise/approximate/estimated)")
+    qualifier: str = Field(
+        ..., description="Confidence qualifier (precise/approximate/estimated)"
+    )
 
     model_config = ConfigDict(from_attributes=True)
 

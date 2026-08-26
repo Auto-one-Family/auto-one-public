@@ -14,11 +14,7 @@ from typing import Any, Dict, List, Optional, Sequence
 
 from ...core.logging_config import get_logger
 from ...sensors.derived_measurements.registry import get_formula
-from .measure_live_reader import (
-    MeasureReadFailure,
-    MeasureReadSuccess,
-    read_live_sensor_for_measure,
-)
+from .measure_live_reader import MeasureReadFailure, MeasureReadSuccess, read_live_sensor_for_measure
 
 
 logger = get_logger(__name__)
@@ -63,9 +59,7 @@ def attach_measure_bindings_to_sequences(
     return out if changed else actions
 
 
-def init_measure_binding_runtime(
-    progress_metadata: Dict[str, Any], bindings: Sequence[Any]
-) -> None:
+def init_measure_binding_runtime(progress_metadata: Dict[str, Any], bindings: Sequence[Any]) -> None:
     """Seed runtime state on sequence progress.metadata (start hook)."""
     if not bindings:
         return

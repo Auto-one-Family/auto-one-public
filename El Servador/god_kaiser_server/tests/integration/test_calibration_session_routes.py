@@ -4,6 +4,7 @@ import asyncio
 from collections import Counter
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.security import create_access_token, get_password_hash
@@ -155,7 +156,114 @@ async def test_calibration_session_full_route_flow(
             headers=operator_headers,
         )
         assert apply_response.status_code == 200
-        assert apply_response.json()["status"] == "applied"
+        applied = apply_response.json()
+        assert applied["status"] == "applied"
+        assert applied["initiated_by"] == "calib_operator"
+        assert applied.get("valid_until") is None
+        derived = (applied.get("calibration_result") or {}).get("derived") or {}
+        assert "valid_until" in derived
+        assert derived["valid_until"] is None
+        assert "initiated_by" not in (applied.get("calibration_result") or {})
+        assert "initiated_by" not in derived
+
+
+@pytest.mark.asyncio
+async def test_start_session_valid_until_is_applied_without_query(
+    operator_headers: dict[str, str],
+    bound_sensor_for_apply: None,
+    db_session: AsyncSession,
+):
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        start_response = await client.post(
+            "/api/v1/calibration/sessions",
+            headers=operator_headers,
+            json={
+                "esp_id": "ESP_TEST_001",
+                "gpio": 10,
+                "sensor_type": "moisture",
+                "method": "linear_2point",
+                "expected_points": 2,
+                "valid_until": "2026-12-01T00:00:00+00:00",
+            },
+        )
+        assert start_response.status_code == 201
+        session_id = start_response.json()["id"]
+        assert start_response.json()["valid_until"].startswith("2026-12-01")
+
+        await client.post(
+            f"/api/v1/calibration/sessions/{session_id}/points",
+            headers=operator_headers,
+            json={"raw_value": 900.0, "reference_value": 0.0, "point_role": "dry"},
+        )
+        await client.post(
+            f"/api/v1/calibration/sessions/{session_id}/points",
+            headers=operator_headers,
+            json={"raw_value": 600.0, "reference_value": 100.0, "point_role": "wet"},
+        )
+        finalize_response = await client.post(
+            f"/api/v1/calibration/sessions/{session_id}/finalize",
+            headers=operator_headers,
+        )
+        assert finalize_response.status_code == 200
+
+        apply_response = await client.post(
+            f"/api/v1/calibration/sessions/{session_id}/apply",
+            headers=operator_headers,
+        )
+        assert apply_response.status_code == 200
+        applied = apply_response.json()
+        assert applied["status"] == "applied"
+        assert applied["valid_until"].startswith("2026-12-01")
+        assert applied["initiated_by"] == "calib_operator"
+        result = applied.get("calibration_result") or {}
+        assert (result.get("derived") or {}).get("valid_until", "").startswith("2026-12-01")
+        assert "initiated_by" not in result
+
+        sensor = (
+            await db_session.execute(
+                select(SensorConfig).where(SensorConfig.gpio == 10)
+            )
+        ).scalar_one()
+        blob = sensor.calibration_data or {}
+        assert (blob.get("derived") or {}).get("valid_until", "").startswith("2026-12-01")
+        assert "initiated_by" not in blob
+
+
+@pytest.mark.asyncio
+async def test_calibration_apply_accepts_optional_valid_until_query(
+    operator_headers: dict[str, str],
+    bound_sensor_for_apply: None,
+):
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        session_id = await _start_session(client, operator_headers, gpio=10)
+        await client.post(
+            f"/api/v1/calibration/sessions/{session_id}/points",
+            headers=operator_headers,
+            json={"raw_value": 900.0, "reference_value": 0.0, "point_role": "dry"},
+        )
+        await client.post(
+            f"/api/v1/calibration/sessions/{session_id}/points",
+            headers=operator_headers,
+            json={"raw_value": 600.0, "reference_value": 100.0, "point_role": "wet"},
+        )
+        finalize_response = await client.post(
+            f"/api/v1/calibration/sessions/{session_id}/finalize",
+            headers=operator_headers,
+        )
+        assert finalize_response.status_code == 200
+
+        apply_response = await client.post(
+            f"/api/v1/calibration/sessions/{session_id}/apply",
+            headers=operator_headers,
+            params={"valid_until": "2020-06-01T00:00:00+00:00"},
+        )
+        assert apply_response.status_code == 200
+        applied = apply_response.json()
+        assert applied["status"] == "applied"
+        derived = (applied.get("calibration_result") or {}).get("derived") or {}
+        assert derived["valid_until"] == "2020-06-01T00:00:00+00:00"
+        assert applied["valid_until"] == "2020-06-01T00:00:00+00:00"
+        assert "initiated_by" not in (applied.get("calibration_result") or {})
 
 
 @pytest.mark.asyncio
