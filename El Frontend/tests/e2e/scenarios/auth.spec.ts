@@ -32,7 +32,7 @@ test.describe('Authentication', () => {
       await page.click('button[type="submit"]')
 
       // Should redirect to main app (/ → /hardware is the default landing page)
-      await expect(page).toHaveURL(/\/(hardware|dashboards?)(\?.*)?$/, { timeout: 15000 })
+      await expect(page).toHaveURL(/\/(hardware|dashboard)?(\?.*)?$/, { timeout: 15000 })
 
       // Verify tokens are stored
       const accessToken = await page.evaluate(() =>

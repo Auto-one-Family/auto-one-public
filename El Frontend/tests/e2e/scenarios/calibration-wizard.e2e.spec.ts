@@ -376,7 +376,7 @@ function mockMeasurementRoute(page: Page): void {
         contentType: 'application/json',
         body: JSON.stringify({
           success: true,
-          request_id: 'req_test',
+          request_id: `req_${Date.now()}`,
           message: 'Measurement triggered',
         }),
       })
@@ -410,16 +410,15 @@ async function setupWebSocketMock(
     async sendCalibrationMeasurement(raw: number) {
       const messagePayload = JSON.stringify({
         type: 'calibration_measurement_received',
-        correlation_id: 'req_test',
+        correlation_id: `corr_${Date.now()}`,
         data: {
           esp_id: 'TEST_ESP_001',
           gpio: 5,
           raw_value: raw,
           raw: raw,
           quality: 'good',
-          intent_id: 'req_test',
-          correlation_id: 'req_test',
-          request_id: 'req_test',
+          intent_id: `intent_${Date.now()}`,
+          correlation_id: `corr_${Date.now()}`,
           session_id: 'session_test',
         },
       })
@@ -431,16 +430,14 @@ async function setupWebSocketMock(
           return
         }
         const event = new MessageEvent('message', { data })
-        let delivered = false
         for (const ws of instances) {
+          // Call onmessage handler directly (property handler, not addEventListener)
           if (typeof ws.onmessage === 'function') {
             ws.onmessage(event)
-            delivered = true
+            return
           }
         }
-        if (!delivered) {
-          console.warn('[E2E] No WebSocket with onmessage handler found')
-        }
+        console.warn('[E2E] No WebSocket with onmessage handler found')
       }, messagePayload)
     },
   }

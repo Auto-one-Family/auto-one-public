@@ -45,20 +45,6 @@ test.describe('Routing und Guards ohne bestehende Session', () => {
       })
     })
 
-    await page.route('**/api/v1/auth/refresh', async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({
-          success: true,
-          tokens: {
-            access_token: 'fake-token',
-            refresh_token: 'fake-refresh',
-          },
-        }),
-      })
-    })
-
     await page.route('**/api/v1/auth/me', async (route) => {
       await route.fulfill({
         status: 200,

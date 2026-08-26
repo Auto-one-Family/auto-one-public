@@ -153,7 +153,6 @@ async function mockRefreshSuccess(page: Page): Promise<void> {
 }
 
 test.describe('E2E-01 Auth — Login + Setup', () => {
-  test.use({ storageState: { cookies: [], origins: [] } })
   test.afterAll(() => {
     writeJsonArtifact('E2E-01-U2-user-handling-matrix.json', userHandlingMatrix)
     writeJsonArtifact('E2E-01-U2-data-integrity-evidence.json', authDataIntegrityEvidence)
@@ -221,7 +220,7 @@ test.describe('E2E-01 Auth — Login + Setup', () => {
       }
 
       await page.click('button[type="submit"]')
-      await expect(page).toHaveURL(/\/(dashboards|hardware)$/)
+      await expect(page).toHaveURL(/\/hardware$/)
       await shot(page, `E2E-01-T01-run${run}-setup-complete.png`)
       if (run === 1) {
         await shot(page, 'E2E-01-T01-setup-complete.png')
@@ -308,7 +307,7 @@ test.describe('E2E-01 Auth — Login + Setup', () => {
       }
 
       await page.click('button[type="submit"]')
-      await expect(page).toHaveURL(/\/(dashboards|hardware)$/)
+      await expect(page).toHaveURL(/\/hardware$/)
       await shot(page, `E2E-01-T02-run${run}-login-success-hardware.png`)
       if (run === 1) {
         await shot(page, 'E2E-01-T02-login-success-hardware.png')
@@ -405,7 +404,7 @@ test.describe('E2E-01 Auth — Login + Setup', () => {
 
       await fillLoginForm(page, 'admin', process.env.E2E_TEST_PASSWORD ?? '')
       await page.click('button[type="submit"]')
-      await expect(page).toHaveURL(/\/(dashboards|hardware)$/)
+      await expect(page).toHaveURL(/\/hardware$/)
       await shot(page, `E2E-01-T04-run${run}-guard-redirect-back.png`)
       if (run === 1) {
         await shot(page, 'E2E-01-T04-guard-redirect-back.png')
@@ -831,7 +830,7 @@ test.describe('E2E-01 Auth — Login + Setup', () => {
 
       await fillLoginForm(page, 'admin', process.env.E2E_TEST_PASSWORD ?? '')
       await page.click('button[type="submit"]')
-      await expect(page).toHaveURL(/\/(dashboards|hardware)$/)
+      await expect(page).toHaveURL(/\/hardware$/)
 
       await page.goto('/settings')
       await page.getByRole('button', { name: /^sign out$|^abmelden$/i }).click()
@@ -934,10 +933,10 @@ test.describe('E2E-01 Auth — Login + Setup', () => {
     await page.goto('/login')
     await fillLoginForm(page, 'admin', process.env.E2E_TEST_PASSWORD ?? '')
     await page.click('button[type="submit"]')
-    await expect(page).toHaveURL(/\/(dashboards|hardware)$/)
+    await expect(page).toHaveURL(/\/hardware$/)
 
     await page.goto('/login')
-    await expect(page).toHaveURL(/\/(dashboards|hardware)$/)
+    await expect(page).toHaveURL(/\/hardware$/)
     await shot(page, 'E2E-01-T09-logged-in-redirect.png')
   })
 
@@ -979,7 +978,7 @@ test.describe('E2E-01 Auth — Login + Setup', () => {
       await page.locator('#setup-password').fill(process.env.E2E_TEST_PASSWORD ?? '')
       await page.locator('#setup-confirm').fill(process.env.E2E_TEST_PASSWORD ?? '')
       await page.click('button[type="submit"]')
-      await expect(page).toHaveURL(/\/(dashboards|hardware)$/)
+      await expect(page).toHaveURL(/\/hardware$/)
 
       const afterUserA = await fetchAuthStatusSnapshot(request, frontendBase)
       expect(afterUserA.user_count).toBeGreaterThanOrEqual(1)
@@ -1089,7 +1088,7 @@ test.describe('E2E-01 Auth — Login + Setup', () => {
 
       await fillLoginForm(page, 'admin', process.env.E2E_TEST_PASSWORD ?? '')
       await page.click('button[type="submit"]')
-      await expect(page).toHaveURL(/\/(dashboards|hardware)$/)
+      await expect(page).toHaveURL(/\/hardware$/)
 
       await page.goto('/settings')
       await page.getByRole('button', { name: /sign out all devices|auf allen geraeten abmelden/i }).click()

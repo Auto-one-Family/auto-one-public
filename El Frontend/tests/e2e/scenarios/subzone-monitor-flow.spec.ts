@@ -91,7 +91,7 @@ test.describe('Subzone-Monitor Flow', () => {
     await subzoneSelect.selectOption({ label: '+ Neue Subzone erstellen...' })
     await page.waitForTimeout(500)
 
-    const subzoneInput = page.getByRole('textbox', { name: 'Subzone-Name eingeben...' })
+    const subzoneInput = page.locator('.subzone-assignment__input')
     await subzoneInput.fill('E2E-Test-Subzone')
     await page.waitForTimeout(300)
 

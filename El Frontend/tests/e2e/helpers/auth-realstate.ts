@@ -32,7 +32,7 @@ function resolveApiBaseUrl(frontendBaseUrl?: string): string {
   }
 
   const frontendBase = resolveFrontendBaseUrl(frontendBaseUrl)
-  return frontendBase.replace('://localhost:5173', '://localhost:8000').replace('://127.0.0.1:5173', '://127.0.0.1:8000')
+  return frontendBase.replace('://localhost:5173', '://localhost:8000')
 }
 
 function buildDefaultResetCommand(): string {
