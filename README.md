@@ -1,18 +1,39 @@
 # AutomationOne
 
-AutomationOne is a local stack for horticultural climate, substrate and
-nutrient measurements — and for the devices that sit on the same nodes.
-Firmware on ESP32 reads sensors and drives pumps, valves, PWM and relays.
-A FastAPI server stores UTC time series and runs rules. A Vue interface
-shows live and history and lets you assign pins and places without flashing.
+AutomationOne is a local stack for continuous environmental monitoring in
+protected cropping and related spaces — climate, substrate, and nutrient
+solution — plus the actuators on the same nodes. ESP32 firmware reads sensors
+and drives pumps, valves, PWM, and relays. A FastAPI server stores UTC time
+series and runs rules. A Vue interface shows live and historical data and lets
+you assign pins and places without flashing.
 
-A reading without a place is just a name. The same temperature in canopy
-air, at the bench edge, or in the slab is not the same measurement. This
-system therefore treats place as part of the setup: a zone (the house or
-climate context), a subzone (air volume, substrate or solution circuit),
-and, when you set them, mount height, medium and angle. The number stays
-attached to how and where it was taken, so two houses can be compared
-later without guessing the probe position from a sensor nickname.
+This repository is a **public mirror** of a running system — not a frozen demo
+dataset or a marketing one-pager without code.
+
+---
+
+## Why place matters
+
+*A reading without a place is just a name.*
+
+The same temperature in canopy air, at the bench edge, or in the slab is not the
+same measurement. AutomationOne treats **place as part of the setup**:
+
+| Level | Role |
+|-------|------|
+| **Zone** | House or climate context |
+| **Subzone** | Air volume, substrate bed, or solution circuit |
+| **Mount metadata** (when set) | Height, medium (`air` \| `canopy` \| `substrate` \| `solution`), angle |
+
+**Place contract (canonical):**
+
+- **Physical mounting** — height, medium, angle, subzone assignment — lives on
+  the **sensor config**, not on individual time-series rows.
+- **Crop context** — growth phase, variety, trial design — lives on the
+  **zone** or **plant**, not on a GPIO pin.
+
+Two houses can be compared later only when both *where* and *how* are
+documented — not inferred from a sensor nickname.
 
 ```
 El Trabajante (ESP32)
@@ -29,8 +50,8 @@ El Frontend (Vue)
 ## Architecture
 
 Three layers. Firmware measures and switches. The server stores readings,
-runs rules, and applies a safety chain. The interface shows live and
-history and lets an operator assign pins and places.
+runs rules, and applies a safety chain. The interface shows live and historical
+data and lets an operator assign pins and places.
 
 | Layer | Stack | Role |
 |-------|--------|------|
@@ -38,74 +59,186 @@ history and lets an operator assign pins and places.
 | **El Servador** | Python / FastAPI / PostgreSQL / MQTT | Store UTC time series, distribute config, run rules and the safety chain |
 | **El Frontend** | Vue 3 / TypeScript | Show live and history; assign pins and places without flashing |
 
-Data path: ESP32 publishes over MQTT, FastAPI writes PostgreSQL, the Vue
-interface updates over HTTP and WebSocket.
+Data path: ESP32 publishes over MQTT → FastAPI writes PostgreSQL → Vue updates
+over HTTP and WebSocket.
+
+Intelligence sits primarily on the server. ESP32 nodes capture and switch.
+Sensor types, rules, and processing are configured centrally — after initial
+setup, pin and place assignments do not require a firmware reflash.
 
 ### How a reading is stored
 
-Readings are a PostgreSQL time series in UTC. Each row snapshots zone and
-subzone at write time. The measurement interval lives on the sensor
-config, not as a global tick. Calibration is slope/offset coefficients
-and a two-point wizard; a nullable validity timestamp can sit on that
-blob. Mount height, medium (`air` | `canopy` | `substrate` | `solution`)
-and angle live on the sensor config. Charts join the config for labels.
-Changing the config later does not rewrite the mount history of older
-rows.
+Readings are a PostgreSQL time series in UTC. Each row **snapshots zone and
+subzone at write time**; later config changes do not rewrite older rows.
+
+Mount fields (`mount_height_cm`, `mount_medium`, `mount_angle_deg`) live on the
+sensor config. Charts join the current config for labels — for example
+`Substrate (%) · Z1 / SZ-A · 30cm canopy` — but historical mount metadata is
+not retroactively stamped onto past samples.
+
+Per-sensor settings include:
+
+- **`measurement_interval`** — interval on the sensor config, not a global tick
+- **`operating_mode`** — e.g. `continuous` vs `on_demand` (spot reads for pH/EC)
+- **`calibration_data`** — slope/offset coefficients from a two-point wizard;
+  optional validity timestamp on the blob; `adc_source` (`internal` \| `ads1115`)
+  for analog acquisition path
+
+Raw values arrive from firmware; calibration and unit conversion run on the
+server via type-specific processors.
+
+---
+
+## Hardware and sensors
+
+Current deployments use **accessible ESP32 boards and low-cost IoT modules**
+(DFRobot, Grove, Seeed, and similar). These are hobby- to prosumer-grade
+instruments — not NIST-traceable laboratory reference devices. That trade-off is
+deliberate: the stack is built to produce **continuous, place-annotated time
+series** with a consistent metadata model, while leaving room to swap probes
+without rewriting the architecture.
+
+Sensor **types** and **calibration** are abstracted from vendor SKU. The same
+`ph` type can be served by different probe hardware; comparability depends on
+documented placement and calibration, not on the sensor nickname.
+
+| Measurement | Typical physical module | Bus / path | Caveats |
+|-------------|-------------------------|------------|---------|
+| Air temp + RH | SHT31 (often on DFRobot/Grove I²C boards) | I²C | Good for zone climate; spatial variability is real |
+| Temperature | DS18B20 | OneWire | Substrate or air probe depending on placement |
+| CO₂ | SEN0220-class NDIR or similar | UART / I²C per driver | Warm-up and placement affect baseline |
+| Substrate moisture | SEN0193-class capacitive | Analog (internal ADC or ADS1115) | Representative volume is cm-scale, not the whole bench |
+| pH / EC | SEN0169 / DFR0300-class probes | Analog via **internal ESP32 ADC or ADS1115** — acquisition path, not a separate sensor type | Spot / on-demand immersion suits lab-style probes; continuous 24/7 immersion needs industrial-rated hardware |
+| Pressure / ambient temp | BMP280 / BME280 | I²C | Environment reference |
+| Light intensity | Typed server-side; firmware driver pending | I²C candidates (BH1750, VEML7700, …) | **Lux ≠ PPFD/PAR** — do not treat lux readings as photosynthetic flux without conversion |
+| Flow, fill level | Pulse / analog generics | Digital or ADC | Application-specific |
+
+**ADS1115:** Optional 16-bit I²C ADC for pH, EC, and other analog channels —
+selectable per sensor config instead of the ESP32 internal ADC. The
+`adc_source` value comes from the calibration/config blob, not a standalone
+time-series column.
+
+**VPD:** Derived on the server from an SHT31 temperature/humidity pair in the
+same zone; stored and displayed like a sensor reading.
+
+Firmware drivers today cover SHT31, BMP280, BME280, DS18B20, analog pH/EC/moisture
+(with internal ADC or ADS1115), UART CO₂, pulse flow, and digital fill level.
+Light intensity is registered on the server and in the UI; an end-to-end firmware
+driver is the next step.
 
 ---
 
 ## Operator surface
 
-An operator assigns sensors and actuators to GPIO and subzone in the
-same hardware view — zone → device → pin — without flashing firmware for
-that assignment.
+An operator assigns sensors and actuators to GPIO and subzone in one hardware
+view — zone → device → pin — without flashing firmware for that assignment.
 
-Actuator types in this tree: pump, valve, PWM, relay. They sit on the
-same nodes that measure.
+**Actuator types:** pump, valve, PWM, relay — on the same nodes that measure.
 
-Rules can fire across ESP boundaries: if sensor X crosses a threshold,
-actuator Y runs. Offline rules stay on the ESP when the link is down.
-A new ESP is discovered from its heartbeat and waits for approval
-before it is trusted.
+**Rules** can fire across ESP boundaries: if sensor X crosses a threshold,
+actuator Y runs. Offline rules stay on the ESP when the MQTT link is down.
+A new ESP is discovered from its heartbeat and waits for approval before it is
+trusted.
 
-Actuator commands go through a server safety chain. The checks in this
-tree are emergency stop, GPIO conflict, loop detection, and rate limit.
-The ESP applies local checks as well.
+**Actuator commands** pass through a server safety chain: emergency stop, GPIO
+conflict detection, loop detection, and rate limiting. The ESP applies local
+checks as well.
 
-Live and historical charts are grouped by zone and subzone. A dataset
-label carries name, unit, and zone/subzone. When mount fields are set
-on the config, the label appends them — for example
-`Substrate (%) · Z1 / SZ-A · 30cm canopy`.
+**Charts** group live and historical data by zone and subzone. Dataset labels
+carry name, unit, zone/subzone, and mount fields when set.
+
+Authentication uses JWT after first-run setup; role-based guards restrict admin
+and zone-scoped operations. There is no multi-tenant site registry in this
+mirror — one installation, many zones.
+
+---
+
+## Crop and plant context
+
+AutomationOne is moving from room monitoring toward **crop-aware monitoring**:
+continuous environmental time series anchored to **where** (zone, subzone,
+mount) and increasingly to **what** (plant and crop context), so growth response
+can be compared across positions and, eventually, sites.
+
+**In the codebase today:**
+
+- Zone / subzone hierarchy for all time series
+- **`zone_contexts`** — zone-level crop metadata (plant count, variety, substrate,
+  growth phase, cycle history) maintained by the operator
+- **`plants`** — individual plant records under a subzone (identity, phase,
+  optional QR code, lifecycle events); REST API and UI views present
+- **`operating_mode`** and per-sensor **`measurement_interval`** — continuous
+  vs on-demand reads (e.g. pH/EC spot measurements)
+- **`plan_segments`** — planned setpoints (EC, pH, temperature, humidity) stored
+  as a separate layer from measured time series; rules can opt in to follow plans
+- Rules, actuators, and safety chain as described above
+
+**Direction (not fully productized):**
+
+- **Observations** — a unified ledger for manual notes and instrument snapshots
+  tied to plant or zone
+- **Plant-derived zone KPIs** — aggregating zone context from individual plants
+  instead of manual zone-only fields
+- **Multi-rate fusion** — air, substrate, solution, and plant-linked signals at
+  different intervals, joined by time and place metadata
 
 ---
 
 ## Measured quantities
 
-1. **Air:** temperature, humidity, CO₂, air pressure
+Grouped by domain; sensor **type** in config maps to firmware driver and server
+processor (see hardware table above).
+
+1. **Air:** temperature, humidity, CO₂, air pressure, derived VPD
 2. **Substrate:** moisture, temperature
-3. **Nutrient solution:** pH, EC (internal ADC or ADS1115 is the
-   acquisition path, not a separate sensor type)
-4. **Also in this tree:** flow, light intensity, fill level, generic
-   analog/digital
-
-VPD is derived on the server from an SHT31 temperature/humidity pair
-and appears like a sensor.
-
-Light intensity is typed on the server and in the interface. The next
-step is a firmware driver so the type is end-to-end.
+3. **Nutrient solution:** pH, EC
+4. **Also supported:** flow, light intensity (server/UI; firmware driver pending),
+   fill level, generic analog/digital
 
 ---
 
-## What this repo does not claim
+## Engineering direction
 
-This is a public mirror of a running system, not a frozen trial dataset.
+Long term, the system must keep measurement series **comparable over months to
+years**, support **multiple sites** without guessing from nicknames, and make
+data **accessible** (export, APIs) while **securing** who can read and write what.
 
-It does not record a first-class calibration event with a reference
-standard, an operator name, and a validity window as its own row.
-It does not flag individual samples for quality.
-It has no site identifier for house A versus house B — zone is inside
-one installation.
-It does not export a scientific schema.
+Current priorities, in order:
+
+1. **Operator UX** — place metadata, hardware tree, charts, plant views, honest
+   live / stale / on-demand states; making the data model legible without flashing
+2. **Data access and security** — permissions across zones and installations
+3. **Scientific comparability metadata** — calibration events, QC flags, site
+   identity, schema-bearing export
+
+These are known gaps within the existing architecture — not reasons to rebuild
+from scratch, and not solved yet.
+
+Raw CSV export (`/api/v1/sensors/export`) and component JSON export
+(`/api/v1/export/*`) exist today. They are operational exports, not a
+standardized scientific interchange format.
+
+---
+
+## What this repo does not claim (yet)
+
+Gaps are **design constraints**, not apologies. The foundation — place-aware
+time series, flexible config, server-side processing — is in place; metadata
+depth and operator UX are the next levers.
+
+- No first-class **calibration event** row (reference standard, operator, validity
+  window) — only coefficients in a config blob plus a wizard
+- No per-sample **QC flag** (offline, range, missing) on time-series rows
+- No **site / facility identifier** for comparing house A vs house B — zone lives
+  within one installation
+- No **scientific export schema** (MIAPPE, QUDT, JSON-LD) — PostgreSQL is the
+  source of truth; CSV and component JSON are available
+- Light intensity type exists server-side; **end-to-end firmware driver** still
+  pending
+- **Observation workflows** and plant analytics across sites — direction, not
+  a finished product surface in this mirror
+- Does not assert laboratory accuracy from low-cost modules — **metadata and
+  placement** are the comparability lever
 
 ---
 
